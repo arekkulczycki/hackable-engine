@@ -1,0 +1,4 @@
+python-chess==1.999
+sklearn==0.*
+kmeans1d==0.3.*
+faster-fifo==1.2.*
