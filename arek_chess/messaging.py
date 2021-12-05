@@ -19,7 +19,7 @@ class Queue:
         """
 
         self.name = name
-        self.queue = FastQueue()
+        self.queue = FastQueue(1000 * 1000 * 100)
 
     def put(self, item):
         """
