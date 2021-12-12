@@ -58,17 +58,7 @@ class EvalWorker(BaseWorker):
 
         self.setup()
 
-        # profiler = Profiler()
-        # profiler.start()
-        #
-        # def before_exit(*args):
-        #     """"""
-        #     profiler.stop()
-        #     profiler.print(show_all=True)
-        #     # self.terminate()
-        #     exit(0)
-        #
-        # signal(SIGTERM, before_exit)
+        # self.profile_code()
 
         while True:
             eval_item = self.eval_queue.get()
@@ -191,3 +181,17 @@ class EvalWorker(BaseWorker):
         moved_piece_type = board.get_moving_piece_type(move)
 
         return board, move, moved_piece_type
+
+    @staticmethod
+    def profile_code():
+        profiler = Profiler()
+        profiler.start()
+
+        def before_exit(*args):
+            """"""
+            profiler.stop()
+            profiler.print(show_all=True)
+            # self.terminate()
+            exit(0)
+
+        signal(SIGTERM, before_exit)

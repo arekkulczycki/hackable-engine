@@ -2,15 +2,23 @@
 """
 Module_docstring.
 """
-
+import ctypes
 import math
 import time
 import traceback
+from functools import reduce
+from statistics import mean
 
 from anytree import Node, RenderTree, LevelOrderIter
 
+from arek_chess.board.board import Board
 from arek_chess.dispatcher import Dispatcher
 from arek_chess.messaging import Queue
+
+
+class PrintableNode(Node):
+    def __repr__(self):
+        return f"Node({self.level}, {self.move}, {self.score})"
 
 
 class SearchTreeManager:
@@ -25,7 +33,7 @@ class SearchTreeManager:
         self.turn = turn
         self.depth = depth
 
-        self.root = Node(self.ROOT_NAME, turn=turn, score=0, fen=fen, level=0)
+        self.root = PrintableNode(self.ROOT_NAME, turn=turn, score=0, fen=fen, level=0, move=None)
         self.tree = {self.ROOT_NAME: self.root}
 
         self.node_queue = Queue("node")
@@ -58,12 +66,13 @@ class SearchTreeManager:
 
         sent = 1
         returned = 0
+        dominated = 0
 
         t0 = time.time()
         while sent > returned:
             t = time.time()
             if t > t0 + 10:
-                print(sent, returned)
+                print(sent, returned, dominated)
                 t0 = t
 
             candidates = self.candidates_queue.get()
@@ -72,7 +81,10 @@ class SearchTreeManager:
                 continue
 
             for i, candidate in enumerate(candidates):
-                node = self.create_node(i, candidate)
+                node, is_dominated = self.create_node(i, candidate)
+                if is_dominated:
+                    dominated += 1
+                    continue
 
                 turn_after = node.level % 2 == 0 if self.turn else node.level % 2 == 1
 
@@ -84,7 +96,7 @@ class SearchTreeManager:
 
         # print(RenderTree(self.root))
 
-        print(sent, returned)
+        print(sent, returned, dominated)
 
         print(self.get_best_move())
 
@@ -93,18 +105,18 @@ class SearchTreeManager:
 
     def create_node(self, i, candidate):
         parent_name = candidate["node_name"].replace("/", "")
+        parent = self.get_node(parent_name)
+        score = candidate["score"]
+
         parent_name_split = parent_name.split(".")
         level = len(parent_name_split)
         move = candidate["move"]
         child_name = f"{parent_name}.{i}"
-        parent = self.get_node(parent_name)
-        # parent_board = Board(parent.fen)
-        # parent_board.push(Move.from_uci(move))
 
-        node = Node(
+        node = PrintableNode(
             child_name,
             parent=parent,
-            score=round(candidate["score"], 3),
+            score=round(score, 3),
             move=move,
             fen=candidate["fen"],
             level=level,
@@ -112,7 +124,65 @@ class SearchTreeManager:
 
         self.tree[child_name] = node
 
-        return node
+        color = (node.level % 2 == 0 and self.turn) or (node.level % 2 == 1 and not self.turn)
+        is_dominated = self.is_node_dominated(score, parent, color) if level >= 4 and level < self.depth else False
+
+        return node, is_dominated
+
+    def is_node_dominated(self, score, parent: Node, color: bool):
+        return self.is_below_average(score, parent, color) or self.is_not_promising(score, parent, color)
+
+    def is_below_average(self, score, parent: Node, color: bool):
+        grand_parents = parent.parent.parent.children
+        avg = mean([node.score for node in grand_parents])
+        if color:
+            return score < avg
+        else:
+            return score > avg
+
+    def is_not_promising(self, score, parent: Node, color: bool):
+        try:
+            trend = self.get_trend(score, parent)
+        except KeyError as e:
+            print(f"missing node: {e}")
+            print(f'analysing for child of: {parent.name}')
+            return False
+
+        if color:
+            if trend[0] < trend[1] < trend[2] and trend[1] < 0:
+                return True
+        else:
+            if trend[0] > trend[1] > trend[2] and trend[1] > 0:
+                return True
+
+        if color:
+            if all([delta < 0 for delta in trend]) and trend[2] / trend[1] > trend[1] / trend[0]:
+                return True
+            elif trend[0] < trend[1] < trend[2] and trend[1] < 0:
+                return True
+        else:
+            if all([delta > 0 for delta in trend]) and trend[2] / trend[1] > trend[1] / trend[0]:
+                return True
+            elif trend[0] > trend[1] > trend[2] and trend[1] > 0:
+                return True
+
+        return False
+
+    def get_trend(self, score, parent: Node):
+        """recent go first"""
+        consecutive_scores = [score, *self.get_consecutive_scores(parent)]
+        averages = [(consecutive_scores[i] + consecutive_scores[i+1] / 2) for i in range(4)]
+        deltas = [averages[i + 1] - averages[i] for i in range(3)]
+        return deltas
+
+    def get_consecutive_scores(self, node: Node):
+        # TODO: WTF, just go like parent.parent.parent ???
+        parents = node.name.split('.')
+        last_name = ".".join(parents[:-4]) or "0"  # TODO: don't know why it required fallback value of 0
+        third_name = f"{last_name}.{parents[-4]}"
+        second_name = f"{third_name}.{parents[-3]}"
+        first_name = f"{second_name}.{parents[-2]}"
+        return [self.get_node(name).score for name in [first_name, second_name, third_name, last_name]]
 
     def get_best_move(self):
         parent = None

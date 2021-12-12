@@ -3,7 +3,8 @@ package main
 // #include <stdlib.h>
 import "C"
 import (
-//     "fmt"
+    "fmt"
+    "time"
     "strconv"
     "strings"
     "unsafe"
@@ -124,19 +125,23 @@ func gc(s *C.char) {
 }
 
 func main() {
-//     fenStr := "rnbqkbnr/p1pp1ppp/8/1p2p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 3"
-//     slice := strings.Split(fenStr, " ")
-//     slice[3] = "-"
-//     fenStr2 := strings.Join(slice, " ")
-//     fen, _ := chess.FEN(fenStr2)
-//     game2 := chess.NewGame(fen, chess.UseNotation(chess.UCINotation{}))
-//     moves2 := game2.ValidMoves()
-//
-//     resp := make([]string, len(moves2))
-//     for i, move := range moves2 {
-//         resp[i] = move.String()
-//     }
-//
+    t0 := time.Now()
+    for i := 0; i < 10000; i++ {
+        fenStr := "rnbqkbnr/p1pp1ppp/8/1p2p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 3"
+        slice := strings.Split(fenStr, " ")
+        slice[3] = "-"
+        fenStr2 := strings.Join(slice, " ")
+        fen, _ := chess.FEN(fenStr2)
+        game2 := chess.NewGame(fen, chess.UseNotation(chess.UCINotation{}))
+        moves2 := game2.ValidMoves()
+
+        resp := make([]string, len(moves2))
+        for i, move := range moves2 {
+            resp[i] = move.String()
+        }
+    }
+    t1 := time.Now()
+    fmt.Println(t1.Sub(t0))
 //     fmt.Println(len(moves2))
 //     fmt.Println(strings.Join(resp, ","))
 }
