@@ -12,6 +12,7 @@ from numpy import absolute as np_absolute, mean as np_mean, std as np_std
 from numpy.random import choice
 from pyinstrument import Profiler
 
+from arek_chess.common_data_manager import CommonDataManager
 from arek_chess.messaging import Queue
 from arek_chess.workers.base_worker import BaseWorker
 
@@ -74,7 +75,7 @@ class SelectionWorker(BaseWorker):
                     self.candidates_queue.put(self.select(moves, turn) + self.select(captures, turn))
 
                     del self.groups[node_name]
-                    # CommonDataManager.remove_node_memory(node_name)
+                    CommonDataManager.remove_node_memory(node_name)
 
             else:
                 time.sleep(self.SLEEP)

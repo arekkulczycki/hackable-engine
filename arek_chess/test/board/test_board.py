@@ -35,9 +35,10 @@ class BoardTest(TestCase):
         assert black == result_black
 
     @parameterized.expand([
+        ("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR", "e2e3", 0.0, 0.0),
         ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "d4d5", 1.0, 3.0),
-        # ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "g5f6", ),
-        # ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "d1a4", ),
+        ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "g5f6", 6.0, 7.0),
+        ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "d1a4", 0.0, 7.0),
     ])
     def test_get_under_attack_delta(self, fen, move, result_white, result_black):
         move = Move.from_uci(move)
@@ -48,8 +49,6 @@ class BoardTest(TestCase):
 
         white = board.get_under_attack_delta(True, move, piece_type, captured_piece_type)
         black = board.get_under_attack_delta(False, move, piece_type, captured_piece_type)
-
-        print(white, black)
 
         assert white == result_white
         assert black == result_black

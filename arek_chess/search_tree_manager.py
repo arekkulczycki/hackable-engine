@@ -8,12 +8,9 @@ import time
 import traceback
 
 from anytree import Node, RenderTree, LevelOrderIter
-from chess import Move
 
-from arek_chess.common_data_manager import CommonDataManager
 from arek_chess.dispatcher import Dispatcher
 from arek_chess.messaging import Queue
-from board.board import Board
 
 
 class SearchTreeManager:
@@ -24,7 +21,7 @@ class SearchTreeManager:
     SLEEP = 0.001
     ROOT_NAME = "0"
 
-    def __init__(self, fen: str, turn: bool, depth: int = 4):
+    def __init__(self, fen: str, turn: bool, depth: int = 6):
         self.turn = turn
         self.depth = depth
 
@@ -85,7 +82,7 @@ class SearchTreeManager:
 
             returned += 1
 
-        print(RenderTree(self.root))
+        # print(RenderTree(self.root))
 
         print(sent, returned)
 
@@ -98,13 +95,17 @@ class SearchTreeManager:
         parent_name = candidate["node_name"].replace("/", "")
         parent_name_split = parent_name.split(".")
         level = len(parent_name_split)
+        move = candidate["move"]
         child_name = f"{parent_name}.{i}"
+        parent = self.get_node(parent_name)
+        # parent_board = Board(parent.fen)
+        # parent_board.push(Move.from_uci(move))
 
         node = Node(
             child_name,
-            parent=self.get_node(parent_name),
+            parent=parent,
             score=round(candidate["score"], 3),
-            move=candidate["move"],
+            move=move,
             fen=candidate["fen"],
             level=level,
         )

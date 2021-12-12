@@ -4,6 +4,9 @@ Module_docstring.
 """
 
 import time
+from multiprocessing.managers import SharedMemoryManager
+
+from pyinstrument import Profiler
 
 from arek_chess.board.board import Board
 from arek_chess.common_data_manager import CommonDataManager
@@ -27,6 +30,9 @@ class Dispatcher(StoppableThread):
         self.eval_queue = Queue(name="eval")
         self.selector_queue = Queue(name="selector")
 
+        self.memory_manager = SharedMemoryManager()
+        self.memory_manager.start()
+
         self.child_processes = []
         for _ in range(6):
             evaluator = EvalWorker(self.eval_queue, self.selector_queue)
@@ -37,6 +43,8 @@ class Dispatcher(StoppableThread):
         selector.start()
         self.child_processes.append(selector)
 
+        self.common_data_manager = CommonDataManager()
+
         super().__init__(name=name)
 
     def run(self):
@@ -44,6 +52,9 @@ class Dispatcher(StoppableThread):
 
         :return:
         """
+
+        # profiler = Profiler()
+        # profiler.start()
 
         while self.running:
             node_item = self.node_queue.get()
@@ -60,22 +71,19 @@ class Dispatcher(StoppableThread):
                 for move in moves:
                     captured_piece_type = board.get_captured_piece_type(move)
 
-                    board.push(move)
-                    fen_after = board.fen()
-                    board.pop()
-
                     self.eval_queue.put(
-                        (node_name, moves_n, move.uci(), node_fen, fen_after, not node_turn, captured_piece_type)
+                        (node_name, moves_n, move.uci(), node_fen, not node_turn, captured_piece_type)
                     )
 
             else:
                 time.sleep(self.SLEEP)
         else:
+            # profiler.stop()
+            # profiler.print(show_all=True)
             for p in self.child_processes:
                 p.terminate()
 
-    @staticmethod
-    def create_node_params_cache(board: Board, node_name) -> None:
+    def create_node_params_cache(self, board: Board, node_name) -> None:
         white_params = board.get_material_and_safety(True)
         black_params = board.get_material_and_safety(False)
         # CommonDataManager.create_set_node_memory(
@@ -84,6 +92,4 @@ class Dispatcher(StoppableThread):
         #     *black_params,
         # )
 
-        manager = CommonDataManager()
-
-        manager.set_params(node_name, white_params, black_params)
+        self.common_data_manager.set_params(node_name, white_params, black_params)

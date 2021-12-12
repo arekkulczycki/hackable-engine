@@ -10,8 +10,7 @@ from typing import Optional, Dict
 import numpy
 from keydb import KeyDB
 
-SHARED_MEMORY_SIZE = 10
-HALF_MEMORY_SIZE = 5
+SHARED_MEMORY_SIZE = 3
 
 
 class CommonDataManager:
@@ -19,8 +18,10 @@ class CommonDataManager:
     Class_docstring
     """
 
-    def __init__(self):
+    def __init__(self, memory_manager=None):
         self.db = KeyDB(host="localhost")
+
+        # self.memory_manager = memory_manager
 
     def get_score(self, key):
         """
@@ -37,29 +38,29 @@ class CommonDataManager:
         self.db.set(key, score)
 
     def get_params(self, node_name):
-        value = self.db.get(node_name)
-        return [float(v) for v in value.split(b"/")]
+        mem = self.get_node_memory(node_name)
+        return mem
+
+        # value = self.db.get(node_name)
+        # return [float(v) for v in value.split(b"/")]
 
     def set_params(self, node_name, white_params, black_params):
-        concat_params = "/".join(str(white-black) for white, black in zip(white_params, black_params))
-        self.db.set(node_name, concat_params)
+        self.create_set_node_memory(node_name, [white-black for white, black in zip(white_params, black_params)])
+
+        # concat_params = "/".join(str(white-black) for white, black in zip(white_params, black_params))
+        # self.db.set(node_name, concat_params)
 
     @staticmethod
     def create_node_memory(node_name) -> None:
         size = numpy.dtype(numpy.float16).itemsize * numpy.prod((SHARED_MEMORY_SIZE,))
-        shm = SharedMemory(name=node_name, create=True, size=size)
-        shm.close()
+        SharedMemory(name=node_name, create=True, size=size)
 
     @staticmethod
-    def create_set_node_memory(node_name, *args) -> None:
+    def create_set_node_memory(node_name, param_list) -> None:
         size = numpy.dtype(numpy.float16).itemsize * numpy.prod((SHARED_MEMORY_SIZE,))
-        try:
-            shm = SharedMemory(name=node_name, create=True, size=size)
-        except FileExistsError:
-            shm = SharedMemory(name=node_name, create=False, size=size)
+        shm = SharedMemory(name=node_name, create=True, size=size)
         data = numpy.ndarray(shape=(SHARED_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf)
-        data[:] = [round(arg, 2) for arg in args]
-        shm.close()
+        data[:] = param_list
 
     @staticmethod
     def set_node_memory(node_name, *args) -> None:
@@ -74,9 +75,7 @@ class CommonDataManager:
         except FileNotFoundError:
             print(traceback.format_exc())
         else:
-            # print(f'unlinking: {node_name}')
             shm.close()
-            # shm.unlink()
 
     @staticmethod
     def remove_node_memory(node_name) -> None:
@@ -85,21 +84,15 @@ class CommonDataManager:
         except FileNotFoundError:
             print(traceback.format_exc())
         else:
-            # print(f'unlinking: {node_name}')
             shm.close()
             shm.unlink()
 
     @staticmethod
     def get_node_memory(node_name) -> Optional[Dict]:
         try:
-            shm = SharedMemory(name=node_name, create=False)
+            shm = SharedMemory(name=node_name)
         except FileNotFoundError:  # TODO: any else errors?
+            print(traceback.format_exc())
             return None
 
-        white = numpy.ndarray(shape=(SHARED_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf)[:HALF_MEMORY_SIZE]
-        black = numpy.ndarray(shape=(SHARED_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf)[HALF_MEMORY_SIZE:]
-
-        return {
-            True: dict(zip(("material", "safety", "under_attack", "mobility", "king_mobility"), white)),
-            False: dict(zip(("material", "safety", "under_attack", "mobility", "king_mobility"), black)),
-        }
+        return numpy.ndarray(shape=(SHARED_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf).tolist()

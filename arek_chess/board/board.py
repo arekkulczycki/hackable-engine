@@ -73,13 +73,16 @@ class Board(ChessBoard):
         """
 
         def get_safety(square):
+            """
+
+            """
             # TODO: optimize somehow, with functools or numba?
             safety = 0
             for attacked_square in self.attacks(square):
                 piece_color = self.color_at(attacked_square)
-                if piece_color is not None:
+                if piece_color == color:
                     piece_type = self.piece_type_at(attacked_square)
-                    if piece_color == color and piece_type != chess.KING:
+                    if piece_type != chess.KING:
                         safety += self.get_piece_value(piece_type, color)
             return safety
 
@@ -87,10 +90,10 @@ class Board(ChessBoard):
         if self.turn == color:
             # TODO: potentially take len below without initializing SquareSet objects?
 
-            # safety coming from protected squares before
+            # safety coming from protecting other squares by the moved piece, before the move
             safety_before = get_safety(move.from_square)
 
-            # safety coming from coming from being protected
+            # safety coming from the moved piece being protected, before
             if moved_piece_type != chess.KING:
                 safety_before += len(
                     self.attackers(color, move.from_square)
@@ -98,10 +101,10 @@ class Board(ChessBoard):
 
             self.push(move)
 
-            # safety coming from protected squares after
+            # safety coming from protecting other squares by the moved piece, after
             safety_after = get_safety(move.to_square)
 
-            # safety coming from coming from being protected
+            # safety coming from the moved piece being protected, after
             if moved_piece_type != chess.KING:
                 safety_after += len(
                     self.attackers(color, move.to_square)
@@ -191,7 +194,7 @@ class Board(ChessBoard):
         if color == self.turn:
             attackers_before = self.attackers(not self.turn, move.from_square)
             self.push(move)
-            attackers_after = self.attackers(not self.turn, move.to_square)
+            attackers_after = self.attackers(self.turn, move.to_square)
             self.pop()
 
             # find sum of attacks value before the move
@@ -233,8 +236,6 @@ class Board(ChessBoard):
             for attacker in blocked_attackers:
                 if self.piece_type_at(attacker) in [chess.QUEEN, chess.ROOK, chess.BISHOP]:
                     blocked_attacks_before += get_under_attack(attacker, not self.turn)
-
-            print(attacks_after, attacks_before, blocked_attacks_after, blocked_attacks_before)
 
             return attacks_after - attacks_before + (blocked_attacks_after - blocked_attacks_before)
 
@@ -453,3 +454,7 @@ class Board(ChessBoard):
             return 9
         if piece_type == chess.KING:  # TODO: is that right?
             return 0
+
+    @staticmethod
+    def get_fen_opposite_turn(fen):
+        return fen.replace(" w ", " b ") if " w " in fen else fen.replace(" b ", " w ")
