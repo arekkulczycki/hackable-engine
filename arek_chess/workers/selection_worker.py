@@ -60,11 +60,11 @@ class SelectionWorker(BaseWorker):
                 captures = self.groups[node_name]["captures"]
                 if not captured_piece_type:
                     moves.append(
-                        {"node_name": node_name, "move": move, "turn": turn_after, "score": score}
+                        {"node_name": node_name, "move": move, "turn": turn_after, "score": score, "is_capture": False}
                     )
                 else:
                     captures.append(
-                        {"node_name": node_name, "move": move, "turn": turn_after, "score": score}
+                        {"node_name": node_name, "move": move, "turn": turn_after, "score": score, "is_capture": True}
                     )
 
                 if len(moves) + len(captures) == size:

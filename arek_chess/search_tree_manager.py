@@ -2,24 +2,63 @@
 """
 Module_docstring.
 """
-import ctypes
+
 import math
 import time
 import traceback
-from functools import reduce
 from statistics import mean
 
 from anytree import Node, RenderTree, LevelOrderIter
-from chess import Move
+from anytree.render import _is_last
 
 from arek_chess.board.board import Board
 from arek_chess.dispatcher import Dispatcher
 from arek_chess.messaging import Queue
 
+DEPTH = 6
+
+NOTHING = 0
+FIRST_LEVEL = 1
+TREE = 2
+
+PRINT = NOTHING
+
 
 class PrintableNode(Node):
     def __repr__(self):
         return f"Node({self.level}, {self.move}, {self.score})"
+
+
+class PrunedRenderTree(RenderTree):
+    def __iter__(self):
+        return self.__next(self.node, tuple())
+
+    def __next(self, node, continues, level=0):
+        yield self._RenderTree__item(node, continues, self.style)
+        children = node.children
+        new_children = ()
+        for i in range(len(children)):
+            child = children[i]
+            if self.has_living_family(child):
+                new_children += (child,)
+        children = new_children
+
+        level += 1
+        if children and (self.maxlevel is None or level < self.maxlevel):
+            children = self.childiter(children)
+            for child, is_last in _is_last(children):
+                for grandchild in self.__next(child, continues + (not is_last, ), level=level):
+                    yield grandchild
+
+    def has_living_family(self, node: Node):
+        if node.level >= DEPTH:
+            return True
+
+        for i in node.children:
+            if self.has_living_family(i):
+                return True
+
+        return False
 
 
 class SearchTreeManager:
@@ -30,7 +69,7 @@ class SearchTreeManager:
     SLEEP = 0.001
     ROOT_NAME = "0"
 
-    def __init__(self, fen: str, turn: bool, depth: int = 6):
+    def __init__(self, fen: str, turn: bool, depth: int = DEPTH):
         self.turn = turn
         self.depth = depth
 
@@ -43,10 +82,10 @@ class SearchTreeManager:
         self.board = Board()
 
         # flush for fresh score recalculation
-        from keydb import KeyDB
-
-        db = KeyDB(host="localhost")
-        db.flushdb()
+        # from keydb import KeyDB
+        #
+        # db = KeyDB(host="localhost")
+        # db.flushdb()
 
     def run_search(self):
         dispatcher = Dispatcher(self.node_queue, self.candidates_queue)
@@ -84,11 +123,9 @@ class SearchTreeManager:
                 continue
 
             parent = self.get_node(candidates[0]["node_name"])
-            # self.board._set_board_fen(parent.fen.split(" ")[0])
             parent_name_split = parent.name.split(".")
             level = len(parent_name_split)
             turn_after = level % 2 == 0 if self.turn else level % 2 == 1
-            # self.board.turn = not turn_after
 
             for i, candidate in enumerate(candidates):
                 node, is_dominated = self.create_node(i, candidate, parent, level, turn_after)
@@ -96,41 +133,39 @@ class SearchTreeManager:
                     dominated += 1
                     continue
 
-                if node.level < self.depth:
+                if node.level < self.depth or node.is_capture:
                     sent += 1
                     self.node_queue.put((node.name, node.fen, turn_after))
 
             returned += 1
 
-        # print(RenderTree(self.root))
+        best_move = self.get_best_move()
+
+        if PRINT == TREE:
+            print(PrunedRenderTree(self.root))
 
         print(sent, returned, dominated)
 
-        print(self.get_best_move())
+        print(best_move)
 
     def get_node(self, node_name):
         return self.tree[node_name]
 
     def create_node(self, i, candidate, parent, level, turn_after):
         parent_name = parent.name
-        score = candidate["score"]
-
-        move = candidate["move"]
-        fen = candidate["fen"]
         child_name = f"{parent_name}.{i}"
 
-        # self.board.push(Move.from_uci(move))
-        # fen = self.board.fen().split(" ")[0]
-        # self.board.pop()
-        #
-        # if fen_ != fen:
-        #     print(fen, fen_)
+        score = candidate["score"]
+        move = candidate["move"]
+        is_capture = candidate["is_capture"]
+        fen = candidate["fen"]
 
         node = PrintableNode(
             child_name,
             parent=parent,
             score=round(score, 3),
             move=move,
+            is_capture=is_capture,
             fen=fen,
             level=level,
         )
@@ -161,21 +196,20 @@ class SearchTreeManager:
             return False
 
         if color:
-            if trend[0] < trend[1] < trend[2] and trend[1] < 0:
-                return True
-        else:
-            if trend[0] > trend[1] > trend[2] and trend[1] > 0:
-                return True
-
-        if color:
-            if all([delta < 0 for delta in trend]) and trend[2] / trend[1] > trend[1] / trend[0]:
-                return True
-            elif trend[0] < trend[1] < trend[2] and trend[1] < 0:
-                return True
-        else:
+            # was growing, but rapidly decreasing growth
             if all([delta > 0 for delta in trend]) and trend[2] / trend[1] > trend[1] / trend[0]:
                 return True
-            elif trend[0] > trend[1] > trend[2] and trend[1] > 0:
+
+            # kept getting worse until dropped below 0
+            if trend[0] < trend[1] < trend[2] and trend[0] < 0:
+                return True
+        else:
+            # was growing, but rapidly decreasing growth
+            if all([delta < 0 for delta in trend]) and trend[2] / trend[1] > trend[1] / trend[0]:
+                return True
+
+            # kept getting worse until dropped below 0
+            if trend[0] > trend[1] > trend[2] and trend[0] > 0:
                 return True
 
         return False
@@ -187,14 +221,8 @@ class SearchTreeManager:
         deltas = [averages[i + 1] - averages[i] for i in range(3)]
         return deltas
 
-    def get_consecutive_scores(self, node: Node):
-        # TODO: WTF, just go like parent.parent.parent ???
-        parents = node.name.split('.')
-        last_name = ".".join(parents[:-4]) or "0"  # TODO: don't know why it required fallback value of 0
-        third_name = f"{last_name}.{parents[-4]}"
-        second_name = f"{third_name}.{parents[-3]}"
-        first_name = f"{second_name}.{parents[-2]}"
-        return [self.get_node(name).score for name in [first_name, second_name, third_name, last_name]]
+    def get_consecutive_scores(self, parent: Node):
+        return [parent.score, parent.parent.score, parent.parent.parent.score, parent.parent.parent.parent.score]
 
     def get_best_move(self):
         parent = None
@@ -203,26 +231,29 @@ class SearchTreeManager:
         # walk over all leafs reversed (from furthest children) and backprop scores on parents
         ordered_nodes = [node for node in LevelOrderIter(self.root)]
         for node in reversed(ordered_nodes):
-            # if node.level < self.depth:
-            #     try:
-            #         CommonDataManager.remove_node_memory(node.name)
-            #     except FileNotFoundError:
-            #         pass
-
             if node.level < 1:
                 break
+
+            if node.level < DEPTH and not hasattr(node, "has_leaf"):
+                continue
 
             if node.parent != parent:
                 parent = node.parent
                 parent.score = node.score
+                parent.has_leaf = True
             else:
-                is_white_move = (node.level % 2 == 0 and self.turn) or (node.level % 2 == 1 and not self.turn)
-                if is_white_move:
+                color = node.level % 2 == 0 if self.turn else node.level % 2 == 1
+                if not color:
                     if node.score > parent.score:
                         parent.score = node.score
+                        parent.has_leaf = True
                 else:
                     if node.score < parent.score:
                         parent.score = node.score
+                        parent.has_leaf = True
+
+            if PRINT == FIRST_LEVEL and node.level == 1:
+                print(node.move, node.score)
 
         # choose the best move among the 1st level candidates, with already scores backpropped from leaves
         score = -math.inf if self.turn else math.inf

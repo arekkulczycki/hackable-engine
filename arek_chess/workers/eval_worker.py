@@ -140,8 +140,8 @@ class EvalWorker(BaseWorker):
             True, move
         ) - self.board.len_empty_squares_around_king(False, move)
 
-        score = self.board.get_score_from_params(
-            DEFAULT_ACTION, moved_piece_type, params
+        score = self.board.calculate_score(
+            DEFAULT_ACTION, params, moved_piece_type
         )
 
         # self.common_data_manager.set_score(key, score)

@@ -38,9 +38,7 @@ class Board(ChessBoard):
         return round(score, 3)
 
     def get_score_from_params(self, action, moved_piece_type, params):
-        score = self.calculate_score(action, params, moved_piece_type)
-
-        return round(score, 3)
+        return self.calculate_score(action, params, moved_piece_type)
 
     def get_shallow_score(self, action, piece_type=None):
         """"""
@@ -310,8 +308,8 @@ class Board(ChessBoard):
 
     def get_mobility_delta(self, move: Move, captured_piece_type) -> int:
         def get_attacker_mobility(attacker, capturable_color):
-            """ 
-            :param capturable_color: this color piece attack will be counted as a legal move 
+            """
+            :param capturable_color: this color piece attack will be counted as a legal move
             """
             bb_square = chess.BB_SQUARES[attacker]
             if bb_square & self.pawns:
@@ -354,17 +352,11 @@ class Board(ChessBoard):
             ]
         )
         black_from_mobility_before = sum(
-            [
-                get_attacker_mobility(attacker, True)
-                for attacker in black_from_attackers
-            ]
+            [get_attacker_mobility(attacker, True) for attacker in black_from_attackers]
         )
 
         # find mobility delta of the moving piece
         mobility_before = get_attacker_mobility(move.from_square, not self.turn)
-
-        # TODO: optimize to only look at 1 pawn
-        pawn_mobility_before = self.get_pawn_mobility()
 
         self.push(move)
 
@@ -393,24 +385,32 @@ class Board(ChessBoard):
             ]
         )
         black_from_mobility_after = sum(
-            [
-                get_attacker_mobility(attacker, True)
-                for attacker in black_from_attackers
-            ]
+            [get_attacker_mobility(attacker, True) for attacker in black_from_attackers]
         )
 
-        pawn_mobility_after = self.get_pawn_mobility()
+        # pawn_mobility_after = self.get_pawn_mobility()
 
         self.pop()
 
-        mobility_delta = mobility_after - mobility_before if self.turn else mobility_before - mobility_after
+        # pawn_mobility_before = self.get_pawn_mobility()
+
+        # pawn_mobility_change = pawn_mobility_after - pawn_mobility_before
+
+        # pawn mobility change  TODO: WRITE MORE UNIT TESTS, STILL IS NOT SAME RESULT AS WITH ABOVE CORRECT SOLUTION
+        pawn_mobility_change = self.get_pawn_mobility_delta(move)
+
+        mobility_delta = (
+            mobility_after - mobility_before
+            if self.turn
+            else mobility_before - mobility_after
+        )
 
         mobility_delta += (
             (white_to_mobility_after - white_to_mobility_before)
             - (black_to_mobility_after - black_to_mobility_before)
             + (white_from_mobility_after - white_from_mobility_before)
             - (black_from_mobility_after - black_from_mobility_before)
-            + (pawn_mobility_after - pawn_mobility_before)
+            + pawn_mobility_change
         )
 
         # add mobility delta caused by the capture
@@ -433,8 +433,140 @@ class Board(ChessBoard):
 
         return mobility_delta
 
+    def get_pawn_mobility_delta(self, move):
+        pawn_mobility_change = 0
+
+        moving_piece_type = self.piece_type_at(move.from_square)
+
+        bb_to_square = chess.BB_SQUARES[move.to_square]
+        bb_from_square = chess.BB_SQUARES[move.from_square]
+        square_to_up = chess.lsb(chess.shift_up(bb_to_square))
+        square_to_2up = chess.lsb(chess.shift_2_up(bb_to_square))
+        square_to_down = chess.lsb(chess.shift_down(bb_to_square))
+        square_to_2down = chess.lsb(chess.shift_2_down(bb_to_square))
+        square_from_up = chess.lsb(chess.shift_up(bb_from_square))
+        square_from_2up = chess.lsb(chess.shift_2_up(bb_from_square))
+        square_from_down = chess.lsb(chess.shift_down(bb_from_square))
+        square_from_2down = chess.lsb(chess.shift_2_down(bb_from_square))
+
+        if (
+            self.piece_type_at(square_to_up) == chess.PAWN
+            and not self.color_at(square_to_up)
+            and not move.from_square == square_to_up
+            and self.piece_type_at(move.to_square) is None
+        ):
+            # black pawn blocked
+            if square_to_up >= 48 and self.piece_type_at(square_to_down) is None:
+                pawn_mobility_change += 2
+            else:
+                pawn_mobility_change += 1
+        elif (
+            square_to_2up >= 48
+            and square_to_2up != move.from_square
+            and self.piece_type_at(square_to_up) is None
+            and self.piece_type_at(square_to_2up) == chess.PAWN
+            and not self.color_at(square_to_2up)
+            and self.piece_type_at(move.to_square) is None
+        ):
+            pawn_mobility_change += 1
+
+        if (
+            self.piece_type_at(square_to_down) == chess.PAWN
+            and self.color_at(square_to_down)
+            and not move.from_square == square_to_down
+            and self.piece_type_at(move.to_square) is None
+        ):
+            # white pawn blocked
+            if square_to_down <= 16 and self.piece_type_at(square_to_up) is None:
+                pawn_mobility_change -= 2
+            else:
+                pawn_mobility_change -= 1
+        elif (
+            square_to_2down <= 16
+            and square_to_2down != move.from_square
+            and self.piece_type_at(square_to_down) is None
+            and self.piece_type_at(square_to_2down) == chess.PAWN
+            and not self.color_at(square_to_2down)
+            and self.piece_type_at(move.to_square) is None
+        ):
+            pawn_mobility_change -= 1
+
+        if self.piece_type_at(square_from_up) == chess.PAWN and not self.color_at(
+            square_from_up
+        ):
+            # black pawn unblocked
+            if (
+                square_from_up >= 48
+                and square_from_down != move.to_square
+                and self.piece_type_at(square_from_down) is None
+            ):
+                pawn_mobility_change -= 2
+            else:
+                pawn_mobility_change -= 1
+        elif (
+            square_from_2up >= 48
+            and self.piece_type_at(square_from_up) is None
+            and self.piece_type_at(square_from_2up) == chess.PAWN
+            and not self.color_at(square_from_2up)
+        ):
+            pawn_mobility_change -= 1
+
+        if self.piece_type_at(square_from_down) == chess.PAWN and self.color_at(
+            square_from_down
+        ):
+            # white pawn unblocked
+            if (
+                square_from_down <= 16
+                and square_from_up != move.to_square
+                and self.piece_type_at(square_from_up) is None
+            ):
+                pawn_mobility_change += 2
+            else:
+                pawn_mobility_change += 1
+        elif (
+            square_from_2down <= 16
+            and self.piece_type_at(square_from_down) is None
+            and self.piece_type_at(square_from_2down) == chess.PAWN
+            and not self.color_at(square_from_2down)
+        ):
+            pawn_mobility_change += 1
+
+        # pawn has moved from first rank losing additional 1 mobility
+        if moving_piece_type == chess.PAWN:
+            if move.from_square <= 16 and self.turn:
+                pawn_mobility_change -= 1
+            elif move.from_square >= 48 and not self.turn:
+                pawn_mobility_change += 1
+
+            # blocked own next move
+            if self.turn and self.piece_type_at(square_from_up) is None and self.piece_type_at(square_to_up) is not None:
+                pawn_mobility_change -= 1
+            elif not self.turn and self.piece_type_at(square_from_down) is None and self.piece_type_at(square_to_down) is not None:
+                pawn_mobility_change += 1
+            # unblocked itself by capturing
+            elif self.turn and self.piece_type_at(square_from_up) is not None and self.piece_type_at(square_to_up) is None:
+                pawn_mobility_change += 1
+            elif not self.turn and self.piece_type_at(square_from_down) is not None and self.piece_type_at(square_to_down) is None:
+                pawn_mobility_change -= 1
+
+        # pawn was captured that could have moved
+        if self.piece_type_at(move.to_square) == chess.PAWN:
+            # black pawn captured
+            if self.turn and self.piece_type_at(square_to_down) is None:
+                if move.to_square >= 48 and self.piece_type_at(square_to_2down) is None:
+                    pawn_mobility_change += 2
+                else:
+                    pawn_mobility_change += 1
+            # white pawn captured
+            elif not self.turn and self.piece_type_at(square_to_up) is None:
+                if move.to_square <= 16 and self.piece_type_at(square_to_2up) is None:
+                    pawn_mobility_change -= 2
+                else:
+                    pawn_mobility_change -= 1
+
+        return pawn_mobility_change
+
     def get_total_mobility(self, turn: bool) -> Tuple[int, int]:
-        # king_square = self.pieces(piece_type=chess.KING, color=turn).pop()
         king_square = self.king(turn)
         original_turn = self.turn
         if original_turn != turn:
@@ -492,7 +624,9 @@ class Board(ChessBoard):
             king_square = move.to_square
             king_move = True
 
-        king_mobiliity = len([square for square in self.attacks(king_square) if self.is_empty(square)])
+        king_mobiliity = len(
+            [square for square in self.attacks(king_square) if self.is_empty(square)]
+        )
 
         if king_move:
             self.pop()
