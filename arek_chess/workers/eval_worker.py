@@ -37,18 +37,20 @@ class EvalWorker(BaseWorker):
         self.selector_queue = selector_queue
 
     def setup(self):
+        self.board = Board()
+
         self.common_data_manager = CommonDataManager()
 
-        self.go_board = ctypes.CDLL("arek_chess/board/go_board/go_board.so")
-
-        self.go_board.get_mobility_and_fen.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-        self.go_board.get_mobility_and_fen.restype = ctypes.c_char_p
+        # self.go_board = ctypes.CDLL("arek_chess/board/go_board/go_board.so")
+        #
+        # self.go_board.get_mobility_and_fen.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+        # self.go_board.get_mobility_and_fen.restype = ctypes.c_char_p
 
         # self.go_board.get_fen.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
         # self.go_board.get_fen.restype = ctypes.c_char_p
 
-        self.go_board.gc.argtypes = [ctypes.c_char_p]
-        self.go_board.gc.restype = ctypes.c_void_p
+        # self.go_board.gc.argtypes = [ctypes.c_char_p]
+        # self.go_board.gc.restype = ctypes.c_void_p
 
     def run(self):
         """
@@ -73,7 +75,7 @@ class EvalWorker(BaseWorker):
                 ) = eval_item
 
                 # t0 = time.time()
-                score, fen_after = self.get_score(
+                score = self.get_score(
                     node_name, fen_before, turn_after, move, captured_piece_type
                 )
                 # print(time.time() - t0)
@@ -83,7 +85,7 @@ class EvalWorker(BaseWorker):
                         node_name,
                         size,
                         move,
-                        fen_after,
+                        fen_before,
                         turn_after,
                         captured_piece_type,
                         score,
@@ -111,76 +113,52 @@ class EvalWorker(BaseWorker):
         # if db_value is not None:
         #     return float(db_value)
 
-        board, move, moved_piece_type = self.get_move_data(
+        move, moved_piece_type = self.get_move_data(
             move_str, fen_before, not turn_after
         )
 
-        board.push(move)
-        fen = board.fen()
-        white_mobility, white_king_mobility = board.get_total_mobility(True)
-        black_mobility, black_king_mobility = board.get_total_mobility(False)
-        board.pop()
-
-        # fen_pointer = self.go_board.get_fen(fen_before.encode(), move_str.encode())
-        # fen = fen_pointer.decode()
-        # self.go_board.pyfree(fen_pointer)
-
-        # print(fen, white_mobility, black_mobility, self.go_board.get_mobility_and_fen(fen_before.encode(), move_str.encode()).decode().split(","))
-        # fen, white_mobility, black_mobility = self.go_board.get_mobility_and_fen(fen_before.encode(), move_str.encode()).decode().split(",")
-        # white_mobility, black_mobility = int(white_mobility), int(black_mobility)
-        # white_king_mobility, black_king_mobility = 0, 0
-
-        # print(fen, white_mobility, black_mobility, white_mobility_, black_mobility_)
-
         params = self.common_data_manager.get_params(node_name)
-        params[0] += board.get_material_delta(captured_piece_type)
-        safety_w = board.get_safety_delta(
+
+        params[0] += self.board.get_material_delta(captured_piece_type)
+        safety_w = self.board.get_safety_delta(
             True, move, moved_piece_type, captured_piece_type
         )
-        safety_b = board.get_safety_delta(
+        safety_b = self.board.get_safety_delta(
             False, move, moved_piece_type, captured_piece_type
         )
-        under_w = board.get_under_attack_delta(
+        under_w = self.board.get_under_attack_delta(
             True, move, moved_piece_type, captured_piece_type
         )
-        under_b = board.get_under_attack_delta(
+        under_b = self.board.get_under_attack_delta(
             False, move, moved_piece_type, captured_piece_type
         )
 
         params[1] += safety_w - safety_b
         params[2] += under_w - under_b
+        params[3] += self.board.get_mobility_delta(move, captured_piece_type)
+        params[4] = self.board.len_empty_squares_around_king(
+            True, move
+        ) - self.board.len_empty_squares_around_king(False, move)
 
-        params = [
-            *params,
-            white_mobility - black_mobility,
-            white_king_mobility - black_king_mobility,
-        ]
-
-        score = board.get_score_from_params(DEFAULT_ACTION, moved_piece_type, params)
-
-        # print(node_name, move_str, white_mobility, black_mobility, safety_w, safety_b, under_w, under_b)
-        # white_safety = self.common_data_manager.get_param(node_name, True, "safety")
-        # white_safety += board.get_safety_delta(True, move, moved_piece_type, captured_piece_type)
-        # black_safety = self.common_data_manager.get_param(node_name, False, "safety")
-        # black_safety += board.get_safety_delta(False, move, moved_piece_type, captured_piece_type)
-        # safety = (white_safety, black_safety) if white_safety and black_safety else None
-
-        # board.push(move)
-        # score = board.get_score(DEFAULT_ACTION, moved_piece_type)
+        score = self.board.get_score_from_params(
+            DEFAULT_ACTION, moved_piece_type, params
+        )
 
         # self.common_data_manager.set_score(key, score)
 
-        return score, fen
+        return score
 
     def get_move_data(
         self, move_str: str, fen_before: str, turn_before: bool
-    ) -> Tuple[Board, Move, int]:
-        board = Board(fen_before)
-        board.turn = turn_before
+    ) -> Tuple[Move, int]:
+        # board = Board(fen_before)
+        # board.turn = turn_before
+        self.board._set_board_fen(fen_before)
+        self.board.turn = turn_before
         move = Move.from_uci(move_str)
-        moved_piece_type = board.get_moving_piece_type(move)
+        moving_piece_type = self.board.get_moving_piece_type(move)
 
-        return board, move, moved_piece_type
+        return move, moving_piece_type
 
     @staticmethod
     def profile_code():

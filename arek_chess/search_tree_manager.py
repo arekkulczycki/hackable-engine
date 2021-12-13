@@ -10,6 +10,7 @@ from functools import reduce
 from statistics import mean
 
 from anytree import Node, RenderTree, LevelOrderIter
+from chess import Move
 
 from arek_chess.board.board import Board
 from arek_chess.dispatcher import Dispatcher
@@ -38,6 +39,8 @@ class SearchTreeManager:
 
         self.node_queue = Queue("node")
         self.candidates_queue = Queue("candidate")
+
+        self.board = Board()
 
         # flush for fresh score recalculation
         from keydb import KeyDB
@@ -80,13 +83,18 @@ class SearchTreeManager:
                 time.sleep(self.SLEEP)
                 continue
 
+            parent = self.get_node(candidates[0]["node_name"])
+            # self.board._set_board_fen(parent.fen.split(" ")[0])
+            parent_name_split = parent.name.split(".")
+            level = len(parent_name_split)
+            turn_after = level % 2 == 0 if self.turn else level % 2 == 1
+            # self.board.turn = not turn_after
+
             for i, candidate in enumerate(candidates):
-                node, is_dominated = self.create_node(i, candidate)
+                node, is_dominated = self.create_node(i, candidate, parent, level, turn_after)
                 if is_dominated:
                     dominated += 1
                     continue
-
-                turn_after = node.level % 2 == 0 if self.turn else node.level % 2 == 1
 
                 if node.level < self.depth:
                     sent += 1
@@ -103,29 +111,33 @@ class SearchTreeManager:
     def get_node(self, node_name):
         return self.tree[node_name]
 
-    def create_node(self, i, candidate):
-        parent_name = candidate["node_name"].replace("/", "")
-        parent = self.get_node(parent_name)
+    def create_node(self, i, candidate, parent, level, turn_after):
+        parent_name = parent.name
         score = candidate["score"]
 
-        parent_name_split = parent_name.split(".")
-        level = len(parent_name_split)
         move = candidate["move"]
+        fen = candidate["fen"]
         child_name = f"{parent_name}.{i}"
+
+        # self.board.push(Move.from_uci(move))
+        # fen = self.board.fen().split(" ")[0]
+        # self.board.pop()
+        #
+        # if fen_ != fen:
+        #     print(fen, fen_)
 
         node = PrintableNode(
             child_name,
             parent=parent,
             score=round(score, 3),
             move=move,
-            fen=candidate["fen"],
+            fen=fen,
             level=level,
         )
 
         self.tree[child_name] = node
 
-        color = (node.level % 2 == 0 and self.turn) or (node.level % 2 == 1 and not self.turn)
-        is_dominated = self.is_node_dominated(score, parent, color) if level >= 4 and level < self.depth else False
+        is_dominated = self.is_node_dominated(score, parent, turn_after) if level >= 4 and level < self.depth else False
 
         return node, is_dominated
 

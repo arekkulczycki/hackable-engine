@@ -8,10 +8,12 @@ from signal import signal, SIGTERM
 from typing import Dict, List
 
 import kmeans1d
+from chess import Move
 from numpy import absolute as np_absolute, mean as np_mean, std as np_std
 from numpy.random import choice
 from pyinstrument import Profiler
 
+from arek_chess.board.board import Board
 from arek_chess.common_data_manager import CommonDataManager
 from arek_chess.messaging import Queue
 from arek_chess.workers.base_worker import BaseWorker
@@ -42,21 +44,15 @@ class SelectionWorker(BaseWorker):
         :return:
         """
 
-        # profiler = Profiler()
-        # profiler.start()
-        #
-        # def before_exit(*args):
-        #     """"""
-        #     profiler.stop()
-        #     profiler.print(show_all=True)
-        #
-        # signal(SIGTERM, before_exit)
+        self.board = Board()
+
+        # self.profile_code()
 
         while True:
             scored_move_item = self.selector_queue.get()
 
             if scored_move_item:
-                node_name, size, move, fen_after, turn, captured_piece_type, score = scored_move_item
+                node_name, size, move, fen_before, turn_after, captured_piece_type, score = scored_move_item
                 if node_name not in self.groups:
                     self.groups[node_name] = {"size": size, "moves": [], "captures": []}
 
@@ -64,21 +60,31 @@ class SelectionWorker(BaseWorker):
                 captures = self.groups[node_name]["captures"]
                 if not captured_piece_type:
                     moves.append(
-                        {"node_name": node_name, "move": move, "fen": fen_after, "turn": turn, "score": score}
+                        {"node_name": node_name, "move": move, "turn": turn_after, "score": score}
                     )
                 else:
                     captures.append(
-                        {"node_name": node_name, "move": move, "fen": fen_after, "turn": turn, "score": score}
+                        {"node_name": node_name, "move": move, "turn": turn_after, "score": score}
                     )
 
                 if len(moves) + len(captures) == size:
-                    self.candidates_queue.put(self.select(moves, turn) + self.select(captures, turn))
+                    candidates = self.select(moves, turn_after) + self.select(captures, turn_after)
+                    self.candidates_queue.put(self.assign_fen(fen_before, not turn_after, candidates))
 
                     del self.groups[node_name]
                     CommonDataManager.remove_node_memory(node_name)
 
             else:
                 time.sleep(self.SLEEP)
+
+    def assign_fen(self, fen_before, turn_before, candidates):
+        self.board._set_board_fen(fen_before)
+        self.board.turn = turn_before
+        for candidate in candidates:
+            self.board.push(Move.from_uci(candidate["move"]))
+            candidate["fen"] = self.board.fen().split(" ")[0]
+            self.board.pop()
+        return candidates
 
     def select(self, moves: List[Dict], turn: bool) -> List[Dict]:
         """
@@ -178,3 +184,17 @@ class SelectionWorker(BaseWorker):
                     outlier_candidates.append(candidates[i])
                 del candidates[i]
         return outlier_candidates
+
+    @staticmethod
+    def profile_code():
+        profiler = Profiler()
+        profiler.start()
+
+        def before_exit(*args):
+            """"""
+            profiler.stop()
+            profiler.print(show_all=True)
+            # self.terminate()
+            exit(0)
+
+        signal(SIGTERM, before_exit)

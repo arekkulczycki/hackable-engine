@@ -10,7 +10,7 @@ from typing import Optional, Dict
 import numpy
 from keydb import KeyDB
 
-SHARED_MEMORY_SIZE = 3
+SHARED_MEMORY_SIZE = 5
 
 
 class CommonDataManager:

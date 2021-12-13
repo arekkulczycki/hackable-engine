@@ -3,6 +3,8 @@
 Module_docstring.
 """
 
+from typing import Tuple
+
 import chess
 import numpy
 from chess import Board as ChessBoard, scan_reversed, Move, square_rank
@@ -36,9 +38,7 @@ class Board(ChessBoard):
         return round(score, 3)
 
     def get_score_from_params(self, action, moved_piece_type, params):
-        score = self.calculate_score(
-            action, params, moved_piece_type
-        )
+        score = self.calculate_score(action, params, moved_piece_type)
 
         return round(score, 3)
 
@@ -73,9 +73,7 @@ class Board(ChessBoard):
         """
 
         def get_safety(square):
-            """
-
-            """
+            """ """
             # TODO: optimize somehow, with functools or numba?
             safety = 0
             for attacked_square in self.attacks(square):
@@ -219,14 +217,20 @@ class Board(ChessBoard):
 
         # calculating for opposition side
         else:
-            attacks_before = get_under_attack(move.from_square)  # self.attacks(move.from_square)
+            attacks_before = get_under_attack(
+                move.from_square
+            )  # self.attacks(move.from_square)
             self.push(move)
             blocked_attackers = self.attackers(not self.turn, move.to_square)
 
             # minus all the blocked attacks from previous position
             blocked_attacks_after = 0
             for attacker in blocked_attackers:
-                if self.piece_type_at(attacker) in [chess.QUEEN, chess.ROOK, chess.BISHOP]:
+                if self.piece_type_at(attacker) in [
+                    chess.QUEEN,
+                    chess.ROOK,
+                    chess.BISHOP,
+                ]:
                     blocked_attacks_after += get_under_attack(attacker, self.turn)
 
             attacks_after = get_under_attack(move.to_square)
@@ -234,12 +238,20 @@ class Board(ChessBoard):
 
             blocked_attacks_before = 0
             for attacker in blocked_attackers:
-                if self.piece_type_at(attacker) in [chess.QUEEN, chess.ROOK, chess.BISHOP]:
+                if self.piece_type_at(attacker) in [
+                    chess.QUEEN,
+                    chess.ROOK,
+                    chess.BISHOP,
+                ]:
                     blocked_attacks_before += get_under_attack(attacker, not self.turn)
 
-            return attacks_after - attacks_before + (blocked_attacks_after - blocked_attacks_before)
+            return (
+                attacks_after
+                - attacks_before
+                + (blocked_attacks_after - blocked_attacks_before)
+            )
 
-    def get_material_and_safety(self, color):
+    def get_material_and_safety(self, color) -> Tuple[float, float, float]:
         material = 0.0
         safety = 0.0
         under_attack = 0.0
@@ -296,27 +308,153 @@ class Board(ChessBoard):
 
         return material, safety, under_attack
 
-    def get_total_mobility(self, turn: bool):
-        king_square = self.pieces(piece_type=chess.KING, color=turn).pop()
+    def get_mobility_delta(self, move: Move, captured_piece_type) -> int:
+        def get_attacker_mobility(attacker, capturable_color):
+            """ 
+            :param capturable_color: this color piece attack will be counted as a legal move 
+            """
+            bb_square = chess.BB_SQUARES[attacker]
+            if bb_square & self.pawns:
+                return 0
+
+            mobility = 0
+            for attack in self.attacks(attacker):
+                if self.is_empty(attack) or self.color_at(attack) == capturable_color:
+                    mobility += 1
+            return mobility
+
+        # find mobility delta of pieces that were attacking the to_square, except pawns
+        white_to_attackers = self.attackers(True, move.to_square)
+        black_to_attackers = self.attackers(False, move.to_square)
+
+        # find mobility delta of pieces that were attacking the from_square, except pawns
+        white_from_attackers = self.attackers(True, move.from_square)
+        black_from_attackers = self.attackers(False, move.from_square)
+
+        # mobility of all pieces that attacked to_square
+        white_to_mobility_before = sum(
+            [
+                get_attacker_mobility(attacker, False)
+                for attacker in white_to_attackers
+                if attacker != move.from_square
+            ]
+        )
+        black_to_mobility_before = sum(
+            [
+                get_attacker_mobility(attacker, True)
+                for attacker in black_to_attackers
+                if attacker != move.from_square
+            ]
+        )
+        # mobility of all pieces that attacked from_square
+        white_from_mobility_before = sum(
+            [
+                get_attacker_mobility(attacker, False)
+                for attacker in white_from_attackers
+            ]
+        )
+        black_from_mobility_before = sum(
+            [
+                get_attacker_mobility(attacker, True)
+                for attacker in black_from_attackers
+            ]
+        )
+
+        # find mobility delta of the moving piece
+        mobility_before = get_attacker_mobility(move.from_square, not self.turn)
+
+        # TODO: optimize to only look at 1 pawn
+        pawn_mobility_before = self.get_pawn_mobility()
+
+        self.push(move)
+
+        mobility_after = get_attacker_mobility(move.to_square, self.turn)
+
+        # mobility of all pieces that attacked to_square - after the move
+        white_to_mobility_after = sum(
+            [
+                get_attacker_mobility(attacker, False)
+                for attacker in white_to_attackers
+                if attacker != move.from_square
+            ]
+        )
+        black_to_mobility_after = sum(
+            [
+                get_attacker_mobility(attacker, True)
+                for attacker in black_to_attackers
+                if attacker != move.from_square
+            ]
+        )
+        # mobility of all pieces that attacked from_square - after the move
+        white_from_mobility_after = sum(
+            [
+                get_attacker_mobility(attacker, False)
+                for attacker in white_from_attackers
+            ]
+        )
+        black_from_mobility_after = sum(
+            [
+                get_attacker_mobility(attacker, True)
+                for attacker in black_from_attackers
+            ]
+        )
+
+        pawn_mobility_after = self.get_pawn_mobility()
+
+        self.pop()
+
+        mobility_delta = mobility_after - mobility_before if self.turn else mobility_before - mobility_after
+
+        mobility_delta += (
+            (white_to_mobility_after - white_to_mobility_before)
+            - (black_to_mobility_after - black_to_mobility_before)
+            + (white_from_mobility_after - white_from_mobility_before)
+            - (black_from_mobility_after - black_from_mobility_before)
+            + (pawn_mobility_after - pawn_mobility_before)
+        )
+
+        # add mobility delta caused by the capture
+        if captured_piece_type:
+            captured_piece_mobility = get_attacker_mobility(move.to_square, self.turn)
+            if self.turn:
+                mobility_delta += captured_piece_mobility
+            else:
+                mobility_delta -= captured_piece_mobility
+
+        # print('***')
+        # print(mobility_after, mobility_before)
+        # print(white_to_mobility_after, white_to_mobility_before)
+        # print(white_from_mobility_before, white_from_mobility_after)
+        # print(black_to_mobility_after, black_to_mobility_before)
+        # print(black_from_mobility_after, black_from_mobility_before)
+        # print(pawn_mobility_after, pawn_mobility_before)
+        # if captured_piece_type:
+        #     print(captured_piece_mobility)
+
+        return mobility_delta
+
+    def get_total_mobility(self, turn: bool) -> Tuple[int, int]:
+        # king_square = self.pieces(piece_type=chess.KING, color=turn).pop()
+        king_square = self.king(turn)
         original_turn = self.turn
         if original_turn != turn:
             self.turn = not self.turn
 
-        average_move_count = 0
+        mobilty = 0
         king_mobility = 0
         # for move, is_legal in self.generate_moves_with_legal_flag(king_square):
         for move in self.generate_pseudo_legal_moves_no_castling():
             # if is_legal:
-            #     average_move_count += 0.5
-            # average_move_count += 0.5
-            average_move_count += 1
+            #     mobilty += 0.5
+            # mobilty += 0.5
+            mobilty += 1
             if move.from_square == king_square:
                 king_mobility += 1
 
         if original_turn != turn:  # turn back for safety against mutable board passed
             self.turn = not self.turn
 
-        return average_move_count, king_mobility
+        return mobilty, king_mobility
 
     def generate_moves_with_legal_flag(
         self, king_square, from_mask=chess.BB_ALL, to_mask=chess.BB_ALL
@@ -340,6 +478,72 @@ class Board(ChessBoard):
                     yield move, True
                 else:
                     yield move, False
+
+    def is_empty(self, square):
+        mask = chess.BB_SQUARES[square]
+        return not self.occupied & mask
+
+    def len_empty_squares_around_king(self, color, move: Move):
+        king_move = False
+        king_square = self.king(color)
+
+        if move.from_square == king_square:
+            self.push(move)
+            king_square = move.to_square
+            king_move = True
+
+        king_mobiliity = len([square for square in self.attacks(king_square) if self.is_empty(square)])
+
+        if king_move:
+            self.pop()
+
+        return king_mobiliity
+
+    def get_pawn_mobility(self):
+        original_turn = self.turn
+        self.turn = True
+        white_pawn_mobility = len([move for move in self.generate_pawn_moves()])
+        self.turn = False
+        black_pawn_mobility = len([move for move in self.generate_pawn_moves()])
+        self.turn = original_turn
+        return white_pawn_mobility - black_pawn_mobility
+
+    def generate_pawn_moves(self):
+        pawns = self.pawns & self.occupied_co[self.turn] & chess.BB_ALL
+        if not pawns:
+            return
+
+        # Prepare pawn advance generation.
+        if self.turn == chess.WHITE:
+            single_moves = pawns << 8 & ~self.occupied
+            double_moves = (
+                single_moves << 8 & ~self.occupied & (chess.BB_RANK_3 | chess.BB_RANK_4)
+            )
+        else:
+            single_moves = pawns >> 8 & ~self.occupied
+            double_moves = (
+                single_moves >> 8 & ~self.occupied & (chess.BB_RANK_6 | chess.BB_RANK_5)
+            )
+
+        single_moves &= chess.BB_ALL
+        double_moves &= chess.BB_ALL
+
+        # Generate single pawn moves.
+        for to_square in scan_reversed(single_moves):
+            from_square = to_square + (8 if self.turn == chess.BLACK else -8)
+
+            if square_rank(to_square) in [0, 7]:
+                yield Move(from_square, to_square, chess.QUEEN)
+                yield Move(from_square, to_square, chess.ROOK)
+                yield Move(from_square, to_square, chess.BISHOP)
+                yield Move(from_square, to_square, chess.KNIGHT)
+            else:
+                yield Move(from_square, to_square)
+
+        # Generate double pawn moves.
+        for to_square in scan_reversed(double_moves):
+            from_square = to_square + (16 if self.turn == chess.BLACK else -16)
+            yield Move(from_square, to_square)
 
     def generate_pseudo_legal_moves_no_castling(
         self, from_mask=chess.BB_ALL, to_mask=chess.BB_ALL
@@ -438,9 +642,7 @@ class Board(ChessBoard):
             piece_type = piece.piece_type
 
         if square is not None and rank == 0 and piece_type == chess.PAWN:
-            rank = (
-                chess.square_rank(square) if color else 7 - chess.square_rank(square)
-            )
+            rank = chess.square_rank(square) if color else 7 - chess.square_rank(square)
 
         if piece_type == chess.PAWN:
             return 1 + pow((rank / 5), 6)

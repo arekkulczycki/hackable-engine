@@ -60,6 +60,8 @@ class Dispatcher(StoppableThread):
             node_item = self.node_queue.get()
             if node_item:
                 node_name, node_fen, node_turn = node_item
+                short_fen = node_fen.split(' ')[0]
+
                 board = Board(node_fen)
                 board.turn = node_turn
 
@@ -72,7 +74,7 @@ class Dispatcher(StoppableThread):
                     captured_piece_type = board.get_captured_piece_type(move)
 
                     self.eval_queue.put(
-                        (node_name, moves_n, move.uci(), node_fen, not node_turn, captured_piece_type)
+                        (node_name, moves_n, move.uci(), short_fen, not node_turn, captured_piece_type)
                     )
 
             else:
@@ -84,8 +86,10 @@ class Dispatcher(StoppableThread):
                 p.terminate()
 
     def create_node_params_cache(self, board: Board, node_name) -> None:
-        white_params = board.get_material_and_safety(True)
-        black_params = board.get_material_and_safety(False)
+        white_params = [*board.get_material_and_safety(True), *board.get_total_mobility(True)]
+        black_params = [*board.get_material_and_safety(False), *board.get_total_mobility(False)]
+        # white_params = board.get_material_and_safety(True)
+        # black_params = board.get_material_and_safety(False)
         # CommonDataManager.create_set_node_memory(
         #     node_name,
         #     *white_params,
