@@ -2,13 +2,13 @@
 """
 Module_docstring.
 """
+
 import traceback
 from io import BytesIO
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional, Dict
 
 import numpy
-from keydb import KeyDB
 from larch import pickle
 
 PARAM_MEMORY_SIZE = 5
@@ -18,24 +18,6 @@ class CommonDataManager:
     """
     Class_docstring
     """
-
-    def __init__(self):
-        # TODO: remove keydb, no longer used
-        self.db = KeyDB(host="localhost")
-
-    def get_score(self, key):
-        """
-        :param key: concatenation of fen and side to play (1 is white)
-        """
-
-        return self.db.get(key)
-
-    def set_score(self, key, score):
-        """
-        :param key: concatenation of fen and side to play (1 is white)
-        """
-
-        self.db.set(key, score)
 
     @classmethod
     def get_node_params(cls, node_name):

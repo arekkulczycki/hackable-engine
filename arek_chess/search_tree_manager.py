@@ -82,12 +82,6 @@ class SearchTreeManager:
 
         CommonDataManager.set_node_board(self.ROOT_NAME, Board())
 
-        # flush for fresh score recalculation
-        # from keydb import KeyDB
-        #
-        # db = KeyDB(host="localhost")
-        # db.flushdb()
-
     def run_search(self):
         dispatcher = Dispatcher(self.node_queue, self.candidates_queue, self.to_erase_queue)
         dispatcher.start()
