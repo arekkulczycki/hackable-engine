@@ -2,15 +2,16 @@
 """
 Module_docstring.
 """
-
 import traceback
+from io import BytesIO
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional, Dict
 
 import numpy
 from keydb import KeyDB
+from larch import pickle
 
-SHARED_MEMORY_SIZE = 5
+PARAM_MEMORY_SIZE = 5
 
 
 class CommonDataManager:
@@ -18,10 +19,9 @@ class CommonDataManager:
     Class_docstring
     """
 
-    def __init__(self, memory_manager=None):
+    def __init__(self):
+        # TODO: remove keydb, no longer used
         self.db = KeyDB(host="localhost")
-
-        # self.memory_manager = memory_manager
 
     def get_score(self, key):
         """
@@ -37,35 +37,72 @@ class CommonDataManager:
 
         self.db.set(key, score)
 
-    def get_params(self, node_name):
-        mem = self.get_node_memory(node_name)
-        return mem
+    @classmethod
+    def get_node_params(cls, node_name):
+        return cls.get_node_memory(f"{node_name}.params")
 
-        # value = self.db.get(node_name)
-        # return [float(v) for v in value.split(b"/")]
+    @classmethod
+    def set_node_params(cls, node_name, white_params, black_params):
+        cls.create_set_node_memory(
+            f"{node_name}.params",
+            [white - black for white, black in zip(white_params, black_params)],
+        )
 
-    def set_params(self, node_name, white_params, black_params):
-        self.create_set_node_memory(node_name, [white-black for white, black in zip(white_params, black_params)])
+    @staticmethod
+    def get_node_board(node_name):
+        try:
+            shm = SharedMemory(name=f"{node_name}.board")
+        except FileNotFoundError:  # TODO: any else errors?
+            print(traceback.format_exc())
+            return None
 
-        # concat_params = "/".join(str(white-black) for white, black in zip(white_params, black_params))
-        # self.db.set(node_name, concat_params)
+        # TODO: tobytes copies the data which could be just read into loads, find improvement
+        return pickle.loads(shm.buf.tobytes())
+
+    @staticmethod
+    def set_node_board(node_name, board):
+        stream = BytesIO()
+        pickle.dump(board, stream, protocol=5)
+        buffer = stream.getbuffer()
+        try:
+            shm = SharedMemory(
+                name=f"{node_name}.board",
+                create=True,
+                size=buffer.itemsize * buffer.nbytes,
+            )
+        except FileExistsError:
+            shm = SharedMemory(name=f"{node_name}.board", create=False)
+            shm.close()
+            shm.unlink()
+
+            shm = SharedMemory(
+                name=f"{node_name}.board",
+                create=True,
+                size=buffer.itemsize * buffer.nbytes,
+            )
+
+        shm.buf[:] = buffer
 
     @staticmethod
     def create_node_memory(node_name) -> None:
-        size = numpy.dtype(numpy.float16).itemsize * numpy.prod((SHARED_MEMORY_SIZE,))
+        size = numpy.dtype(numpy.float16).itemsize * PARAM_MEMORY_SIZE
         SharedMemory(name=node_name, create=True, size=size)
 
     @staticmethod
     def create_set_node_memory(node_name, param_list) -> None:
-        size = numpy.dtype(numpy.float16).itemsize * numpy.prod((SHARED_MEMORY_SIZE,))
+        size = numpy.dtype(numpy.float16).itemsize * PARAM_MEMORY_SIZE
         shm = SharedMemory(name=node_name, create=True, size=size)
-        data = numpy.ndarray(shape=(SHARED_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf)
+        data = numpy.ndarray(
+            shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
+        )
         data[:] = param_list
 
     @staticmethod
     def set_node_memory(node_name, *args) -> None:
         shm = SharedMemory(name=node_name, create=False)
-        data = numpy.ndarray(shape=(SHARED_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf)
+        data = numpy.ndarray(
+            shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
+        )
         data[:] = (*args,)
 
     @staticmethod
@@ -79,13 +116,26 @@ class CommonDataManager:
 
     @staticmethod
     def remove_node_memory(node_name) -> None:
-        try:
-            shm = SharedMemory(name=node_name, create=False)
-        except FileNotFoundError:
-            print(traceback.format_exc())
-        else:
+        shm_board = SharedMemory(name=f"{node_name}.board", create=False)
+        shm_params = SharedMemory(name=f"{node_name}.params", create=False)
+
+        for shm in (shm_board, shm_params):
             shm.close()
             shm.unlink()
+
+    @staticmethod
+    def remove_node_params_memory(node_name) -> None:
+        shm = SharedMemory(name=f"{node_name}.params", create=False)
+
+        shm.close()
+        shm.unlink()
+
+    @staticmethod
+    def remove_node_board_memory(node_name) -> None:
+        shm = SharedMemory(name=f"{node_name}.board", create=False)
+
+        shm.close()
+        shm.unlink()
 
     @staticmethod
     def get_node_memory(node_name) -> Optional[Dict]:
@@ -95,4 +145,6 @@ class CommonDataManager:
             print(traceback.format_exc())
             return None
 
-        return numpy.ndarray(shape=(SHARED_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf).tolist()
+        return numpy.ndarray(
+            shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
+        ).tolist()

@@ -3,9 +3,7 @@
 Module_docstring.
 """
 
-import ctypes
 import time
-import traceback
 from signal import signal, SIGTERM
 from typing import Tuple
 
@@ -37,9 +35,10 @@ class EvalWorker(BaseWorker):
         self.selector_queue = selector_queue
 
     def setup(self):
-        self.board = Board()
+        """"""
+        # self.board = Board()
 
-        self.common_data_manager = CommonDataManager()
+        # self.common_data_manager = CommonDataManager()
 
         # self.go_board = ctypes.CDLL("arek_chess/board/go_board/go_board.so")
         #
@@ -58,7 +57,7 @@ class EvalWorker(BaseWorker):
         :return:
         """
 
-        self.setup()
+        # self.setup()
 
         # self.profile_code()
 
@@ -76,7 +75,7 @@ class EvalWorker(BaseWorker):
 
                 # t0 = time.time()
                 score = self.get_score(
-                    node_name, fen_before, turn_after, move, captured_piece_type
+                    node_name, turn_after, move, captured_piece_type
                 )
                 # print(time.time() - t0)
 
@@ -85,7 +84,6 @@ class EvalWorker(BaseWorker):
                         node_name,
                         size,
                         move,
-                        fen_before,
                         turn_after,
                         captured_piece_type,
                         score,
@@ -97,7 +95,6 @@ class EvalWorker(BaseWorker):
     def get_score(
         self,
         node_name: str,
-        fen_before: str,
         turn_after: bool,
         move_str: str,
         captured_piece_type: int,
@@ -113,34 +110,34 @@ class EvalWorker(BaseWorker):
         # if db_value is not None:
         #     return float(db_value)
 
-        move, moved_piece_type = self.get_move_data(
-            move_str, fen_before, not turn_after
+        board, move, moved_piece_type = self.get_move_data(
+            move_str, node_name, not turn_after
         )
 
-        params = self.common_data_manager.get_params(node_name)
+        params = CommonDataManager.get_node_params(node_name)
 
-        params[0] += self.board.get_material_delta(captured_piece_type)
-        safety_w = self.board.get_safety_delta(
+        params[0] += board.get_material_delta(captured_piece_type)
+        safety_w = board.get_safety_delta(
             True, move, moved_piece_type, captured_piece_type
         )
-        safety_b = self.board.get_safety_delta(
+        safety_b = board.get_safety_delta(
             False, move, moved_piece_type, captured_piece_type
         )
-        under_w = self.board.get_under_attack_delta(
+        under_w = board.get_under_attack_delta(
             True, move, moved_piece_type, captured_piece_type
         )
-        under_b = self.board.get_under_attack_delta(
+        under_b = board.get_under_attack_delta(
             False, move, moved_piece_type, captured_piece_type
         )
 
         params[1] += safety_w - safety_b
         params[2] += under_w - under_b
-        params[3] += self.board.get_mobility_delta(move, captured_piece_type)
-        params[4] = self.board.len_empty_squares_around_king(
+        params[3] += board.get_mobility_delta(move, captured_piece_type)
+        params[4] = board.len_empty_squares_around_king(
             True, move
-        ) - self.board.len_empty_squares_around_king(False, move)
+        ) - board.len_empty_squares_around_king(False, move)
 
-        score = self.board.calculate_score(
+        score = board.calculate_score(
             DEFAULT_ACTION, params, moved_piece_type
         )
 
@@ -149,16 +146,17 @@ class EvalWorker(BaseWorker):
         return score
 
     def get_move_data(
-        self, move_str: str, fen_before: str, turn_before: bool
-    ) -> Tuple[Move, int]:
+        self, move_str: str, node_name: str, turn_before: bool
+    ) -> Tuple[Board, Move, int]:
+        board = CommonDataManager.get_node_board(node_name)
         # board = Board(fen_before)
-        # board.turn = turn_before
-        self.board._set_board_fen(fen_before)
-        self.board.turn = turn_before
+        board.turn = turn_before
+        # self.board._set_board_fen(fen_before)
+        # self.board.turn = turn_before
         move = Move.from_uci(move_str)
-        moving_piece_type = self.board.get_moving_piece_type(move)
+        moving_piece_type = board.get_moving_piece_type(move)
 
-        return move, moving_piece_type
+        return board, move, moving_piece_type
 
     @staticmethod
     def profile_code():

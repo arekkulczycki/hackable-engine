@@ -12,10 +12,10 @@ from anytree import Node, RenderTree, LevelOrderIter
 from anytree.render import _is_last
 
 from arek_chess.board.board import Board
+from arek_chess.common_data_manager import CommonDataManager
+from arek_chess.constants import DEPTH
 from arek_chess.dispatcher import Dispatcher
 from arek_chess.messaging import Queue
-
-DEPTH = 6
 
 NOTHING = 0
 FIRST_LEVEL = 1
@@ -78,8 +78,9 @@ class SearchTreeManager:
 
         self.node_queue = Queue("node")
         self.candidates_queue = Queue("candidate")
+        self.to_erase_queue = Queue("candidate")
 
-        self.board = Board()
+        CommonDataManager.set_node_board(self.ROOT_NAME, Board())
 
         # flush for fresh score recalculation
         # from keydb import KeyDB
@@ -88,7 +89,7 @@ class SearchTreeManager:
         # db.flushdb()
 
     def run_search(self):
-        dispatcher = Dispatcher(self.node_queue, self.candidates_queue)
+        dispatcher = Dispatcher(self.node_queue, self.candidates_queue, self.to_erase_queue)
         dispatcher.start()
 
         try:
@@ -127,10 +128,11 @@ class SearchTreeManager:
             level = len(parent_name_split)
             turn_after = level % 2 == 0 if self.turn else level % 2 == 1
 
-            for i, candidate in enumerate(candidates):
-                node, is_dominated = self.create_node(i, candidate, parent, level, turn_after)
+            for candidate in candidates:
+                node, is_dominated = self.create_node(candidate, parent, level, turn_after)
                 if is_dominated:
                     dominated += 1
+                    self.to_erase_queue.put(node.name)
                     continue
 
                 if node.level < self.depth or node.is_capture:
@@ -151,9 +153,9 @@ class SearchTreeManager:
     def get_node(self, node_name):
         return self.tree[node_name]
 
-    def create_node(self, i, candidate, parent, level, turn_after):
+    def create_node(self, candidate, parent, level, turn_after):
         parent_name = parent.name
-        child_name = f"{parent_name}.{i}"
+        child_name = f"{parent_name}.{candidate['i']}"
 
         score = candidate["score"]
         move = candidate["move"]

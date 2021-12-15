@@ -6,6 +6,11 @@ faster-fifo==1.2.*
 parametrized==0.8.*
 anytree==2.8.*
 
+# larch-pickle github repo
+# https://github.com/kochelmonster/larch-pickle
+# version 1.4.2 installed via command
+# python setup.py build_ext -I /usr/include/boost install
+
 # training
 
 

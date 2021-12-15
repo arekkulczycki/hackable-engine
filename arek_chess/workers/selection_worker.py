@@ -15,6 +15,7 @@ from pyinstrument import Profiler
 
 from arek_chess.board.board import Board
 from arek_chess.common_data_manager import CommonDataManager
+from arek_chess.constants import DEPTH
 from arek_chess.messaging import Queue
 from arek_chess.workers.base_worker import BaseWorker
 
@@ -30,11 +31,12 @@ class SelectionWorker(BaseWorker):
 
     SLEEP = 0.001
 
-    def __init__(self, selector_queue: Queue, candidates_queue: Queue):
+    def __init__(self, selector_queue: Queue, candidates_queue: Queue, to_erase_queue: Queue):
         super().__init__()
 
         self.selector_queue = selector_queue
         self.candidates_queue = candidates_queue
+        self.to_erase_queue = to_erase_queue
 
         self.groups = {}
 
@@ -44,7 +46,11 @@ class SelectionWorker(BaseWorker):
         :return:
         """
 
-        self.board = Board()
+        signal(SIGTERM, self.before_exit)
+
+        self.hanging_nodes = set()
+
+        # self.pickler = Pickler(with_refs=False, protocol=5)
 
         # self.profile_code()
 
@@ -52,7 +58,7 @@ class SelectionWorker(BaseWorker):
             scored_move_item = self.selector_queue.get()
 
             if scored_move_item:
-                node_name, size, move, fen_before, turn_after, captured_piece_type, score = scored_move_item
+                node_name, size, move, turn_after, captured_piece_type, score = scored_move_item
                 if node_name not in self.groups:
                     self.groups[node_name] = {"size": size, "moves": [], "captures": []}
 
@@ -69,21 +75,38 @@ class SelectionWorker(BaseWorker):
 
                 if len(moves) + len(captures) == size:
                     candidates = self.select(moves, turn_after) + self.select(captures, turn_after)
-                    self.candidates_queue.put(self.assign_fen(fen_before, not turn_after, candidates))
+                    self.candidates_queue.put(self.assign_fen(node_name, not turn_after, candidates))
 
                     del self.groups[node_name]
                     CommonDataManager.remove_node_memory(node_name)
 
             else:
-                time.sleep(self.SLEEP)
+                node_name_to_erase = self.to_erase_queue.get()
+                if node_name_to_erase:
+                    CommonDataManager.remove_node_board_memory(node_name_to_erase)
+                    try:
+                        self.hanging_nodes.remove(node_name_to_erase)
+                    except KeyError:
+                        continue
+                else:
+                    # nothing done, wait a little
+                    time.sleep(self.SLEEP)
 
-    def assign_fen(self, fen_before, turn_before, candidates):
-        self.board._set_board_fen(fen_before)
-        self.board.turn = turn_before
-        for candidate in candidates:
-            self.board.push(Move.from_uci(candidate["move"]))
-            candidate["fen"] = self.board.fen().split(" ")[0]
-            self.board.pop()
+    def assign_fen(self, node_name, turn_before, candidates):
+        board = CommonDataManager.get_node_board(node_name)
+        board.turn = turn_before
+
+        for i, candidate in enumerate(candidates):
+            board.push(Move.from_uci(candidate["move"]))
+
+            candidate["i"] = i
+            candidate["fen"] = board.fen().split(" ")[0]
+            candidate_name = f"{node_name}.{i}"
+            CommonDataManager.set_node_board(candidate_name, board)
+            if len(node_name.split(".")) >= DEPTH:
+                self.hanging_nodes.add(candidate_name)
+
+            board.pop()
         return candidates
 
     def select(self, moves: List[Dict], turn: bool) -> List[Dict]:
@@ -185,16 +208,31 @@ class SelectionWorker(BaseWorker):
                 del candidates[i]
         return outlier_candidates
 
-    @staticmethod
-    def profile_code():
+    def before_exit(self, *args):
+        """"""
+
+        for node_name in self.hanging_nodes:
+            try:
+                CommonDataManager.remove_node_board_memory(node_name)
+            except:
+                continue
+
+        exit(0)
+
+    def profile_code(self):
         profiler = Profiler()
         profiler.start()
 
         def before_exit(*args):
             """"""
+            for node_name in self.hanging_nodes:
+                try:
+                    CommonDataManager.remove_node_board_memory(node_name)
+                except:
+                    continue
+
             profiler.stop()
             profiler.print(show_all=True)
-            # self.terminate()
             exit(0)
 
         signal(SIGTERM, before_exit)

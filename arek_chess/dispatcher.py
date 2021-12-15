@@ -23,7 +23,7 @@ class Dispatcher(StoppableThread):
 
     SLEEP = 0.01
 
-    def __init__(self, node_queue: Queue, candidates_queue: Queue, name=None):
+    def __init__(self, node_queue: Queue, candidates_queue: Queue, to_erase_queue: Queue, name=None):
         self.node_queue = node_queue
         self.candidates_queue = candidates_queue
 
@@ -39,7 +39,7 @@ class Dispatcher(StoppableThread):
             evaluator.start()
             self.child_processes.append(evaluator)
 
-        selector = SelectionWorker(self.selector_queue, self.candidates_queue)
+        selector = SelectionWorker(self.selector_queue, self.candidates_queue, to_erase_queue)
         selector.start()
         self.child_processes.append(selector)
 
@@ -88,12 +88,5 @@ class Dispatcher(StoppableThread):
     def create_node_params_cache(self, board: Board, node_name) -> None:
         white_params = [*board.get_material_and_safety(True), *board.get_total_mobility(True)]
         black_params = [*board.get_material_and_safety(False), *board.get_total_mobility(False)]
-        # white_params = board.get_material_and_safety(True)
-        # black_params = board.get_material_and_safety(False)
-        # CommonDataManager.create_set_node_memory(
-        #     node_name,
-        #     *white_params,
-        #     *black_params,
-        # )
 
-        self.common_data_manager.set_params(node_name, white_params, black_params)
+        self.common_data_manager.set_node_params(node_name, white_params, black_params)
