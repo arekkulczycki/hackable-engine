@@ -3,11 +3,47 @@
 Module_docstring.
 """
 
-from typing import Tuple
+from typing import Tuple, Dict, Optional
 
-import chess
 import numpy
-from chess import Board as ChessBoard, scan_reversed, Move, square_rank
+from chess import Board as ChessBoard, scan_reversed, Move, square_rank, _attack_table, Square, Bitboard, \
+    BB_KNIGHT_ATTACKS, BB_KING_ATTACKS, SquareSet
+from chess import (
+    WHITE,
+    BLACK,
+    KING,
+    square_file,
+    ROOK,
+    F8,
+    G8,
+    D8,
+    C8,
+    C1,
+    D1,
+    G1,
+    F1,
+    BB_SQUARES,
+    QUEEN,
+    BISHOP,
+    PAWN,
+    KNIGHT,
+    shift_2_down,
+    lsb,
+    shift_up,
+    shift_2_up,
+    shift_down,
+    BB_ALL,
+    BB_RANK_6,
+    BB_RANK_5,
+    BB_RANK_4,
+    BB_RANK_3,
+    BB_PAWN_ATTACKS,
+)
+
+BB_DIAG_MASKS, BB_DIAG_ATTACKS = _attack_table([-9, -7, 7, 9])
+BB_FILE_MASKS, BB_FILE_ATTACKS = _attack_table([-8, 8])
+BB_RANK_MASKS, BB_RANK_ATTACKS = _attack_table([-1, 1])
+FLAT_BB_PAWN_ATTACKS = [item for sublist in BB_PAWN_ATTACKS for item in sublist]
 
 
 class Board(ChessBoard):
@@ -40,9 +76,6 @@ class Board(ChessBoard):
     def get_score_from_params(self, action, moved_piece_type, params):
         return self.calculate_score(action, params, moved_piece_type)
 
-    def get_shallow_score(self, action, piece_type=None):
-        """"""
-
     @staticmethod
     def calculate_score(action, params, piece_type=None):
         # TODO: when no pieces on board, transform action params of pieces to columns of pawns to use! train pawn endgames separately
@@ -50,6 +83,105 @@ class Board(ChessBoard):
             0  # 10.0 * action[piece_type - 1 + 4] if piece_type is not None else 0
         )
         return numpy.dot(action, params) + piece_type_bonus
+
+    def get_board_state(self) -> Dict:
+        return {
+            "pawns": self.pawns,
+            "knights": self.knights,
+            "bishops": self.bishops,
+            "rooks": self.rooks,
+            "queens": self.queens,
+            "kings": self.kings,
+            "occupied_w": self.occupied_co[WHITE],
+            "occupied_b": self.occupied_co[BLACK],
+            "occupied": self.occupied,    
+            "promoted": self.promoted,
+            "turn": self.turn,
+            "castling_rights": self.castling_rights,
+            "ep_square": self.ep_square,
+        }
+    
+    def restore_board_state(self, state: Dict):
+        self.pawns = state["pawns"]
+        self.knights = state["knights"]
+        self.bishops = state["bishops"]
+        self.rooks = state["rooks"]
+        self.queens = state["queens"]
+        self.kings = state["kings"]
+        self.occupied_co[WHITE] = state["occupied_w"]
+        self.occupied_co[BLACK] = state["occupied_b"]
+        self.occupied = state["occupied"]
+        self.promoted = state["promoted"]
+        self.turn = state["turn"]
+        self.castling_rights = state["castling_rights"]
+        self.ep_square = state["ep_square"]
+
+    def light_push(self, move: Move, state_required: bool = True) -> Optional[Dict]:
+        board_state = self.get_board_state() if state_required else None
+
+        to_bb = BB_SQUARES[move.to_square]
+
+        piece_type = self._remove_piece_at(move.from_square)
+
+        promoted = False
+        # Promotion.
+        if move.promotion:
+            promoted = True
+            piece_type = move.promotion
+
+        # Castling.
+        castling = piece_type == KING and self.occupied_co[self.turn] & to_bb
+        if castling:
+            a_side = square_file(move.to_square) < square_file(move.from_square)
+
+            self._remove_piece_at(move.from_square)
+            self._remove_piece_at(move.to_square)
+
+            if a_side:
+                self._set_piece_at(C1 if self.turn == WHITE else C8, KING, self.turn)
+                self._set_piece_at(D1 if self.turn == WHITE else D8, ROOK, self.turn)
+            else:
+                self._set_piece_at(G1 if self.turn == WHITE else G8, KING, self.turn)
+                self._set_piece_at(F1 if self.turn == WHITE else F8, ROOK, self.turn)
+
+        # Put the piece on the target square.
+        if not castling:
+            was_promoted = bool(self.promoted & to_bb)
+            self._set_piece_at(move.to_square, piece_type, self.turn, promoted)
+
+            captured_piece_type = self.piece_type_at(move.to_square)
+            if captured_piece_type:
+                self._push_capture(
+                    move, move.to_square, captured_piece_type, was_promoted
+                )
+
+        # Swap turn.
+        self.turn = not self.turn
+
+        return board_state
+
+    def light_pop(self, state: Dict):
+        self.restore_board_state(state)
+
+    #     # perform only necessary part or restore
+    #     self.pawns = self.pawns
+    #     self.knights = self.knights
+    #     self.bishops = self.bishops
+    #     self.rooks = self.rooks
+    #     self.queens = self.queens
+    #     self.kings = self.kings
+    #
+    #     self.occupied_co[WHITE] = self.occupied_w
+    #     self.occupied_co[BLACK] = self.occupied_b
+    #     self.occupied = self.occupied
+    #
+    #     self.promoted = self.promoted
+    #
+    #     self.turn = self.turn
+    #     self.castling_rights = self.castling_rights
+    #     self.ep_square = self.ep_square
+    #     self.halfmove_clock = self.halfmove_clock
+    #     self.fullmove_number = self.fullmove_number
 
     def get_material_delta(self, captured_piece_type):
         # if white to move then capture is + in material, otherwise is -
@@ -72,13 +204,13 @@ class Board(ChessBoard):
 
         def get_safety(square):
             """ """
-            # TODO: optimize somehow, with functools or numba?
+            # TODO: optimize somehow, with functools or something?
             safety = 0
             for attacked_square in self.attacks(square):
                 piece_color = self.color_at(attacked_square)
                 if piece_color == color:
                     piece_type = self.piece_type_at(attacked_square)
-                    if piece_type != chess.KING:
+                    if piece_type != KING:
                         safety += self.get_piece_value(piece_type, color)
             return safety
 
@@ -90,23 +222,25 @@ class Board(ChessBoard):
             safety_before = get_safety(move.from_square)
 
             # safety coming from the moved piece being protected, before
-            if moved_piece_type != chess.KING:
+            if moved_piece_type != KING:
                 safety_before += len(
                     self.attackers(color, move.from_square)
                 ) * self.get_piece_value(moved_piece_type, color)
 
-            self.push(move)
+            # self.push(move)
+            board_state = self.light_push(move)
 
             # safety coming from protecting other squares by the moved piece, after
             safety_after = get_safety(move.to_square)
 
             # safety coming from the moved piece being protected, after
-            if moved_piece_type != chess.KING:
+            if moved_piece_type != KING:
                 safety_after += len(
                     self.attackers(color, move.to_square)
                 ) * self.get_piece_value(moved_piece_type, color)
 
-            self.pop()
+            # self.pop()
+            self.light_pop(board_state)
 
             return safety_after - safety_before
 
@@ -135,7 +269,8 @@ class Board(ChessBoard):
 
             attackers_before = self.attackers(color, move.to_square)
 
-            self.push(move)
+            # self.push(move)
+            board_state = self.light_push(move)
 
             attackers_after = self.attackers(color, move.to_square)
 
@@ -148,7 +283,8 @@ class Board(ChessBoard):
                         if piece_type:
                             safety_loss -= self.get_piece_value(piece_type, piece_color)
 
-            self.pop()
+            # self.pop()
+            self.light_pop(board_state)
 
             for attacker in attackers_after:
                 for square in self.attacks(attacker):
@@ -189,9 +325,14 @@ class Board(ChessBoard):
         # if calculating same color as making the move
         if color == self.turn:
             attackers_before = self.attackers(not self.turn, move.from_square)
-            self.push(move)
+
+            # self.push(move)
+            board_state = self.light_push(move)
+
             attackers_after = self.attackers(self.turn, move.to_square)
-            self.pop()
+
+            # self.pop()
+            self.light_pop(board_state)
 
             # find sum of attacks value before the move
             under_attack_before = 0
@@ -200,7 +341,8 @@ class Board(ChessBoard):
             for attacker in attackers_after:
                 under_attack_before += get_under_attack(attacker)
 
-            self.push(move)
+            # self.push(move)
+            self.light_push(move, False)
 
             # find sum of attacks value after the move
             under_attack_after = 0
@@ -209,7 +351,8 @@ class Board(ChessBoard):
             for attacker in attackers_after:
                 under_attack_after += get_under_attack(attacker)
 
-            self.pop()
+            # self.pop()
+            self.light_pop(board_state)
 
             return under_attack_after - under_attack_before
 
@@ -218,28 +361,33 @@ class Board(ChessBoard):
             attacks_before = get_under_attack(
                 move.from_square
             )  # self.attacks(move.from_square)
-            self.push(move)
+
+            # self.push(move)
+            board_state = self.light_push(move)
+
             blocked_attackers = self.attackers(not self.turn, move.to_square)
 
             # minus all the blocked attacks from previous position
             blocked_attacks_after = 0
             for attacker in blocked_attackers:
                 if self.piece_type_at(attacker) in [
-                    chess.QUEEN,
-                    chess.ROOK,
-                    chess.BISHOP,
+                    QUEEN,
+                    ROOK,
+                    BISHOP,
                 ]:
                     blocked_attacks_after += get_under_attack(attacker, self.turn)
 
             attacks_after = get_under_attack(move.to_square)
-            self.pop()
+
+            # self.pop()
+            self.light_pop(board_state)
 
             blocked_attacks_before = 0
             for attacker in blocked_attackers:
                 if self.piece_type_at(attacker) in [
-                    chess.QUEEN,
-                    chess.ROOK,
-                    chess.BISHOP,
+                    QUEEN,
+                    ROOK,
+                    BISHOP,
                 ]:
                     blocked_attacks_before += get_under_attack(attacker, not self.turn)
 
@@ -255,10 +403,10 @@ class Board(ChessBoard):
         under_attack = 0.0
         n_pawns = 0
 
-        for pawn in self.pieces(piece_type=chess.PAWN, color=color):
+        for pawn in self.pieces(piece_type=PAWN, color=color):
             n_pawns += 1
-            rank = chess.square_rank(pawn) if color else 7 - chess.square_rank(pawn)
-            val = self.get_piece_value(chess.PAWN, color, rank=rank)
+            rank = square_rank(pawn) if color else 7 - square_rank(pawn)
+            val = self.get_piece_value(PAWN, color, rank=rank)
             material += val
 
             attackers = self.attackers(color, pawn)
@@ -267,7 +415,7 @@ class Board(ChessBoard):
             for _ in self.attackers(not color, pawn):
                 under_attack += val
 
-        for knight in self.pieces(piece_type=chess.KNIGHT, color=color):
+        for knight in self.pieces(piece_type=KNIGHT, color=color):
             # TODO: account for stage of game
             val = 3
             material += val
@@ -277,9 +425,9 @@ class Board(ChessBoard):
                 under_attack += val
 
         bishop_pair = 0
-        for bishop in self.pieces(piece_type=chess.BISHOP, color=color):
+        for bishop in self.pieces(piece_type=BISHOP, color=color):
             val = self.get_piece_value(
-                chess.BISHOP, color, n_pawns=n_pawns, bishop_pair=bishop_pair
+                BISHOP, color, n_pawns=n_pawns, bishop_pair=bishop_pair
             )
             material += val
             for _ in self.attackers(color, bishop):
@@ -288,7 +436,7 @@ class Board(ChessBoard):
                 under_attack += val
             bishop_pair += 1
 
-        for rook in self.pieces(piece_type=chess.ROOK, color=color):
+        for rook in self.pieces(piece_type=ROOK, color=color):
             val = 4.5
             material += val
             for _ in self.attackers(color, rook):
@@ -296,7 +444,7 @@ class Board(ChessBoard):
             for _ in self.attackers(not color, rook):
                 under_attack += val
 
-        for queen in self.pieces(piece_type=chess.QUEEN, color=color):
+        for queen in self.pieces(piece_type=QUEEN, color=color):
             val = 9
             material += val
             for _ in self.attackers(color, queen):
@@ -306,20 +454,84 @@ class Board(ChessBoard):
 
         return material, safety, under_attack
 
+    # def get_numba_board_state(self):
+    #     d = NumbaDict.empty(
+    #         key_type=types.unicode_type,
+    #         value_type=types.uint64,
+    #     )
+    #     for k, v in (
+    #         ("pawns", numpy.uint64(self.pawns)),
+    #         ("knights", numpy.uint64(self.knights)),
+    #         ("bishops", numpy.uint64(self.bishops)),
+    #         ("rooks", numpy.uint64(self.rooks)),
+    #         ("queens", numpy.uint64(self.queens)),
+    #         ("kings", numpy.uint64(self.kings)),
+    #         ("occupied_w", numpy.uint64(self.occupied_co[WHITE])),
+    #         ("occupied_b", numpy.uint64(self.occupied_co[BLACK])),
+    #         ("occupied", numpy.uint64(self.occupied)),
+    #         ("promoted", numpy.uint64(self.promoted)),
+    #         ("turn", numpy.uint64(self.turn)),
+    #         ("castling_rights", numpy.uint64(self.castling_rights)),
+    #     ):
+    #         d[k] = v
+    #     return d
+
+    # def numba_attacks(self, square):
+    #     state = self.get_numba_board_state()
+    #     return SquareSet(attacks_mask(state, square))
+
+    def attacks_mask(self, square: Square) -> Bitboard:
+        bb_square = BB_SQUARES[square]
+
+        if bb_square & self.pawns:
+            color = bool(bb_square & self.occupied_co[WHITE])
+            return BB_PAWN_ATTACKS[color][square]
+        elif bb_square & self.knights:
+            return BB_KNIGHT_ATTACKS[square]
+        elif bb_square & self.kings:
+            return BB_KING_ATTACKS[square]
+        else:
+            attacks = 0
+            if bb_square & self.bishops or bb_square & self.queens:
+                attacks = BB_DIAG_ATTACKS[square][BB_DIAG_MASKS[square] & self.occupied]
+            if bb_square & self.rooks or bb_square & self.queens:
+                attacks |= (BB_RANK_ATTACKS[square][BB_RANK_MASKS[square] & self.occupied] |
+                            BB_FILE_ATTACKS[square][BB_FILE_MASKS[square] & self.occupied])
+            return attacks
+
+    def attacks(self, square: Square) -> SquareSet:
+        return SquareSet(self.attacks_mask(square))
+
+    def mobility_mask(self, square: Square, color: bool) -> Bitboard:
+        bb_square = BB_SQUARES[square]
+        opposite_or_empty = BB_ALL & ~self.occupied_co[not color]
+
+        if bb_square & self.knights:
+            return BB_KNIGHT_ATTACKS[square] & opposite_or_empty
+        elif bb_square & self.kings:
+            return BB_KING_ATTACKS[square] & opposite_or_empty
+        else:
+            attacks = 0
+            if bb_square & self.bishops or bb_square & self.queens:
+                attacks = BB_DIAG_ATTACKS[square][BB_DIAG_MASKS[square] & self.occupied]
+            if bb_square & self.rooks or bb_square & self.queens:
+                attacks |= (BB_RANK_ATTACKS[square][BB_RANK_MASKS[square] & self.occupied] |
+                            BB_FILE_ATTACKS[square][BB_FILE_MASKS[square] & self.occupied])
+            return attacks & opposite_or_empty
+
+    def mobility(self, square: Square, color: bool) -> SquareSet:
+        return SquareSet(self.mobility_mask(square, color))
+
     def get_mobility_delta(self, move: Move, captured_piece_type) -> int:
         def get_attacker_mobility(attacker, capturable_color):
             """
             :param capturable_color: this color piece attack will be counted as a legal move
             """
-            bb_square = chess.BB_SQUARES[attacker]
+            bb_square = BB_SQUARES[attacker]
             if bb_square & self.pawns:
                 return 0
 
-            mobility = 0
-            for attack in self.attacks(attacker):
-                if self.is_empty(attack) or self.color_at(attack) == capturable_color:
-                    mobility += 1
-            return mobility
+            return len(self.mobility(attacker, capturable_color))
 
         # find mobility delta of pieces that were attacking the to_square, except pawns
         white_to_attackers = self.attackers(True, move.to_square)
@@ -358,7 +570,8 @@ class Board(ChessBoard):
         # find mobility delta of the moving piece
         mobility_before = get_attacker_mobility(move.from_square, not self.turn)
 
-        self.push(move)
+        # self.push(move)
+        board_state = self.light_push(move)
 
         mobility_after = get_attacker_mobility(move.to_square, self.turn)
 
@@ -390,7 +603,8 @@ class Board(ChessBoard):
 
         # pawn_mobility_after = self.get_pawn_mobility()
 
-        self.pop()
+        # self.pop()
+        self.light_pop(board_state)
 
         # pawn_mobility_before = self.get_pawn_mobility()
 
@@ -421,16 +635,6 @@ class Board(ChessBoard):
             else:
                 mobility_delta -= captured_piece_mobility
 
-        # print('***')
-        # print(mobility_after, mobility_before)
-        # print(white_to_mobility_after, white_to_mobility_before)
-        # print(white_from_mobility_before, white_from_mobility_after)
-        # print(black_to_mobility_after, black_to_mobility_before)
-        # print(black_from_mobility_after, black_from_mobility_before)
-        # print(pawn_mobility_after, pawn_mobility_before)
-        # if captured_piece_type:
-        #     print(captured_piece_mobility)
-
         return mobility_delta
 
     def get_pawn_mobility_delta(self, move):
@@ -438,19 +642,19 @@ class Board(ChessBoard):
 
         moving_piece_type = self.piece_type_at(move.from_square)
 
-        bb_to_square = chess.BB_SQUARES[move.to_square]
-        bb_from_square = chess.BB_SQUARES[move.from_square]
-        square_to_up = chess.lsb(chess.shift_up(bb_to_square))
-        square_to_2up = chess.lsb(chess.shift_2_up(bb_to_square))
-        square_to_down = chess.lsb(chess.shift_down(bb_to_square))
-        square_to_2down = chess.lsb(chess.shift_2_down(bb_to_square))
-        square_from_up = chess.lsb(chess.shift_up(bb_from_square))
-        square_from_2up = chess.lsb(chess.shift_2_up(bb_from_square))
-        square_from_down = chess.lsb(chess.shift_down(bb_from_square))
-        square_from_2down = chess.lsb(chess.shift_2_down(bb_from_square))
+        bb_to_square = BB_SQUARES[move.to_square]
+        bb_from_square = BB_SQUARES[move.from_square]
+        square_to_up = lsb(shift_up(bb_to_square))
+        square_to_2up = lsb(shift_2_up(bb_to_square))
+        square_to_down = lsb(shift_down(bb_to_square))
+        square_to_2down = lsb(shift_2_down(bb_to_square))
+        square_from_up = lsb(shift_up(bb_from_square))
+        square_from_2up = lsb(shift_2_up(bb_from_square))
+        square_from_down = lsb(shift_down(bb_from_square))
+        square_from_2down = lsb(shift_2_down(bb_from_square))
 
         if (
-            self.piece_type_at(square_to_up) == chess.PAWN
+            self.piece_type_at(square_to_up) == PAWN
             and not self.color_at(square_to_up)
             and not move.from_square == square_to_up
             and self.piece_type_at(move.to_square) is None
@@ -464,14 +668,14 @@ class Board(ChessBoard):
             square_to_2up >= 48
             and square_to_2up != move.from_square
             and self.piece_type_at(square_to_up) is None
-            and self.piece_type_at(square_to_2up) == chess.PAWN
+            and self.piece_type_at(square_to_2up) == PAWN
             and not self.color_at(square_to_2up)
             and self.piece_type_at(move.to_square) is None
         ):
             pawn_mobility_change += 1
 
         if (
-            self.piece_type_at(square_to_down) == chess.PAWN
+            self.piece_type_at(square_to_down) == PAWN
             and self.color_at(square_to_down)
             and not move.from_square == square_to_down
             and self.piece_type_at(move.to_square) is None
@@ -485,13 +689,13 @@ class Board(ChessBoard):
             square_to_2down <= 16
             and square_to_2down != move.from_square
             and self.piece_type_at(square_to_down) is None
-            and self.piece_type_at(square_to_2down) == chess.PAWN
+            and self.piece_type_at(square_to_2down) == PAWN
             and not self.color_at(square_to_2down)
             and self.piece_type_at(move.to_square) is None
         ):
             pawn_mobility_change -= 1
 
-        if self.piece_type_at(square_from_up) == chess.PAWN and not self.color_at(
+        if self.piece_type_at(square_from_up) == PAWN and not self.color_at(
             square_from_up
         ):
             # black pawn unblocked
@@ -506,12 +710,12 @@ class Board(ChessBoard):
         elif (
             square_from_2up >= 48
             and self.piece_type_at(square_from_up) is None
-            and self.piece_type_at(square_from_2up) == chess.PAWN
+            and self.piece_type_at(square_from_2up) == PAWN
             and not self.color_at(square_from_2up)
         ):
             pawn_mobility_change -= 1
 
-        if self.piece_type_at(square_from_down) == chess.PAWN and self.color_at(
+        if self.piece_type_at(square_from_down) == PAWN and self.color_at(
             square_from_down
         ):
             # white pawn unblocked
@@ -526,31 +730,47 @@ class Board(ChessBoard):
         elif (
             square_from_2down <= 16
             and self.piece_type_at(square_from_down) is None
-            and self.piece_type_at(square_from_2down) == chess.PAWN
+            and self.piece_type_at(square_from_2down) == PAWN
             and not self.color_at(square_from_2down)
         ):
             pawn_mobility_change += 1
 
         # pawn has moved from first rank losing additional 1 mobility
-        if moving_piece_type == chess.PAWN:
+        if moving_piece_type == PAWN:
             if move.from_square <= 16 and self.turn:
                 pawn_mobility_change -= 1
             elif move.from_square >= 48 and not self.turn:
                 pawn_mobility_change += 1
 
             # blocked own next move
-            if self.turn and self.piece_type_at(square_from_up) is None and self.piece_type_at(square_to_up) is not None:
+            if (
+                self.turn
+                and self.piece_type_at(square_from_up) is None
+                and self.piece_type_at(square_to_up) is not None
+            ):
                 pawn_mobility_change -= 1
-            elif not self.turn and self.piece_type_at(square_from_down) is None and self.piece_type_at(square_to_down) is not None:
+            elif (
+                not self.turn
+                and self.piece_type_at(square_from_down) is None
+                and self.piece_type_at(square_to_down) is not None
+            ):
                 pawn_mobility_change += 1
             # unblocked itself by capturing
-            elif self.turn and self.piece_type_at(square_from_up) is not None and self.piece_type_at(square_to_up) is None:
+            elif (
+                self.turn
+                and self.piece_type_at(square_from_up) is not None
+                and self.piece_type_at(square_to_up) is None
+            ):
                 pawn_mobility_change += 1
-            elif not self.turn and self.piece_type_at(square_from_down) is not None and self.piece_type_at(square_to_down) is None:
+            elif (
+                not self.turn
+                and self.piece_type_at(square_from_down) is not None
+                and self.piece_type_at(square_to_down) is None
+            ):
                 pawn_mobility_change -= 1
 
         # pawn was captured that could have moved
-        if self.piece_type_at(move.to_square) == chess.PAWN:
+        if self.piece_type_at(move.to_square) == PAWN:
             # black pawn captured
             if self.turn and self.piece_type_at(square_to_down) is None:
                 if move.to_square >= 48 and self.piece_type_at(square_to_2down) is None:
@@ -589,7 +809,7 @@ class Board(ChessBoard):
         return mobilty, king_mobility
 
     def generate_moves_with_legal_flag(
-        self, king_square, from_mask=chess.BB_ALL, to_mask=chess.BB_ALL
+        self, king_square, from_mask=BB_ALL, to_mask=BB_ALL
     ):
         blockers = self._slider_blockers(king_square)
         checkers = self.attackers_mask(not self.turn, king_square)
@@ -612,7 +832,7 @@ class Board(ChessBoard):
                     yield move, False
 
     def is_empty(self, square):
-        mask = chess.BB_SQUARES[square]
+        mask = BB_SQUARES[square]
         return not self.occupied & mask
 
     def len_empty_squares_around_king(self, color, move: Move):
@@ -643,45 +863,39 @@ class Board(ChessBoard):
         return white_pawn_mobility - black_pawn_mobility
 
     def generate_pawn_moves(self):
-        pawns = self.pawns & self.occupied_co[self.turn] & chess.BB_ALL
+        pawns = self.pawns & self.occupied_co[self.turn] & BB_ALL
         if not pawns:
             return
 
         # Prepare pawn advance generation.
-        if self.turn == chess.WHITE:
+        if self.turn == WHITE:
             single_moves = pawns << 8 & ~self.occupied
-            double_moves = (
-                single_moves << 8 & ~self.occupied & (chess.BB_RANK_3 | chess.BB_RANK_4)
-            )
+            double_moves = single_moves << 8 & ~self.occupied & (BB_RANK_3 | BB_RANK_4)
         else:
             single_moves = pawns >> 8 & ~self.occupied
-            double_moves = (
-                single_moves >> 8 & ~self.occupied & (chess.BB_RANK_6 | chess.BB_RANK_5)
-            )
+            double_moves = single_moves >> 8 & ~self.occupied & (BB_RANK_6 | BB_RANK_5)
 
-        single_moves &= chess.BB_ALL
-        double_moves &= chess.BB_ALL
+        single_moves &= BB_ALL
+        double_moves &= BB_ALL
 
         # Generate single pawn moves.
         for to_square in scan_reversed(single_moves):
-            from_square = to_square + (8 if self.turn == chess.BLACK else -8)
+            from_square = to_square + (8 if self.turn == BLACK else -8)
 
             if square_rank(to_square) in [0, 7]:
-                yield Move(from_square, to_square, chess.QUEEN)
-                yield Move(from_square, to_square, chess.ROOK)
-                yield Move(from_square, to_square, chess.BISHOP)
-                yield Move(from_square, to_square, chess.KNIGHT)
+                yield Move(from_square, to_square, QUEEN)
+                yield Move(from_square, to_square, ROOK)
+                yield Move(from_square, to_square, BISHOP)
+                yield Move(from_square, to_square, KNIGHT)
             else:
                 yield Move(from_square, to_square)
 
         # Generate double pawn moves.
         for to_square in scan_reversed(double_moves):
-            from_square = to_square + (16 if self.turn == chess.BLACK else -16)
+            from_square = to_square + (16 if self.turn == BLACK else -16)
             yield Move(from_square, to_square)
 
-    def generate_pseudo_legal_moves_no_castling(
-        self, from_mask=chess.BB_ALL, to_mask=chess.BB_ALL
-    ):
+    def generate_pseudo_legal_moves_no_castling(self, from_mask=BB_ALL, to_mask=BB_ALL):
         our_pieces = self.occupied_co[self.turn]
 
         # Generate piece moves.
@@ -700,70 +914,64 @@ class Board(ChessBoard):
         capturers = pawns
         for from_square in scan_reversed(capturers):
             targets = (
-                chess.BB_PAWN_ATTACKS[self.turn][from_square]
+                BB_PAWN_ATTACKS[self.turn][from_square]
                 & self.occupied_co[not self.turn]
                 & to_mask
             )
 
             for to_square in scan_reversed(targets):
                 if square_rank(to_square) in [0, 7]:
-                    yield Move(from_square, to_square, chess.QUEEN)
-                    yield Move(from_square, to_square, chess.ROOK)
-                    yield Move(from_square, to_square, chess.BISHOP)
-                    yield Move(from_square, to_square, chess.KNIGHT)
+                    yield Move(from_square, to_square, QUEEN)
+                    yield Move(from_square, to_square, ROOK)
+                    yield Move(from_square, to_square, BISHOP)
+                    yield Move(from_square, to_square, KNIGHT)
                 else:
                     yield Move(from_square, to_square)
 
         # Prepare pawn advance generation.
-        if self.turn == chess.WHITE:
+        if self.turn == WHITE:
             single_moves = pawns << 8 & ~self.occupied
-            double_moves = (
-                single_moves << 8 & ~self.occupied & (chess.BB_RANK_3 | chess.BB_RANK_4)
-            )
+            double_moves = single_moves << 8 & ~self.occupied & (BB_RANK_3 | BB_RANK_4)
         else:
             single_moves = pawns >> 8 & ~self.occupied
-            double_moves = (
-                single_moves >> 8 & ~self.occupied & (chess.BB_RANK_6 | chess.BB_RANK_5)
-            )
+            double_moves = single_moves >> 8 & ~self.occupied & (BB_RANK_6 | BB_RANK_5)
 
         single_moves &= to_mask
         double_moves &= to_mask
 
         # Generate single pawn moves.
         for to_square in scan_reversed(single_moves):
-            from_square = to_square + (8 if self.turn == chess.BLACK else -8)
+            from_square = to_square + (8 if self.turn == BLACK else -8)
 
             if square_rank(to_square) in [0, 7]:
-                yield Move(from_square, to_square, chess.QUEEN)
-                yield Move(from_square, to_square, chess.ROOK)
-                yield Move(from_square, to_square, chess.BISHOP)
-                yield Move(from_square, to_square, chess.KNIGHT)
+                yield Move(from_square, to_square, QUEEN)
+                yield Move(from_square, to_square, ROOK)
+                yield Move(from_square, to_square, BISHOP)
+                yield Move(from_square, to_square, KNIGHT)
             else:
                 yield Move(from_square, to_square)
 
         # Generate double pawn moves.
         for to_square in scan_reversed(double_moves):
-            from_square = to_square + (16 if self.turn == chess.BLACK else -16)
+            from_square = to_square + (16 if self.turn == BLACK else -16)
             yield Move(from_square, to_square)
 
         # Generate en passant captures.
         if self.ep_square:
             yield from self.generate_pseudo_legal_ep(from_mask, to_mask)
 
-    def get_moved_piece_type(self, move: chess.Move) -> int:
+    def get_moved_piece_type(self, move: Move) -> int:
         return self.piece_type_at(move.to_square) or 0
 
-    def get_moving_piece_type(self, move: chess.Move) -> int:
+    def get_moving_piece_type(self, move: Move) -> int:
         return self.piece_type_at(move.from_square) or 0
 
-    def get_captured_piece_type(self, move: chess.Move) -> int:
+    def get_captured_piece_type(self, move: Move) -> int:
         return self.piece_type_at(move.to_square) or 0
 
     @staticmethod
     def is_on_border(square, rank=None):
-        return chess.square_file(square) in [0, 7] or (
-            rank or chess.square_rank(square)
-        ) in [0, 7]
+        return square_file(square) in [0, 7] or (rank or square_rank(square)) in [0, 7]
 
     @staticmethod
     def get_piece_value(piece, color, square=None, rank=0, n_pawns=8, bishop_pair=0):
@@ -775,20 +983,20 @@ class Board(ChessBoard):
         else:
             piece_type = piece.piece_type
 
-        if square is not None and rank == 0 and piece_type == chess.PAWN:
-            rank = chess.square_rank(square) if color else 7 - chess.square_rank(square)
+        if square is not None and rank == 0 and piece_type == PAWN:
+            rank = square_rank(square) if color else 7 - square_rank(square)
 
-        if piece_type == chess.PAWN:
+        if piece_type == PAWN:
             return 1 + pow((rank / 5), 6)
-        if piece_type == chess.KNIGHT:
+        if piece_type == KNIGHT:
             return 3
-        if piece_type == chess.BISHOP:
+        if piece_type == BISHOP:
             return 3 + bishop_pair  # * (8 - n_pawns) / 8
-        if piece_type == chess.ROOK:
+        if piece_type == ROOK:
             return 4.5
-        if piece_type == chess.QUEEN:
+        if piece_type == QUEEN:
             return 9
-        if piece_type == chess.KING:  # TODO: is that right?
+        if piece_type == KING:  # TODO: is that right?
             return 0
 
     @staticmethod

@@ -3,9 +3,12 @@
 Module_docstring.
 """
 
+import _posixshmem
+import mmap
 import traceback
 from io import BytesIO
-from multiprocessing.shared_memory import SharedMemory
+from multiprocessing.shared_memory import SharedMemory, _make_filename
+from os import O_RDWR, O_EXCL, ftruncate, fstat, O_CREAT
 from typing import Optional, Dict
 
 import numpy
@@ -33,7 +36,7 @@ class CommonDataManager:
     @staticmethod
     def get_node_board(node_name):
         try:
-            shm = SharedMemory(name=f"{node_name}.board")
+            shm = DangerousSharedMemory(name=f"{node_name}.board")
         except FileNotFoundError:  # TODO: any else errors?
             print(traceback.format_exc())
             return None
@@ -47,17 +50,17 @@ class CommonDataManager:
         pickle.dump(board, stream, protocol=5)
         buffer = stream.getbuffer()
         try:
-            shm = SharedMemory(
+            shm = DangerousSharedMemory(
                 name=f"{node_name}.board",
                 create=True,
                 size=buffer.itemsize * buffer.nbytes,
             )
         except FileExistsError:
-            shm = SharedMemory(name=f"{node_name}.board", create=False)
+            shm = DangerousSharedMemory(name=f"{node_name}.board", create=False)
             shm.close()
             shm.unlink()
 
-            shm = SharedMemory(
+            shm = DangerousSharedMemory(
                 name=f"{node_name}.board",
                 create=True,
                 size=buffer.itemsize * buffer.nbytes,
@@ -68,12 +71,12 @@ class CommonDataManager:
     @staticmethod
     def create_node_memory(node_name) -> None:
         size = numpy.dtype(numpy.float16).itemsize * PARAM_MEMORY_SIZE
-        SharedMemory(name=node_name, create=True, size=size)
+        DangerousSharedMemory(name=node_name, create=True, size=size)
 
     @staticmethod
     def create_set_node_memory(node_name, param_list) -> None:
         size = numpy.dtype(numpy.float16).itemsize * PARAM_MEMORY_SIZE
-        shm = SharedMemory(name=node_name, create=True, size=size)
+        shm = DangerousSharedMemory(name=node_name, create=True, size=size)
         data = numpy.ndarray(
             shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
         )
@@ -81,7 +84,7 @@ class CommonDataManager:
 
     @staticmethod
     def set_node_memory(node_name, *args) -> None:
-        shm = SharedMemory(name=node_name, create=False)
+        shm = DangerousSharedMemory(name=node_name, create=False)
         data = numpy.ndarray(
             shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
         )
@@ -90,7 +93,7 @@ class CommonDataManager:
     @staticmethod
     def close_node_memory(node_name) -> None:
         try:
-            shm = SharedMemory(name=node_name, create=False)
+            shm = DangerousSharedMemory(name=node_name, create=False)
         except FileNotFoundError:
             print(traceback.format_exc())
         else:
@@ -98,8 +101,8 @@ class CommonDataManager:
 
     @staticmethod
     def remove_node_memory(node_name) -> None:
-        shm_board = SharedMemory(name=f"{node_name}.board", create=False)
-        shm_params = SharedMemory(name=f"{node_name}.params", create=False)
+        shm_board = DangerousSharedMemory(name=f"{node_name}.board", create=False)
+        shm_params = DangerousSharedMemory(name=f"{node_name}.params", create=False)
 
         for shm in (shm_board, shm_params):
             shm.close()
@@ -107,14 +110,14 @@ class CommonDataManager:
 
     @staticmethod
     def remove_node_params_memory(node_name) -> None:
-        shm = SharedMemory(name=f"{node_name}.params", create=False)
+        shm = DangerousSharedMemory(name=f"{node_name}.params", create=False)
 
         shm.close()
         shm.unlink()
 
     @staticmethod
     def remove_node_board_memory(node_name) -> None:
-        shm = SharedMemory(name=f"{node_name}.board", create=False)
+        shm = DangerousSharedMemory(name=f"{node_name}.board", create=False)
 
         shm.close()
         shm.unlink()
@@ -122,7 +125,7 @@ class CommonDataManager:
     @staticmethod
     def get_node_memory(node_name) -> Optional[Dict]:
         try:
-            shm = SharedMemory(name=node_name)
+            shm = DangerousSharedMemory(name=node_name)
         except FileNotFoundError:  # TODO: any else errors?
             print(traceback.format_exc())
             return None
@@ -130,3 +133,59 @@ class CommonDataManager:
         return numpy.ndarray(
             shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
         ).tolist()
+
+
+class DangerousSharedMemory(SharedMemory):
+    """
+    Named dangerous because I don't know what I'm doing :)
+    """
+
+    def __init__(self, name=None, create=False, size=0):
+        if not size >= 0:
+            raise ValueError("'size' must be a positive integer")
+        if create:
+            _O_CREX = O_CREAT | O_EXCL
+            self._flags = _O_CREX | O_RDWR
+            if size == 0:
+                raise ValueError("'size' must be a positive number different from zero")
+        if name is None and not self._flags & O_EXCL:
+            raise ValueError("'name' can only be None if create=True")
+
+        # POSIX Shared Memory
+        if name is None:
+            while True:
+                name = _make_filename()
+                try:
+                    self._fd = _posixshmem.shm_open(
+                        name,
+                        self._flags,
+                        mode=self._mode
+                    )
+                except FileExistsError:
+                    continue
+                self._name = name
+                break
+        else:
+            name = "/" + name if self._prepend_leading_slash else name
+            self._fd = _posixshmem.shm_open(
+                name,
+                self._flags,
+                mode=self._mode
+            )
+            self._name = name
+        try:
+            if create and size:
+                ftruncate(self._fd, size)
+            stats = fstat(self._fd)
+            size = stats.st_size
+            self._mmap = mmap.mmap(self._fd, size)
+        except OSError:
+            self.unlink()
+            raise
+
+        if create:
+            from multiprocessing.resource_tracker import register
+            register(self._name, "shared_memory")
+
+        self._size = size
+        self._buf = memoryview(self._mmap)

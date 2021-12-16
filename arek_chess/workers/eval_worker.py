@@ -12,8 +12,8 @@ from chess import Move
 from pyinstrument import Profiler
 
 from arek_chess.board.board import Board
-from arek_chess.common_data_manager import CommonDataManager
-from arek_chess.messaging import Queue
+from arek_chess.utils.common_data_manager import CommonDataManager
+from arek_chess.utils.messaging import Queue
 from arek_chess.workers.base_worker import BaseWorker
 
 # material, safety, under_attack, mobility, king_mobility
@@ -36,10 +36,6 @@ class EvalWorker(BaseWorker):
 
     def setup(self):
         """"""
-        # self.board = Board()
-
-        # self.common_data_manager = CommonDataManager()
-
         # self.go_board = ctypes.CDLL("arek_chess/board/go_board/go_board.so")
         #
         # self.go_board.get_mobility_and_fen.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
@@ -61,6 +57,11 @@ class EvalWorker(BaseWorker):
 
         # self.profile_code()
 
+        self.call_count = 0
+
+        self.loop()
+
+    def loop(self):
         while True:
             eval_item = self.eval_queue.get()
             if eval_item:
@@ -68,16 +69,11 @@ class EvalWorker(BaseWorker):
                     node_name,
                     size,
                     move,
-                    fen_before,
                     turn_after,
                     captured_piece_type,
                 ) = eval_item
 
-                # t0 = time.time()
-                score = self.get_score(
-                    node_name, turn_after, move, captured_piece_type
-                )
-                # print(time.time() - t0)
+                score = self.get_score(node_name, turn_after, move, captured_piece_type)
 
                 self.selector_queue.put(
                     (
@@ -103,13 +99,7 @@ class EvalWorker(BaseWorker):
 
         :return:
         """
-
-        # key = f"{fen_after.split(' - ')[0]}/{1 if turn_after else 0}"
-        #
-        # db_value = self.common_data_manager.get_score(key)
-        # if db_value is not None:
-        #     return float(db_value)
-
+        self.call_count += 1
         board, move, moved_piece_type = self.get_move_data(
             move_str, node_name, not turn_after
         )
@@ -137,11 +127,7 @@ class EvalWorker(BaseWorker):
             True, move
         ) - board.len_empty_squares_around_king(False, move)
 
-        score = board.calculate_score(
-            DEFAULT_ACTION, params, moved_piece_type
-        )
-
-        # self.common_data_manager.set_score(key, score)
+        score = board.calculate_score(DEFAULT_ACTION, params, moved_piece_type)
 
         return score
 
@@ -149,22 +135,20 @@ class EvalWorker(BaseWorker):
         self, move_str: str, node_name: str, turn_before: bool
     ) -> Tuple[Board, Move, int]:
         board = CommonDataManager.get_node_board(node_name)
-        # board = Board(fen_before)
         board.turn = turn_before
-        # self.board._set_board_fen(fen_before)
-        # self.board.turn = turn_before
+
         move = Move.from_uci(move_str)
         moving_piece_type = board.get_moving_piece_type(move)
 
         return board, move, moving_piece_type
 
-    @staticmethod
-    def profile_code():
+    def profile_code(self):
         profiler = Profiler()
         profiler.start()
 
         def before_exit(*args):
             """"""
+            # print(f"call count: {self.call_count}")
             profiler.stop()
             profiler.print(show_all=True)
             # self.terminate()

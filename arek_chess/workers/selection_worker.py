@@ -13,10 +13,9 @@ from numpy import absolute as np_absolute, mean as np_mean, std as np_std
 from numpy.random import choice
 from pyinstrument import Profiler
 
-from arek_chess.board.board import Board
-from arek_chess.common_data_manager import CommonDataManager
-from arek_chess.constants import DEPTH
-from arek_chess.messaging import Queue
+from arek_chess.utils.common_data_manager import CommonDataManager
+from arek_chess import DEPTH
+from arek_chess.utils.messaging import Queue
 from arek_chess.workers.base_worker import BaseWorker
 
 CLUSTER_2_3_THRESHOLD = 9
@@ -31,7 +30,9 @@ class SelectionWorker(BaseWorker):
 
     SLEEP = 0.001
 
-    def __init__(self, selector_queue: Queue, candidates_queue: Queue, to_erase_queue: Queue):
+    def __init__(
+        self, selector_queue: Queue, candidates_queue: Queue, to_erase_queue: Queue
+    ):
         super().__init__()
 
         self.selector_queue = selector_queue
@@ -48,17 +49,24 @@ class SelectionWorker(BaseWorker):
 
         signal(SIGTERM, self.before_exit)
 
+        # self.profile_code()
+
         self.hanging_nodes = set()
 
         # self.pickler = Pickler(with_refs=False, protocol=5)
-
-        # self.profile_code()
 
         while True:
             scored_move_item = self.selector_queue.get()
 
             if scored_move_item:
-                node_name, size, move, turn_after, captured_piece_type, score = scored_move_item
+                (
+                    node_name,
+                    size,
+                    move,
+                    turn_after,
+                    captured_piece_type,
+                    score,
+                ) = scored_move_item
                 if node_name not in self.groups:
                     self.groups[node_name] = {"size": size, "moves": [], "captures": []}
 
@@ -66,16 +74,32 @@ class SelectionWorker(BaseWorker):
                 captures = self.groups[node_name]["captures"]
                 if not captured_piece_type:
                     moves.append(
-                        {"node_name": node_name, "move": move, "turn": turn_after, "score": score, "is_capture": False}
+                        {
+                            "node_name": node_name,
+                            "move": move,
+                            "turn": turn_after,
+                            "score": score,
+                            "is_capture": False,
+                        }
                     )
                 else:
                     captures.append(
-                        {"node_name": node_name, "move": move, "turn": turn_after, "score": score, "is_capture": True}
+                        {
+                            "node_name": node_name,
+                            "move": move,
+                            "turn": turn_after,
+                            "score": score,
+                            "is_capture": True,
+                        }
                     )
 
                 if len(moves) + len(captures) == size:
-                    candidates = self.select(moves, turn_after) + self.select(captures, turn_after)
-                    self.candidates_queue.put(self.assign_fen(node_name, not turn_after, candidates))
+                    candidates = self.select(moves, turn_after) + self.select(
+                        captures, turn_after
+                    )
+                    self.candidates_queue.put(
+                        self.assign_fen(node_name, not turn_after, candidates)
+                    )
 
                     del self.groups[node_name]
                     CommonDataManager.remove_node_memory(node_name)
@@ -100,7 +124,7 @@ class SelectionWorker(BaseWorker):
             board.push(Move.from_uci(candidate["move"]))
 
             candidate["i"] = i
-            candidate["fen"] = board.fen().split(" ")[0]
+            # TODO: OH SHIT it loses information about castling rights
             candidate_name = f"{node_name}.{i}"
             CommonDataManager.set_node_board(candidate_name, board)
             if len(node_name.split(".")) >= DEPTH:
@@ -124,7 +148,9 @@ class SelectionWorker(BaseWorker):
         else:
             return []
 
-    def select_best_group(self, candidates: List[Dict], turn: bool, lcan: int, repeated=False) -> List[Dict]:
+    def select_best_group(
+        self, candidates: List[Dict], turn: bool, lcan: int, repeated=False
+    ) -> List[Dict]:
         """
         Take all scored moves and select the strongest subset.
 
@@ -138,7 +164,9 @@ class SelectionWorker(BaseWorker):
         """
         # self.selects += 1
 
-        outlier_candidates = []  # self.find_outliers(candidates, lcan, turn) if not repeated else []
+        outlier_candidates = (
+            []
+        )  # self.find_outliers(candidates, lcan, turn) if not repeated else []
 
         k = (
             2
@@ -149,9 +177,13 @@ class SelectionWorker(BaseWorker):
             if lcan < CLUSTER_4_5_THRESHOLD
             else 5
         )  # number of clusters
-        clusters, centroids = kmeans1d.cluster([cand["score"] for cand in candidates], k)
+        clusters, centroids = kmeans1d.cluster(
+            [cand["score"] for cand in candidates], k
+        )
 
-        for step in range(k):  # sometimes candidates are so similar that they are not split into k centroids
+        for step in range(
+            k
+        ):  # sometimes candidates are so similar that they are not split into k centroids
             first_candidates = [
                 candidates[i]
                 for i, c in enumerate(clusters)
@@ -171,19 +203,30 @@ class SelectionWorker(BaseWorker):
             lcan = len(best_candidates)
             if lcan >= CLUSTER_2_3_THRESHOLD and not repeated:
                 return (
-                    self.select_best_group(second_candidates.copy(), turn, lcan, repeated=True)
+                    self.select_best_group(
+                        second_candidates.copy(), turn, lcan, repeated=True
+                    )
                     + first_candidates
                     + outlier_candidates
                 )
             elif lcan >= CLUSTER_2_3_THRESHOLD:
                 # TODO: wtf random?
-                return [choice(second_candidates) for _ in range(2)] + first_candidates + outlier_candidates
+                return (
+                    [choice(second_candidates) for _ in range(2)]
+                    + first_candidates
+                    + outlier_candidates
+                )
 
             return best_candidates + outlier_candidates
 
         lcan = len(first_candidates)
         if lcan >= CLUSTER_2_3_THRESHOLD and not repeated:
-            return self.select_best_group(first_candidates.copy(), turn, lcan, repeated=True) + outlier_candidates
+            return (
+                self.select_best_group(
+                    first_candidates.copy(), turn, lcan, repeated=True
+                )
+                + outlier_candidates
+            )
         elif lcan >= CLUSTER_2_3_THRESHOLD:
             # TODO: wtf random?
             return [choice(first_candidates) for _ in range(3)] + outlier_candidates
@@ -191,7 +234,9 @@ class SelectionWorker(BaseWorker):
         return first_candidates + outlier_candidates
 
     @staticmethod
-    def find_outliers(candidates: List[Dict], lcan: int, turn: bool, threshold=3):  # deliberately mutable arg!
+    def find_outliers(
+        candidates: List[Dict], lcan: int, turn: bool, threshold=3
+    ):  # deliberately mutable arg!
         outlier_candidates = []
         scores = [cand["score"] for cand in candidates]
         # TODO: optimize further? maybe both below should be calculated at once

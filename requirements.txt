@@ -3,7 +3,7 @@ python-chess==1.999
 sklearn==0.*
 kmeans1d==0.3.*
 faster-fifo==1.2.*
-parametrized==0.8.*
+parameterized==0.8.*
 anytree==2.8.*
 
 # larch-pickle github repo

@@ -11,11 +11,11 @@ from statistics import mean
 from anytree import Node, RenderTree, LevelOrderIter
 from anytree.render import _is_last
 
+from arek_chess import DEPTH
 from arek_chess.board.board import Board
-from arek_chess.common_data_manager import CommonDataManager
-from arek_chess.constants import DEPTH
-from arek_chess.dispatcher import Dispatcher
-from arek_chess.messaging import Queue
+from arek_chess.main.dispatcher import Dispatcher
+from arek_chess.utils.common_data_manager import CommonDataManager
+from arek_chess.utils.messaging import Queue
 
 NOTHING = 0
 FIRST_LEVEL = 1
@@ -47,7 +47,9 @@ class PrunedRenderTree(RenderTree):
         if children and (self.maxlevel is None or level < self.maxlevel):
             children = self.childiter(children)
             for child, is_last in _is_last(children):
-                for grandchild in self.__next(child, continues + (not is_last, ), level=level):
+                for grandchild in self.__next(
+                    child, continues + (not is_last,), level=level
+                ):
                     yield grandchild
 
     def has_living_family(self, node: Node):
@@ -73,17 +75,21 @@ class SearchTreeManager:
         self.turn = turn
         self.depth = depth
 
-        self.root = PrintableNode(self.ROOT_NAME, turn=turn, score=0, fen=fen, level=0, move=None)
+        self.root = PrintableNode(
+            self.ROOT_NAME, turn=turn, score=0, level=0, move=None
+        )
         self.tree = {self.ROOT_NAME: self.root}
 
         self.node_queue = Queue("node")
         self.candidates_queue = Queue("candidate")
         self.to_erase_queue = Queue("candidate")
 
-        CommonDataManager.set_node_board(self.ROOT_NAME, Board())
+        CommonDataManager.set_node_board(self.ROOT_NAME, Board(fen))
 
     def run_search(self):
-        dispatcher = Dispatcher(self.node_queue, self.candidates_queue, self.to_erase_queue)
+        dispatcher = Dispatcher(
+            self.node_queue, self.candidates_queue, self.to_erase_queue
+        )
         dispatcher.start()
 
         try:
@@ -99,7 +105,7 @@ class SearchTreeManager:
         :return:
         """
 
-        self.node_queue.put((self.root.name, self.root.fen, self.turn))
+        self.node_queue.put((self.root.name, self.turn))
 
         sent = 1
         returned = 0
@@ -123,7 +129,9 @@ class SearchTreeManager:
             turn_after = level % 2 == 0 if self.turn else level % 2 == 1
 
             for candidate in candidates:
-                node, is_dominated = self.create_node(candidate, parent, level, turn_after)
+                node, is_dominated = self.create_node(
+                    candidate, parent, level, turn_after
+                )
                 if is_dominated:
                     dominated += 1
                     self.to_erase_queue.put(node.name)
@@ -131,7 +139,7 @@ class SearchTreeManager:
 
                 if node.level < self.depth or node.is_capture:
                     sent += 1
-                    self.node_queue.put((node.name, node.fen, turn_after))
+                    self.node_queue.put((node.name, turn_after))
 
             returned += 1
 
@@ -154,26 +162,30 @@ class SearchTreeManager:
         score = candidate["score"]
         move = candidate["move"]
         is_capture = candidate["is_capture"]
-        fen = candidate["fen"]
 
         node = PrintableNode(
             child_name,
             parent=parent,
-            score=round(score, 3),
+            score=score,
             move=move,
             is_capture=is_capture,
-            fen=fen,
             level=level,
         )
 
         self.tree[child_name] = node
 
-        is_dominated = self.is_node_dominated(score, parent, turn_after) if level >= 4 and level < self.depth else False
+        is_dominated = (
+            self.is_node_dominated(score, parent, turn_after)
+            if level >= 4 and level < self.depth
+            else False
+        )
 
         return node, is_dominated
 
     def is_node_dominated(self, score, parent: Node, color: bool):
-        return self.is_below_average(score, parent, color) or self.is_not_promising(score, parent, color)
+        return self.is_below_average(score, parent, color) or self.is_not_promising(
+            score, parent, color
+        )
 
     def is_below_average(self, score, parent: Node, color: bool):
         grand_parents = parent.parent.parent.children
@@ -188,12 +200,15 @@ class SearchTreeManager:
             trend = self.get_trend(score, parent)
         except KeyError as e:
             print(f"missing node: {e}")
-            print(f'analysing for child of: {parent.name}')
+            print(f"analysing for child of: {parent.name}")
             return False
 
         if color:
             # was growing, but rapidly decreasing growth
-            if all([delta > 0 for delta in trend]) and trend[2] / trend[1] > trend[1] / trend[0]:
+            if (
+                all([delta > 0 for delta in trend])
+                and trend[2] / trend[1] > trend[1] / trend[0]
+            ):
                 return True
 
             # kept getting worse until dropped below 0
@@ -201,7 +216,10 @@ class SearchTreeManager:
                 return True
         else:
             # was growing, but rapidly decreasing growth
-            if all([delta < 0 for delta in trend]) and trend[2] / trend[1] > trend[1] / trend[0]:
+            if (
+                all([delta < 0 for delta in trend])
+                and trend[2] / trend[1] > trend[1] / trend[0]
+            ):
                 return True
 
             # kept getting worse until dropped below 0
@@ -213,12 +231,19 @@ class SearchTreeManager:
     def get_trend(self, score, parent: Node):
         """recent go first"""
         consecutive_scores = [score, *self.get_consecutive_scores(parent)]
-        averages = [(consecutive_scores[i] + consecutive_scores[i+1] / 2) for i in range(4)]
+        averages = [
+            (consecutive_scores[i] + consecutive_scores[i + 1] / 2) for i in range(4)
+        ]
         deltas = [averages[i + 1] - averages[i] for i in range(3)]
         return deltas
 
     def get_consecutive_scores(self, parent: Node):
-        return [parent.score, parent.parent.score, parent.parent.parent.score, parent.parent.parent.parent.score]
+        return [
+            parent.score,
+            parent.parent.score,
+            parent.parent.parent.score,
+            parent.parent.parent.parent.score,
+        ]
 
     def get_best_move(self):
         parent = None
