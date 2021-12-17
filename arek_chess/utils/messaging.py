@@ -15,7 +15,7 @@ class Queue:
 
     def __init__(self, name):
         """
-
+        Initialize a queue of a chosen queuing class.
         """
 
         self.name = name

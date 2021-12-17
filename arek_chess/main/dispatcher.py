@@ -4,11 +4,12 @@ Module_docstring.
 """
 
 import time
+from typing import List
 
 from arek_chess.board.board import Board
-from arek_chess.utils.common_data_manager import CommonDataManager
+from arek_chess.utils.memory_manager import MemoryManager
 from arek_chess.utils.messaging import Queue
-from arek_chess.models.stoppable_thread import StoppableThread
+from arek_chess.utils.stoppable_thread import StoppableThread
 from arek_chess.workers.eval_worker import EvalWorker
 from arek_chess.workers.selection_worker import SelectionWorker
 
@@ -20,14 +21,13 @@ class Dispatcher(StoppableThread):
     Class_docstring
     """
 
-    SLEEP = 0.01
+    SLEEP = 0.001
 
     def __init__(
         self,
         node_queue: Queue,
         candidates_queue: Queue,
-        to_erase_queue: Queue,
-        name=None,
+        action: List[float],
     ):
         self.node_queue = node_queue
         self.candidates_queue = candidates_queue
@@ -37,19 +37,17 @@ class Dispatcher(StoppableThread):
 
         self.child_processes = []
         for _ in range(CPU_CORES - 2):
-            evaluator = EvalWorker(self.eval_queue, self.selector_queue)
+            evaluator = EvalWorker(self.eval_queue, self.selector_queue, action)
             evaluator.start()
             self.child_processes.append(evaluator)
 
         selector = SelectionWorker(
-            self.selector_queue, self.candidates_queue, to_erase_queue
+            self.selector_queue, self.candidates_queue
         )
         selector.start()
         self.child_processes.append(selector)
 
-        self.common_data_manager = CommonDataManager()
-
-        super().__init__(name=name)
+        super().__init__()
 
     def run(self):
         """
@@ -65,12 +63,22 @@ class Dispatcher(StoppableThread):
             if node_item:
                 node_name, node_turn = node_item
 
-                board = CommonDataManager.get_node_board(node_name)
+                board = MemoryManager.get_node_board(node_name)
                 board.turn = node_turn
 
-                self.create_node_params_cache(board, node_name)
-
                 moves = [move for move in board.legal_moves]
+
+                if moves:
+                    self.create_node_params_cache(board, node_name)
+                else:  # is checkmate
+                    self.candidates_queue.put([{
+                        "node_name": f"{node_name}.0",
+                        "move": "checkmate",
+                        "turn": not node_turn,
+                        "score": 1000000 if node_turn else -1000000,
+                        "is_capture": False,
+                    }])
+
                 moves_n = len(moves)
 
                 for move in moves:
@@ -104,4 +112,4 @@ class Dispatcher(StoppableThread):
             *board.get_total_mobility(False),
         ]
 
-        self.common_data_manager.set_node_params(node_name, white_params, black_params)
+        MemoryManager.set_node_params(node_name, *[white - black for white, black in zip(white_params, black_params)])

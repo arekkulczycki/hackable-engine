@@ -5,20 +5,17 @@ Module_docstring.
 
 import time
 from signal import signal, SIGTERM
-from typing import Tuple
+from typing import Tuple, List
 
-import numpy
-from chess import Move
 from pyinstrument import Profiler
 
-from arek_chess.board.board import Board
-from arek_chess.utils.common_data_manager import CommonDataManager
+from arek_chess.board.board import Board, Move
+from arek_chess.utils.memory_manager import (
+    MemoryManager,
+    remove_shm_from_resource_tracker,
+)
 from arek_chess.utils.messaging import Queue
 from arek_chess.workers.base_worker import BaseWorker
-
-# material, safety, under_attack, mobility, king_mobility
-# DEFAULT_ACTION = numpy.array([100.0, 1.0, -2.0, 1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=numpy.float32)
-DEFAULT_ACTION = numpy.array([100.0, 1.0, -2.0, 2.0, -1.0], dtype=numpy.float32)
 
 
 class EvalWorker(BaseWorker):
@@ -26,26 +23,23 @@ class EvalWorker(BaseWorker):
     Class_docstring
     """
 
-    SLEEP = 0.001
+    SLEEP = 0.0005
 
-    def __init__(self, eval_queue: Queue, selector_queue: Queue):
+    def __init__(self, eval_queue: Queue, selector_queue: Queue, action: List[float]):
         super().__init__()
 
         self.eval_queue = eval_queue
         self.selector_queue = selector_queue
+        self.action = action
 
     def setup(self):
         """"""
-        # self.go_board = ctypes.CDLL("arek_chess/board/go_board/go_board.so")
+
+        remove_shm_from_resource_tracker()
+
+        # self.call_count = 0
         #
-        # self.go_board.get_mobility_and_fen.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-        # self.go_board.get_mobility_and_fen.restype = ctypes.c_char_p
-
-        # self.go_board.get_fen.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-        # self.go_board.get_fen.restype = ctypes.c_char_p
-
-        # self.go_board.gc.argtypes = [ctypes.c_char_p]
-        # self.go_board.gc.restype = ctypes.c_void_p
+        # self.profile_code()
 
     def run(self):
         """
@@ -53,15 +47,8 @@ class EvalWorker(BaseWorker):
         :return:
         """
 
-        # self.setup()
+        self.setup()
 
-        # self.profile_code()
-
-        self.call_count = 0
-
-        self.loop()
-
-    def loop(self):
         while True:
             eval_item = self.eval_queue.get()
             if eval_item:
@@ -73,6 +60,10 @@ class EvalWorker(BaseWorker):
                     captured_piece_type,
                 ) = eval_item
 
+                # self.call_count += 1
+
+                # benchmark max perf with random generation
+                # score = uniform(-10, 10)
                 score = self.get_score(node_name, turn_after, move, captured_piece_type)
 
                 self.selector_queue.put(
@@ -99,12 +90,12 @@ class EvalWorker(BaseWorker):
 
         :return:
         """
-        self.call_count += 1
+
         board, move, moved_piece_type = self.get_move_data(
             move_str, node_name, not turn_after
         )
 
-        params = CommonDataManager.get_node_params(node_name)
+        params = MemoryManager.get_node_params(node_name)
 
         params[0] += board.get_material_delta(captured_piece_type)
         safety_w = board.get_safety_delta(
@@ -126,15 +117,16 @@ class EvalWorker(BaseWorker):
         params[4] = board.len_empty_squares_around_king(
             True, move
         ) - board.len_empty_squares_around_king(False, move)
+        params.append(board.get_king_threats(True) - board.get_king_threats(False))
 
-        score = board.calculate_score(DEFAULT_ACTION, params, moved_piece_type)
+        score = board.calculate_score(self.action, params, moved_piece_type)
 
         return score
 
     def get_move_data(
         self, move_str: str, node_name: str, turn_before: bool
     ) -> Tuple[Board, Move, int]:
-        board = CommonDataManager.get_node_board(node_name)
+        board = MemoryManager.get_node_board(node_name)
         board.turn = turn_before
 
         move = Move.from_uci(move_str)
@@ -148,7 +140,7 @@ class EvalWorker(BaseWorker):
 
         def before_exit(*args):
             """"""
-            # print(f"call count: {self.call_count}")
+            print(f"call count: {self.call_count}")
             profiler.stop()
             profiler.print(show_all=True)
             # self.terminate()
