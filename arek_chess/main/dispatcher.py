@@ -11,7 +11,7 @@ from arek_chess.utils.memory_manager import MemoryManager
 from arek_chess.utils.messaging import Queue
 from arek_chess.utils.stoppable_thread import StoppableThread
 from arek_chess.workers.eval_worker import EvalWorker
-from arek_chess.workers.selection_worker import SelectionWorker
+from arek_chess.workers.selector_worker import SelectorWorker
 
 CPU_CORES = 8
 
@@ -41,7 +41,7 @@ class Dispatcher(StoppableThread):
             evaluator.start()
             self.child_processes.append(evaluator)
 
-        selector = SelectionWorker(
+        selector = SelectorWorker(
             self.selector_queue, self.candidates_queue
         )
         selector.start()

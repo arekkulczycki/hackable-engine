@@ -6,12 +6,14 @@ Module_docstring.
 import math
 import time
 import traceback
-from typing import List
+from statistics import mean, stdev, median
+from typing import List, Dict
 
 from anytree import Node, RenderTree, LevelOrderIter
 from anytree.render import _is_last
 
 from arek_chess.board.board import Board
+from arek_chess.criteria.pruning.arek_pruner import ArekPruner
 from arek_chess.main.controller import DEPTH
 from arek_chess.main.dispatcher import Dispatcher
 from arek_chess.utils.memory_manager import (
@@ -52,12 +54,15 @@ class SearchTreeManager:
         self.root = PrintableNode(
             self.ROOT_NAME, turn=turn, score=0, level=0, move=None
         )
+        MemoryManager.set_node_board(self.ROOT_NAME, Board(fen))
+
         self.tree = {self.ROOT_NAME: self.root}
+        self.tree_stats = {}
 
         self.node_queue = Queue("node")
         self.candidates_queue = Queue("candidate")
 
-        MemoryManager.set_node_board(self.ROOT_NAME, Board(fen))
+        self.pruner = ArekPruner()
 
     def run_search(self):
         dispatcher = Dispatcher(self.node_queue, self.candidates_queue, self.action)
@@ -151,89 +156,36 @@ class SearchTreeManager:
 
         self.tree[child_name] = node
 
+        stats = self.tree_stats.get(level - 1)
+        if not stats:
+            stats = self.gather_level_stats(level - 1)
+            self.tree_stats[level - 1] = stats
+
         to_prune = (
-            self.should_be_pruned(score, parent, not turn_after, captured)
-            if level >= 4 and level < self.depth
-            else False
+            self.pruner.should_prune(self.tree_stats, score, parent, not turn_after, captured, self.depth)
         )
 
         return node, to_prune
 
-    def should_be_pruned(self, score, parent: Node, color: bool, captured: int):
-        not_promising = self.is_not_promising(score, parent, color)
+    def gather_level_stats(self, level: int) -> Dict:
+        """"""
 
-        is_worse_than_last_generation = self.is_worse_than_last_generation(score, parent, color)
+        nodes = []
+        scores = []
+        for node in LevelOrderIter(self.root, maxlevel=level + 1):
+            if node.level != level:
+                continue
 
-        return is_worse_than_last_generation or not_promising
+            nodes.append(node)
+            scores.append(node.score)
 
-    @staticmethod
-    def is_worse_than_last_generation(score, parent: Node, color: bool):
-        grand_parents = parent.parent.parent.children
-
-        return (
-            score < min([node.score for node in grand_parents])
-            if color
-            else score > max([node.score for node in grand_parents])
-        )
-
-    def is_not_promising(self, score, parent: Node, color: bool):
-        try:
-            trend = self.get_trend(score, parent)
-        except KeyError as e:
-            print(f"missing node: {e}")
-            print(f"analysing for child of: {parent.name}")
-            return False
-
-        ret = False
-
-        if color:
-            # keeps falling and increased fall
-            if all([delta < 0 for delta in trend]) and trend[0] < trend[1]:
-                ret = True
-
-            # kept getting worse until dropped below 0
-            if (
-                trend[0] < 0
-                and trend[0] < trend[1] < trend[2]
-                and (
-                    trend[0] < -trend[1]
-                    if trend[1] < 0
-                    else (trend[0] + trend[1] < -trend[2])
-                )
-            ):
-                ret = True
-        else:  # black
-            # keeps falling and increased fall
-            if all([delta > 0 for delta in trend]) and trend[0] > trend[1]:
-                ret = True
-
-            # kept getting worse until dropped below 0
-            if (
-                trend[0] > 0
-                and trend[0] > trend[1] > trend[2]
-                and (trend[0] > -trend[1] or trend[0] + trend[1] > -trend[2])
-            ):
-                ret = True
-
-        return ret
-
-    def get_trend(self, score, parent: Node):
-        """recent go first"""
-        consecutive_scores = [score, *self.get_consecutive_scores(parent)]
-        averages = [
-            (consecutive_scores[i] + consecutive_scores[i + 1] / 2) for i in range(4)
-        ]
-        deltas = [averages[i + 1] - averages[i] for i in range(3)]
-        return deltas
-
-    @staticmethod
-    def get_consecutive_scores(parent: Node):
-        return [
-            parent.score,
-            parent.parent.score,
-            parent.parent.parent.score,
-            parent.parent.parent.parent.score,
-        ]
+        _number = len(nodes)
+        _min = min(scores)
+        _max = max(scores)
+        _median = median(scores)
+        _mean = mean(scores) if _number > 3 else None
+        _stdev = stdev(scores) if _number > 3 else None
+        return {"number": _number, "min": _min, "max": _max, "median": _median, "mean": _mean, "stdev": _stdev}
 
     def get_best_move(self):
         parent = None
@@ -319,7 +271,6 @@ class PrunedRenderTree(RenderTree):
                     yield grandchild
 
     def has_living_family(self, node: Node):
-        return True
         if node.level >= DEPTH or node.move == "checkmate":
             return True
 

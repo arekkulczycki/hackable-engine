@@ -44,31 +44,29 @@ class MemoryManager:
 
     @staticmethod
     def set_node_board(node_name: str, board: Board) -> None:
-        stream = BytesIO()
-        pickle.dump(board, stream, protocol=5)
-        buffer = stream.getbuffer()
+        b = pickle.dumps(board, protocol=5, with_refs=False)
         try:
             shm = DangerousSharedMemory(
                 name=f"{node_name}.board",
                 create=True,
-                size=buffer.itemsize * buffer.nbytes,
+                size=len(b),
             )
         except:
             print(f"board not erased... {node_name}")
             shm = DangerousSharedMemory(
                 name=f"{node_name}.board",
                 create=False,
-                size=buffer.itemsize * buffer.nbytes,
+                size=len(b),
             )
             shm.close()
             shm.unlink()
             shm = DangerousSharedMemory(
                 name=f"{node_name}.board",
                 create=True,
-                size=buffer.itemsize * buffer.nbytes,
+                size=len(b),
             )
 
-        shm.buf[:] = buffer
+        shm.buf[:] = b
 
     @staticmethod
     def create_node_memory(node_name: str) -> None:

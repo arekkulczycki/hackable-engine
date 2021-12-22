@@ -1127,43 +1127,97 @@ class Board(ChessBoard):
         mask = BB_SQUARES[square]
         return not self.occupied & mask
 
-    def len_empty_squares_around_king(self, color: bool, move: Move) -> int:
+    def get_empty_squares_around_king_delta(self, move: Move, is_capture: bool) -> int:
+        white_king_move = False
+        black_king_move = False
+        white_king = self.king(True)
+        black_king = self.king(False)
+        assert white_king is not None
+        assert black_king is not None
+
+        move_bb_from_square = BB_SQUARES[move.from_square]
+        move_bb_to_square = BB_SQUARES[move.to_square]
+
+        if move.from_square == white_king:
+            white_king_move = True
+        if move.from_square == black_king:
+            black_king_move = True
+
+        if not (white_king_move or black_king_move):
+            white_mask = self.attacks_mask(white_king)
+            black_mask = self.attacks_mask(black_king)
+
+            white_from = white_mask & move_bb_from_square
+            black_from = black_mask & move_bb_from_square
+            white_to = white_mask & move_bb_to_square
+            black_to = black_mask & move_bb_to_square
+
+            if white_from and white_to:
+                return 0
+            elif white_from and black_to:  # from white surroundings directly to black surroundings
+                return 0 if self.turn and is_capture else 1
+            elif white_from and not black_to and not white_to:
+                return 1 if self.turn else 0
+            elif black_from and black_to:
+                return 0
+            elif black_from and white_to:  # from black surroundings directly to white surroundings
+                return 0 if not self.turn and is_capture else -1
+            elif black_from and not white_to and not black_to:
+                return 0 if self.turn else -1
+            elif white_to:  # and not white_from and not black_from
+                return 1 if not self.turn and is_capture else 0 if not self.turn and not is_capture else -1
+            elif black_to:  # and not white_from and not black_from
+                return -1 if self.turn and is_capture else 0 if self.turn and not is_capture else 1
+
+            return 0
+
+        if white_king_move:
+            king_mobility_before = self.get_bit_count(
+                self.attacks_mask(move.from_square) & ~self.occupied_co[True]
+            )
+            # self.push(move)
+            state = self.light_push(move)
+            king_mobility_after = self.get_bit_count(
+                self.attacks_mask(move.to_square) & ~self.occupied_co[True]
+            )
+            # self.pop()
+            self.light_pop(state)
+            return king_mobility_after - king_mobility_before
+        elif black_king_move:
+            king_mobility_before = self.get_bit_count(
+                self.attacks_mask(move.from_square) & ~self.occupied_co[False]
+            )
+            # self.push(move)
+            state = self.light_push(move)
+            king_mobility_after = self.get_bit_count(
+                self.attacks_mask(move.to_square) & ~self.occupied_co[False]
+            )
+            # self.pop()
+            self.light_pop(state)
+            return king_mobility_before - king_mobility_after
+
+        # should never reach here
+        raise ValueError("miscalculated king mobility delta")
+
+    def get_king_mobility(self, color: bool, move: Move) -> int:
         king_move = False
         king_square = self.king(color)
         if not king_square:
             return 0
 
         if move.from_square == king_square:
-            self.push(move)
+            state = self.light_push(move)
             king_square = move.to_square
             king_move = True
 
-        king_mobiliity = len(
-            [square for square in self.attacks(king_square) if self.is_empty(square)]
+        king_mobility = self.get_bit_count(
+            self.attacks_mask(king_square) & ~self.occupied_co[color]
         )
 
         if king_move:
-            self.pop()
+            self.light_pop(state)
 
-        return king_mobiliity
-
-    # def len_empty_squares_around_king(self, color: bool, move: Move) -> int:
-    #     king_move = False
-    #     king_square = self.king(color)
-    #     if not king_square:
-    #         return 0
-    #
-    #     if move.from_square == king_square:
-    #         state = self.light_push(move)
-    #         king_square = move.to_square
-    #         king_move = True
-    #
-    #     king_mobiliity = self.get_bit_count(self.attacks_mask(king_square) & ~self.occupied)
-    #
-    #     if king_move:
-    #         self.light_pop(state)
-    #
-    #     return king_mobiliity
+        return king_mobility
 
     def get_pawn_mobility(self) -> int:
         original_turn = self.turn
