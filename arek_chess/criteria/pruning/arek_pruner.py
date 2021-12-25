@@ -22,6 +22,10 @@ class ArekPruner(BasePruner):
         if not (parent_node.level >= 3 and parent_node.level < depth - 1):
             return False
 
+        if parent_node.level >= depth:
+            if self.is_good_enough_capture(score, parent_node, color):
+                return True
+
         not_promising = self.is_not_promising(score, parent_node, color)
 
         is_worse_than_last_generation = self.is_worse_than_last_generation(
@@ -29,6 +33,16 @@ class ArekPruner(BasePruner):
         )
 
         return is_worse_than_last_generation or not_promising
+
+    @staticmethod
+    def is_good_enough_capture(score: float, parent_node: Node, color: bool):
+        """"""
+
+        if parent_node.captured and parent_node.parent.captured and parent_node.parent.parent.captured and not parent_node.parent.parent.parent.captured:
+            if score > parent_node.parent.score if color else score < parent_node.parent.score:
+                return True
+
+        return False
 
     @staticmethod
     def is_worse_than_last_generation(tree_stats, score, parent: Node, color: bool):

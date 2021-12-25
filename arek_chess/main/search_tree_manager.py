@@ -1,20 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Module_docstring.
+Handling of the search tree including following features: depth control, branch pruning, printing output
 """
 
 import math
 import time
-import traceback
 from statistics import mean, stdev, median
-from typing import List, Dict
+from typing import Dict, Optional
 
 from anytree import Node, RenderTree, LevelOrderIter
 from anytree.render import _is_last
 
 from arek_chess.board.board import Board
 from arek_chess.criteria.pruning.arek_pruner import ArekPruner
-from arek_chess.main.controller import DEPTH
 from arek_chess.main.dispatcher import Dispatcher
 from arek_chess.utils.memory_manager import (
     MemoryManager,
@@ -22,12 +20,10 @@ from arek_chess.utils.memory_manager import (
 )
 from arek_chess.utils.messaging import Queue
 
-# material, safety, under_attack, mobility, king_mobility, king_threats
-DEFAULT_ACTION: List[float] = [100.0, 1.0, -1.0, 1.0, -1.0, 2.0]
-
 NOTHING = 0
 CANDIDATES = 1
 TREE = 2
+BRANCH = 3
 tree_max_level = 7
 
 PRINT: int = NOTHING
@@ -43,45 +39,36 @@ class SearchTreeManager:
     SLEEP = 0.001
     ROOT_NAME = "0"
 
-    def __init__(
-        self, fen: str, turn: bool, action: List[float] = None, depth: int = DEPTH
-    ):
-        self.action = action if action else DEFAULT_ACTION
-
-        self.turn = turn
+    def __init__(self, eval_queue: Queue, candidates_queue: Queue, depth: int):
         self.depth = depth
+        self.eval_queue = eval_queue
+        self.candidates_queue = candidates_queue
 
+        self.dispatcher = Dispatcher(self.eval_queue, self.candidates_queue)
+
+        self.pruner = ArekPruner()
+
+    def set_root(self, fen: Optional[str] = None, turn: Optional[bool] = None) -> None:
+        board = Board(fen) if fen else Board()
+        if turn:
+            board.turn = turn
+
+        self.turn = board.turn
         self.root = PrintableNode(
-            self.ROOT_NAME, turn=turn, score=0, level=0, move=None
+            self.ROOT_NAME, turn=board.turn, score=0, level=0, move=None
         )
-        MemoryManager.set_node_board(self.ROOT_NAME, Board(fen))
+        MemoryManager.set_node_board(self.ROOT_NAME, board)
 
         self.tree = {self.ROOT_NAME: self.root}
         self.tree_stats = {}
 
-        self.node_queue = Queue("node")
-        self.candidates_queue = Queue("candidate")
-
-        self.pruner = ArekPruner()
-
-    def run_search(self):
-        dispatcher = Dispatcher(self.node_queue, self.candidates_queue, self.action)
-        dispatcher.start()
-
-        try:
-            self.search()
-        except:
-            traceback.print_exc()
-        finally:
-            dispatcher.stop()
-
-    def search(self):
+    def search(self) -> str:
         """
 
         :return:
         """
 
-        self.node_queue.put((self.root.name, self.turn))
+        self.dispatcher.dispatch(self.root.name, self.root.turn)
 
         sent = 1
         returned = 0
@@ -109,30 +96,38 @@ class SearchTreeManager:
             level = len(parent_name_split)
             turn_after = level % 2 == 0 if self.turn else level % 2 == 1
 
+            # TODO: here handle checkmate and stalemate for empty candidates list
+            # if not candidates:
+            #     handle board
+
             for candidate in candidates:
-                node, to_prune = self.create_node(
-                    candidate, parent, level, turn_after
-                )
+                node, to_prune = self.create_node(candidate, parent, level, turn_after)
                 if to_prune:
                     pruned += 1
                     continue
 
-                if node.move != "checkmate" and (
+                if node.move not in ["checkmate", "stalemate"] and (
                     node.level < self.depth or node.captured
                 ):
                     sent += 1
-                    self.node_queue.put((node.name, turn_after))
+                    self.dispatcher.dispatch(node.name, turn_after)
 
             returned += 1
 
         best_move = self.get_best_move()
 
+        execution_time = time.time() - t0
+
         if PRINT == TREE:
-            print(PrunedRenderTree(self.root, maxlevel=tree_max_level))
+            print(PrunedRenderTree(self.depth, self.root, maxlevel=tree_max_level))
 
         print(sent, returned, pruned)
 
         print(best_move)
+
+        print(f"time: {execution_time}")
+
+        return best_move[1]
 
     def get_node(self, node_name):
         return self.tree[node_name]
@@ -161,8 +156,8 @@ class SearchTreeManager:
             stats = self.gather_level_stats(level - 1)
             self.tree_stats[level - 1] = stats
 
-        to_prune = (
-            self.pruner.should_prune(self.tree_stats, score, parent, not turn_after, captured, self.depth)
+        to_prune = self.pruner.should_prune(
+            self.tree_stats, score, parent, not turn_after, captured, self.depth
         )
 
         return node, to_prune
@@ -185,7 +180,14 @@ class SearchTreeManager:
         _median = median(scores)
         _mean = mean(scores) if _number > 3 else None
         _stdev = stdev(scores) if _number > 3 else None
-        return {"number": _number, "min": _min, "max": _max, "median": _median, "mean": _mean, "stdev": _stdev}
+        return {
+            "number": _number,
+            "min": _min,
+            "max": _max,
+            "median": _median,
+            "mean": _mean,
+            "stdev": _stdev,
+        }
 
     def get_best_move(self):
         parent = None
@@ -237,6 +239,22 @@ class SearchTreeManager:
 
         return score, move
 
+    @classmethod
+    def run_clean(cls, depth, width):
+        cls.clean_children("0", 0, depth, width)
+
+    @classmethod
+    def clean_children(cls, node_name, level, depth, width):
+        for i in range(width):
+            if level <= depth:
+                cls.clean_children(f"{node_name}.{i}", level + 1, depth, width)
+            try:
+                print(f"cleaning {node_name}...")
+                MemoryManager.remove_node_params_memory(node_name)
+                MemoryManager.remove_node_board_memory(node_name)
+            except:
+                continue
+
 
 class PrintableNode(Node):
     def __repr__(self):
@@ -248,6 +266,10 @@ class PrintableNode(Node):
 
 
 class PrunedRenderTree(RenderTree):
+    def __init__(self, depth: int, *args, **kwargs):
+        self.depth = depth
+        super().__init__(*args, **kwargs)
+
     def __iter__(self):
         return self.__next(self.node, tuple())
 
@@ -271,7 +293,8 @@ class PrunedRenderTree(RenderTree):
                     yield grandchild
 
     def has_living_family(self, node: Node):
-        if node.level >= DEPTH or node.move == "checkmate":
+        # return True
+        if node.level >= self.depth or node.move in ["checkmate", "stalemate"]:
             return True
 
         for i in node.children:

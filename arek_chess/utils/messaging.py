@@ -32,6 +32,17 @@ class Queue:
         except Full:
             raise
 
+    def put_many(self, items):
+        """
+
+        :param items:
+        """
+
+        try:
+            self.queue.put_many_nowait(items)
+        except Full:
+            raise
+
     def get(self):
         """
 
@@ -40,5 +51,16 @@ class Queue:
 
         try:
             return self.queue.get(timeout=0)
+        except Empty:
+            return None
+
+    def get_many(self, max_messages_to_get: int = 10):
+        """
+
+        :return:
+        """
+
+        try:
+            return self.queue.get_many_nowait(max_messages_to_get=max_messages_to_get)
         except Empty:
             return None

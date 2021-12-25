@@ -16,6 +16,8 @@ in your python3.8 virtual environment.
 
 Moreover in the requirements.txt there is a commented instruction how to install larch-pickle, do it as well.
 
+### Before you run
+
 ##### Board handling speed up
 
 Before running the engine there is one more step left in order to power-up the performance.  
@@ -29,6 +31,11 @@ in the board directory run
 Copy compiled <i>board.(...).so<i/> classes into board directory and revert board.py to the original state.  
 The interpreter will now use the compiled board class which is 200-300% faster.  
 
+##### Memory leaks
+
+The engine uses shared memory to handle common data between processes.  
+In case of failures you will have memory leaks and later get tons of warnings or errors with regard to not cleaned memory.
+
 ### Run engine
 
 
@@ -39,3 +46,10 @@ The interpreter will now use the compiled board class which is 200-300% faster.
 
 
 ### Additional notes
+
+
+### Key cool libs used:  
+* python-chess  LINK 
+* faster-fifo  LINK
+* larch-pickle  LINK
+* mypyc  LINK

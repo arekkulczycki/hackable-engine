@@ -1,39 +1,31 @@
 # -*- coding: utf-8 -*-
 """
-Module_docstring.
+All utilities dedicated to manage a shared memory between multiple processes.
 """
 
 import _posixshmem
 import mmap
 import traceback
-from io import BytesIO
+from multiprocessing import resource_tracker
 from os import O_RDWR, O_EXCL, ftruncate, close, fstat, O_CREAT
 from typing import Optional, List
 
 import numpy
 from larch import pickle
-from multiprocessing import resource_tracker
 
 from arek_chess.board.board import Board
 
-PARAM_MEMORY_SIZE = 5
+PARAM_MEMORY_SIZE = 5  # TODO: this should be custom for each criteria/evaluator
 
 
 class MemoryManager:
     """
-    Class_docstring
+    Manages the shared memory between multiple processes.
     """
 
     @classmethod
     def get_node_params(cls, node_name: str) -> List[float]:
         return cls.get_node_memory(f"{node_name}.params")
-
-    # @classmethod
-    # def set_node_params(cls, node_name: str, white_params: List[float], black_params: List[float]) -> None:
-    #     cls.create_set_node_memory(
-    #         f"{node_name}.params",
-    #         [white - black for white, black in zip(white_params, black_params)],
-    #     )
 
     @staticmethod
     def get_node_board(node_name: str) -> Optional[Board]:
@@ -45,25 +37,26 @@ class MemoryManager:
     @staticmethod
     def set_node_board(node_name: str, board: Board) -> None:
         b = pickle.dumps(board, protocol=5, with_refs=False)
+        size = len(b)
         try:
             shm = DangerousSharedMemory(
                 name=f"{node_name}.board",
                 create=True,
-                size=len(b),
+                size=size,
             )
         except:
             print(f"board not erased... {node_name}")
             shm = DangerousSharedMemory(
                 name=f"{node_name}.board",
                 create=False,
-                size=len(b),
+                size=size,
             )
             shm.close()
             shm.unlink()
             shm = DangerousSharedMemory(
                 name=f"{node_name}.board",
                 create=True,
-                size=len(b),
+                size=size,
             )
 
         shm.buf[:] = b

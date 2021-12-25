@@ -9,18 +9,24 @@ from arek_chess.utils.memory_manager import MemoryManager
 class ArekEval(BaseEval):
     """"""
 
+    # material, safety, under_attack, mobility, king_mobility, king_threats
+    DEFAULT_ACTION: List[float] = [100.0, 1.0, -1.0, 1.0, -1.0, 2.0]
+
     def get_score(
         self,
-        action: List[float],
         node_name: str,
         color: bool,
         move_str: str,
         captured_piece_type: int,
+        action: List[float] = None,
     ) -> float:
         """
 
         :return:
         """
+
+        if action is None:
+            action = self.DEFAULT_ACTION
 
         board, move = self.get_board_data(move_str, node_name, color)
         moved_piece_type = board.get_moving_piece_type(move)

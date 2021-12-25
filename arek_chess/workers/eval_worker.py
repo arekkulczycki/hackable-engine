@@ -5,7 +5,6 @@ Module_docstring.
 
 import time
 from signal import signal, SIGTERM
-from typing import List
 
 from pyinstrument import Profiler
 
@@ -24,23 +23,24 @@ class EvalWorker(BaseWorker):
 
     SLEEP = 0.0005
 
-    def __init__(self, eval_queue: Queue, selector_queue: Queue, action: List[float]):
+    def __init__(self, eval_queue: Queue, selector_queue: Queue):
         super().__init__()
 
         self.eval_queue = eval_queue
         self.selector_queue = selector_queue
-        self.action = action
 
     def setup(self):
         """"""
 
         remove_shm_from_resource_tracker()
 
-        self.call_count = 0
+        # self.call_count = 0
         #
         # self.profile_code()
 
         self.evaluator = ArekEval()
+
+        self.max_items_at_once = 5
 
     def run(self):
         """
@@ -51,34 +51,37 @@ class EvalWorker(BaseWorker):
         self.setup()
 
         while True:
-            eval_item = self.eval_queue.get()
-            if eval_item:
-                (
-                    node_name,
-                    size,
-                    move,
-                    turn_after,
-                    captured_piece_type,
-                ) = eval_item
-
-                self.call_count += 1
-
-                # benchmark max perf with random generation
-                # score = uniform(-10, 10)
-                score = self.evaluator.get_score(
-                    self.action, node_name, not turn_after, move, captured_piece_type
-                )
-
-                self.selector_queue.put(
+            put_items = []
+            eval_items = self.eval_queue.get_many(self.max_items_at_once)
+            if eval_items:
+                for eval_item in eval_items:
                     (
                         node_name,
                         size,
                         move,
                         turn_after,
                         captured_piece_type,
-                        score,
+                    ) = eval_item
+
+                    # self.call_count += 1
+
+                    # benchmark max perf with random generation
+                    # score = uniform(-10, 10)
+                    score = self.evaluator.get_score(
+                        node_name, not turn_after, move, captured_piece_type
                     )
-                )
+
+                    put_items.append(
+                        (
+                            node_name,
+                            size,
+                            move,
+                            turn_after,
+                            captured_piece_type,
+                            score,
+                        )
+                    )
+                self.selector_queue.put_many(put_items)
             else:
                 time.sleep(self.SLEEP)
 
@@ -88,7 +91,7 @@ class EvalWorker(BaseWorker):
 
         def before_exit(*args):
             """"""
-            print(f"call count: {self.call_count}")
+            # print(f"call count: {self.call_count}")
             profiler.stop()
             profiler.print(show_all=True)
             # self.terminate()

@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Module_docstring.
-"""
 
 import time
 from signal import signal, SIGTERM
@@ -54,51 +51,52 @@ class SelectorWorker(BaseWorker):
         self.setup()
 
         while True:
-            scored_move_item = self.selector_queue.get()
+            scored_move_items = self.selector_queue.get_many(1)
 
-            if scored_move_item:
-                (
-                    node_name,
-                    size,
-                    move,
-                    turn_after,
-                    captured_piece_type,
-                    score,
-                ) = scored_move_item
-                if node_name not in self.groups:
-                    self.groups[node_name] = {"size": size, "moves": []}
-                    self.hanging_board_memory.add(node_name)
+            if scored_move_items:
+                for scored_move_item in scored_move_items:
+                    (
+                        node_name,
+                        size,
+                        move,
+                        turn_after,
+                        captured_piece_type,
+                        score,
+                    ) = scored_move_item
+                    if node_name not in self.groups:
+                        self.groups[node_name] = {"size": size, "moves": []}
+                        self.hanging_board_memory.add(node_name)
 
-                moves = self.groups[node_name]["moves"]
-                moves.append(
-                    {
-                        "move": move,
-                        "score": score,
-                        "captured": captured_piece_type,
-                    }
-                )
-
-                if len(moves) == size:
-                    candidates = self.selector.select(moves, not turn_after)
-
-                    board = MemoryManager.get_node_board(node_name)
-                    self.candidates_queue.put(
-                        (
-                            node_name,
-                            self.parse_candidates(
-                                node_name, not turn_after, candidates, board
-                            ),
-                        )
+                    moves = self.groups[node_name]["moves"]
+                    moves.append(
+                        {
+                            "move": move,
+                            "score": score,
+                            "captured": captured_piece_type,
+                        }
                     )
 
-                    del self.groups[node_name]
+                    if len(moves) == size:
+                        candidates = self.selector.select(moves, not turn_after)
 
-                    # erase memory for params and board for the parent node of all candidates
-                    MemoryManager.remove_node_memory(node_name)
-                    try:
-                        self.hanging_board_memory.remove(node_name)
-                    except KeyError:
-                        continue
+                        board = MemoryManager.get_node_board(node_name)
+                        self.candidates_queue.put(
+                            (
+                                node_name,
+                                self.parse_candidates(
+                                    node_name, not turn_after, candidates, board
+                                ),
+                            )
+                        )
+
+                        del self.groups[node_name]
+
+                        # erase memory for params and board for the parent node of all candidates
+                        MemoryManager.remove_node_memory(node_name)
+                        try:
+                            self.hanging_board_memory.remove(node_name)
+                        except KeyError:
+                            continue
 
             else:
                 # nothing done, wait a little
