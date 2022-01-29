@@ -60,6 +60,8 @@ BB_FILE_MASKS, BB_FILE_ATTACKS = _attack_table([-8, 8])
 BB_RANK_MASKS, BB_RANK_ATTACKS = _attack_table([-1, 1])
 FLAT_BB_PAWN_ATTACKS = [item for sublist in BB_PAWN_ATTACKS for item in sublist]
 
+MAX_SAFETY_VAL = 3
+
 
 def lsb(bb: Bitboard) -> int:
     return (bb & -bb).bit_length() - 1
@@ -279,16 +281,42 @@ class Board(ChessBoard):
     #     self.halfmove_clock = self.halfmove_clock
     #     self.fullmove_number = self.fullmove_number
 
-    def get_material_delta(self, captured_piece_type: int):
+    def get_material_delta(self, captured_piece_type: int) -> float:
         # if white to move then capture is + in material, otherwise is -
         sign = 1 if self.turn else -1
 
         # color of the captured piece is opposite to turn (side making the move)
         return self.get_piece_value(captured_piece_type, not self.turn) * sign
 
+    def get_material_simple(self, color: bool) -> int:
+        return self.get_bit_count(self.pieces_mask(piece_type=PAWN, color=color)) + \
+               3 * self.get_bit_count(self.pieces_mask(piece_type=KNIGHT, color=color)) + \
+               3 * self.get_bit_count(self.pieces_mask(piece_type=BISHOP, color=color)) + \
+               5 * self.get_bit_count(self.pieces_mask(piece_type=ROOK, color=color)) + \
+               9 * self.get_bit_count(self.pieces_mask(piece_type=QUEEN, color=color))
+
+    def get_space(self, color: bool) -> int:
+        space = 56
+        for sq in self.scan_bb_forward(self.pawns & self.occupied_co[color]):
+            space += (square_rank(lsb(sq)) if color else 7 - square_rank(lsb(sq))) - 7
+        return space
+
+    def get_space_delta(self, captured_piece_type: int, moved_piece_type: int) -> int:
+        if not captured_piece_type and moved_piece_type != PAWN:
+            return 0
+
+        delta = 0
+        if captured_piece_type == PAWN:
+            delta -= 3
+
+        if moved_piece_type == PAWN:
+            delta += 1
+
+        return delta
+
     def value_of_defended_pieces(
         self, color: bool, square: Square, masks: List[Bitboard]
-    ):
+    ) -> float:
         """
         Calculate sum value of all pieces being attacked from the given square
         :param color: the color of pieces being attacked
@@ -299,7 +327,7 @@ class Board(ChessBoard):
 
     def value_of_defended_pieces_by(
         self, color: bool, attackers_mask: Bitboard, masks: List[Bitboard]
-    ):
+    ) -> float:
         """
         Calculate sum of value of all pieces being defended by defenders which are on attackers_mask squares
         """
@@ -311,7 +339,7 @@ class Board(ChessBoard):
 
     def get_safety_delta(
         self, color: bool, move: Move, moved_piece_type: int, captured_piece_type: int
-    ):
+    ) -> float:
         """
 
         :param color: color of the side to calculate safety for
@@ -336,9 +364,11 @@ class Board(ChessBoard):
 
             # safety coming from the moved piece being protected, before
             if moved_piece_type != KING:
-                safety_before += self.num_attackers(
-                    color, move.from_square
-                ) * (self.get_piece_value(PAWN, color, square=move.to_square) if moved_piece_type == PAWN else 3)
+                safety_before += self.num_attackers(color, move.from_square) * (
+                    self.get_piece_value(PAWN, color, square=move.to_square)
+                    if moved_piece_type == PAWN
+                    else MAX_SAFETY_VAL
+                )
 
             # self.push(move)
             board_state = self.light_push(move)
@@ -360,9 +390,9 @@ class Board(ChessBoard):
 
             # safety coming from the moved piece being protected, after
             if moved_piece_type != KING:
-                safety_after += self.num_attackers(
-                    color, move.to_square
-                ) * (1 if moved_piece_type == PAWN else 3)
+                safety_after += self.num_attackers(color, move.to_square) * (
+                    1 if moved_piece_type == PAWN else MAX_SAFETY_VAL
+                )
 
             # self.pop()
             self.light_pop(board_state)
@@ -374,9 +404,11 @@ class Board(ChessBoard):
             #  - if captured, equal to all attacks on the captured piece
 
             if captured_piece_type:
-                safety_loss = self.num_attackers(
-                    color, move.to_square
-                ) * (self.get_piece_value(PAWN, color, square=move.to_square) if moved_piece_type == PAWN else 3)
+                safety_loss = self.num_attackers(color, move.to_square) * (
+                    self.get_piece_value(PAWN, color, square=move.to_square)
+                    if moved_piece_type == PAWN
+                    else 3
+                )
 
                 safety_loss += self.value_of_defended_pieces(
                     color, move.to_square, masks_before
@@ -420,7 +452,7 @@ class Board(ChessBoard):
 
     def defended_accumulated_value(
         self, color: bool, bb_square: Bitboard, masks: List[Bitboard]
-    ):
+    ) -> float:
         """
         :param color: the color of pieces being defended
         :param bb_square: square from which attacks are threatened
@@ -436,7 +468,7 @@ class Board(ChessBoard):
 
     def attacked_accumulated_value(
         self, color: bool, bb_square: Bitboard, masks: List[Bitboard]
-    ):
+    ) -> float:
         """
         :param color: the color of pieces being attacked
         :param bb_square: square from which attacks are threatened
@@ -452,7 +484,7 @@ class Board(ChessBoard):
 
     def value_of_attacked_pieces(
         self, color: bool, attackers_mask: Bitboard, masks: List[Bitboard]
-    ):
+    ) -> float:
         """
         Calculate sum of value of all pieces being attacked by attackers which are on attackers_mask squares
         :param color: the color of pieces being attacked
@@ -465,7 +497,7 @@ class Board(ChessBoard):
 
     def get_under_attack_delta(
         self, color: bool, move: Move, moved_piece_type: int, captured_piece: int
-    ):
+    ) -> float:
         """
 
         :param color: color of the side to calculate under_attack for
@@ -618,7 +650,7 @@ class Board(ChessBoard):
             val = 3
             material += val
 
-            safety += self.num_attackers(color, knight) * val
+            safety += self.num_attackers(color, knight) * MAX_SAFETY_VAL
             under_attack += self.num_attackers(not color, knight) * val
 
         bishop_pair = 0.0
@@ -628,7 +660,7 @@ class Board(ChessBoard):
             )
             material += val
 
-            safety += self.num_attackers(color, bishop) * val
+            safety += self.num_attackers(color, bishop) * MAX_SAFETY_VAL
             under_attack += self.num_attackers(not color, bishop) * val
 
             bishop_pair += 1.0
@@ -637,14 +669,14 @@ class Board(ChessBoard):
             val = 4.5
             material += val
 
-            safety += self.num_attackers(color, rook) * val
+            safety += self.num_attackers(color, rook) * MAX_SAFETY_VAL
             under_attack += self.num_attackers(not color, rook) * val
 
         for queen in self.pieces(piece_type=QUEEN, color=color):
             val = 9
             material += val
 
-            safety += self.num_attackers(color, queen) * val
+            safety += self.num_attackers(color, queen) * MAX_SAFETY_VAL
             under_attack += self.num_attackers(not color, queen) * val
 
         return material, safety, under_attack
@@ -1154,20 +1186,36 @@ class Board(ChessBoard):
 
             if white_from and white_to:
                 return 0
-            elif white_from and black_to:  # from white surroundings directly to black surroundings
+            elif (
+                white_from and black_to
+            ):  # from white surroundings directly to black surroundings
                 return 0 if self.turn and is_capture else 1
             elif white_from and not black_to and not white_to:
                 return 1 if self.turn else 0
             elif black_from and black_to:
                 return 0
-            elif black_from and white_to:  # from black surroundings directly to white surroundings
+            elif (
+                black_from and white_to
+            ):  # from black surroundings directly to white surroundings
                 return 0 if not self.turn and is_capture else -1
             elif black_from and not white_to and not black_to:
                 return 0 if self.turn else -1
             elif white_to:  # and not white_from and not black_from
-                return 1 if not self.turn and is_capture else 0 if not self.turn and not is_capture else -1
+                return (
+                    1
+                    if not self.turn and is_capture
+                    else 0
+                    if not self.turn and not is_capture
+                    else -1
+                )
             elif black_to:  # and not white_from and not black_from
-                return -1 if self.turn and is_capture else 0 if self.turn and not is_capture else 1
+                return (
+                    -1
+                    if self.turn and is_capture
+                    else 0
+                    if self.turn and not is_capture
+                    else 1
+                )
 
             return 0
 
@@ -1343,7 +1391,7 @@ class Board(ChessBoard):
 
     @staticmethod
     def get_piece_value(
-        piece_type, color, square=None, rank=0, n_pawns=8, bishop_pair=0
+        piece_type, color, square=None, rank=0, n_pawns=8, bishop_pair=0.0
     ) -> float:
         if not piece_type:
             return 0

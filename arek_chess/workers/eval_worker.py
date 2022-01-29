@@ -9,6 +9,7 @@ from signal import signal, SIGTERM
 from pyinstrument import Profiler
 
 from arek_chess.criteria.evaluation.arek_eval import ArekEval
+from arek_chess.criteria.evaluation.fast_eval import FastEval
 from arek_chess.utils.memory_manager import (
     remove_shm_from_resource_tracker,
 )
@@ -38,11 +39,12 @@ class EvalWorker(BaseWorker):
         #
         # self.profile_code()
 
-        self.evaluator = ArekEval()
+        # self.evaluator = ArekEval()
+        self.evaluator = FastEval()
 
         self.max_items_at_once = 5
 
-    def run(self):
+    def _run(self):
         """
 
         :return:

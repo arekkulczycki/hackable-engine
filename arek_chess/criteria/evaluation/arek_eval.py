@@ -50,7 +50,11 @@ class ArekEval(BaseEval):
         params[1] += safety_w - safety_b
         params[2] += under_w - under_b
         params[3] += board.get_mobility_delta(move, captured_piece_type)
-        params.append(board.get_king_threats(True) - board.get_king_threats(False))
+        try:
+            params.append(board.get_king_threats(True) - board.get_king_threats(False))
+        except:
+            print(board.fen(), move_str, node_name)
+            raise ValueError(f"incorrect pos: {board.fen()}, {move_str}, {node_name}")
         # params[4] += board.get_empty_squares_around_king_delta(move, captured_piece_type != 0)
         params[4] = board.get_king_mobility(True, move) - board.get_king_mobility(
             False, move

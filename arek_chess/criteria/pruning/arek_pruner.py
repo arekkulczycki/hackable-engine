@@ -19,37 +19,61 @@ class ArekPruner(BasePruner):
         captured: int,
         depth: int,
     ) -> bool:
-        if not (parent_node.level >= 3 and parent_node.level < depth - 1):
+        if parent_node.level < 3:
             return False
 
-        if parent_node.level >= depth:
-            if self.is_good_enough_capture(score, parent_node, color):
-                return True
+        # prune based on grandparent which already has the score backpropped
+        grandparent = parent_node.parent
+        stats = tree_stats.get(grandparent.level)
+        grandmedian = stats.get("median")
+        grandmean = stats.get("mean")
+        grandstdev = stats.get("stdev")
+        if color and score < grandmedian:
+            # print(f"pruning, color: {color}, move: {grandparent.move}, score: {grandparent.score}, median: {median}")
+            return True
+        elif not color and score > grandmedian:
+            # print(f"pruning, color: {color}, move: {grandparent.move}, score: {grandparent.score}, median: {median}")
+            return True
 
-        not_promising = self.is_not_promising(score, parent_node, color)
+        # if parent_node.level >= depth:
+        #     if self.is_capture_fest_harmful(score, color, captured, parent_node):
+        #         return True  # TODO: find smarter rule when engine is ready for it
 
-        is_worse_than_last_generation = self.is_worse_than_last_generation(
-            tree_stats, score, parent_node, color
-        )
+        # stats are available for parent only when children already analysed
+        #   so now I can discard node based on discarding the entire parent node
+        # if self.parent_worse_than_prev_generation(tree_stats, parent_node, color):
+        #     return True
 
-        return is_worse_than_last_generation or not_promising
-
-    @staticmethod
-    def is_good_enough_capture(score: float, parent_node: Node, color: bool):
-        """"""
-
-        if parent_node.captured and parent_node.parent.captured and parent_node.parent.parent.captured and not parent_node.parent.parent.parent.captured:
-            if score > parent_node.parent.score if color else score < parent_node.parent.score:
-                return True
+        # if self.is_worse_than_prev_generations(
+        #     tree_stats, score, parent_node, color
+        # ):
+        #     return True
+        #
+        # if self.is_not_promising(score, parent_node, color):
+        #     return True
 
         return False
 
+    def parent_worse_than_prev_generation(self, tree_stats, parent: Node, color: bool):
+        last_comparative_score = tree_stats.get(parent.level - 2).get("median")
+
+        # if color is WHITE then I compare BLACK score to it's grandparent level median
+        return parent.score > last_comparative_score if color else parent.score < last_comparative_score
+
     @staticmethod
-    def is_worse_than_last_generation(tree_stats, score, parent: Node, color: bool):
+    def is_worse_than_prev_generations(tree_stats, score, parent: Node, color: bool):
         stats = tree_stats.get(parent.level - 1)
         median = stats.get("median")
 
-        return score < median if color else score > median
+        # grandstats = tree_stats.get(parent.level - 3)
+        # grandmedian = grandstats.get("median")
+        grandmedian = score
+
+        return (
+            (score < median or score < grandmedian)
+            if color
+            else (score > median or score > grandmedian)
+        )
 
     def is_not_promising(self, score, parent: Node, color: bool):
         try:
@@ -109,3 +133,35 @@ class ArekPruner(BasePruner):
             parent.parent.parent.score,
             parent.parent.parent.parent.score,
         ]
+
+    # @staticmethod
+    # def is_capture_fest_harmful(score: float, color: bool, captured: int, parent_node: Node):
+    #     opp_cp = parent_node.captured
+    #     opp_captured_first = parent_node.parent.parent.captured
+    #
+    #     if (
+    #         opp_captured_first
+    #         and captured < opp_cp
+    #         and parent_node.parent.captured < opp_cp
+    #     ):
+    #         if (
+    #             score < parent_node.parent.score
+    #             if color
+    #             else score > parent_node.parent.score
+    #         ):
+    #             return True
+    #
+    #     if (
+    #         opp_captured_first > captured
+    #         and opp_captured_first > parent_node.parent.captured
+    #         and opp_cp > captured
+    #         and opp_cp > parent_node.parent.captured
+    #     ):
+    #         if (
+    #             score < parent_node.parent.score
+    #             if color
+    #             else score > parent_node.parent.score
+    #         ):
+    #             return True
+    #
+    #     return False

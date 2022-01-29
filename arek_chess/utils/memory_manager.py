@@ -17,6 +17,14 @@ from arek_chess.board.board import Board
 
 PARAM_MEMORY_SIZE = 5  # TODO: this should be custom for each criteria/evaluator
 
+# memory = ctypes.CDLL("/home/arek/old/arek-chess/arek_chess/utils/go_memory/memory.so")
+#
+# memory.create.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p]
+# memory.create.restype = None
+#
+# memory.get.argtypes = [ctypes.c_char_p]
+# memory.get.restype = ctypes.c_char_p
+
 
 class MemoryManager:
     """
@@ -27,12 +35,23 @@ class MemoryManager:
     def get_node_params(cls, node_name: str) -> List[float]:
         return cls.get_node_memory(f"{node_name}.params")
 
+    # @staticmethod
+    # def get_node_board_go(node_name: str) -> None:
+    #     b = memory.get(node_name.encode("utf-8"))
+    #     return pickle.loads(b)
+
     @staticmethod
     def get_node_board(node_name: str) -> Optional[Board]:
         shm = DangerousSharedMemory(name=f"{node_name}.board")
 
         # TODO: tobytes copies the data which could be just read into loads, find improvement
         return pickle.loads(shm.buf.tobytes())
+
+    # @staticmethod
+    # def set_node_board_go(node_name: str, board: Board) -> None:
+    #     b = pickle.dumps(board, protocol=5, with_refs=False)
+    #     size = len(b)
+    #     memory.create(node_name.encode('utf-8'), size, b)
 
     @staticmethod
     def set_node_board(node_name: str, board: Board) -> None:
@@ -44,8 +63,9 @@ class MemoryManager:
                 create=True,
                 size=size,
             )
-        except:
-            print(f"board not erased... {node_name}")
+        except FileExistsError:
+            # FIXME: raises a lot of times
+            # print(f"board not erased... {node_name}")
             shm = DangerousSharedMemory(
                 name=f"{node_name}.board",
                 create=False,
@@ -53,6 +73,7 @@ class MemoryManager:
             )
             shm.close()
             shm.unlink()
+
             shm = DangerousSharedMemory(
                 name=f"{node_name}.board",
                 create=True,
@@ -79,13 +100,21 @@ class MemoryManager:
     def set_node_params(node_name: str, *args: float) -> None:
         size = numpy.dtype(numpy.float16).itemsize * PARAM_MEMORY_SIZE
         try:
-            shm = DangerousSharedMemory(name=f"{node_name}.params", create=True, size=size)
-        except:
-            print(f"params not erased... {node_name}")
-            shm = DangerousSharedMemory(name=f"{node_name}.params", create=False, size=size)
+            shm = DangerousSharedMemory(
+                name=f"{node_name}.params", create=True, size=size
+            )
+        except FileExistsError:
+            # FIXME: raises a lot of times
+            # print(f"params not erased... {node_name}")
+            shm = DangerousSharedMemory(
+                name=f"{node_name}.params", create=False, size=size
+            )
             shm.close()
             shm.unlink()
-            shm = DangerousSharedMemory(name=f"{node_name}.params", create=True, size=size)
+
+            shm = DangerousSharedMemory(
+                name=f"{node_name}.params", create=True, size=size
+            )
         data = numpy.ndarray(
             shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
         )
@@ -111,17 +140,28 @@ class MemoryManager:
 
     @staticmethod
     def remove_node_params_memory(node_name: str) -> None:
-        shm = DangerousSharedMemory(name=f"{node_name}.params", create=False)
-
-        shm.close()
-        shm.unlink()
+        try:
+            shm = DangerousSharedMemory(name=f"{node_name}.params", create=False)
+        except FileNotFoundError:
+            pass
+            # print(traceback.format_exc())
+        else:
+            shm.close()
+            shm.unlink()
 
     @staticmethod
     def remove_node_board_memory(node_name: str) -> None:
-        shm = DangerousSharedMemory(name=f"{node_name}.board", create=False)
+        """"""
 
-        shm.close()
-        shm.unlink()
+    @staticmethod
+    def remove_node_board_memory_(node_name: str) -> None:
+        try:
+            shm = DangerousSharedMemory(name=f"{node_name}.board", create=False)
+        except FileNotFoundError:
+            raise
+        else:
+            shm.close()
+            shm.unlink()
 
     @staticmethod
     def get_node_memory(node_name: str) -> List[float]:
@@ -251,13 +291,19 @@ def remove_shm_from_resource_tracker():
     def fix_register(name, rtype):
         if rtype == "shared_memory":
             return
-        return resource_tracker._resource_tracker.register(resource_tracker._resource_tracker, name, rtype)
+        return resource_tracker._resource_tracker.register(
+            resource_tracker._resource_tracker, name, rtype
+        )
+
     resource_tracker.register = fix_register
 
     def fix_unregister(name, rtype):
         if rtype == "shared_memory":
             return
-        return resource_tracker._resource_tracker.unregister(resource_tracker._resource_tracker, name, rtype)
+        return resource_tracker._resource_tracker.unregister(
+            resource_tracker._resource_tracker, name, rtype
+        )
+
     resource_tracker.unregister = fix_unregister
 
     if "shared_memory" in resource_tracker._CLEANUP_FUNCS:

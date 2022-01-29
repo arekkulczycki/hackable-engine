@@ -40,9 +40,7 @@ class SelectorWorker(BaseWorker):
 
         self.groups = {}
 
-        self.hanging_board_memory = set()
-
-    def run(self):
+    def _run(self):
         """
 
         :return:
@@ -65,7 +63,6 @@ class SelectorWorker(BaseWorker):
                     ) = scored_move_item
                     if node_name not in self.groups:
                         self.groups[node_name] = {"size": size, "moves": []}
-                        self.hanging_board_memory.add(node_name)
 
                     moves = self.groups[node_name]["moves"]
                     moves.append(
@@ -80,24 +77,13 @@ class SelectorWorker(BaseWorker):
                         candidates = self.selector.select(moves, not turn_after)
 
                         board = MemoryManager.get_node_board(node_name)
-                        self.candidates_queue.put(
-                            (
-                                node_name,
-                                self.parse_candidates(
-                                    node_name, not turn_after, candidates, board
-                                ),
-                            )
+                        parsed_candidates = self.parse_candidates(
+                            node_name, not turn_after, candidates, board
                         )
 
                         del self.groups[node_name]
 
-                        # erase memory for params and board for the parent node of all candidates
-                        MemoryManager.remove_node_memory(node_name)
-                        try:
-                            self.hanging_board_memory.remove(node_name)
-                        except KeyError:
-                            continue
-
+                        self.candidates_queue.put((node_name, parsed_candidates))
             else:
                 # nothing done, wait a little
                 time.sleep(self.SLEEP)
@@ -106,7 +92,7 @@ class SelectorWorker(BaseWorker):
         self, node_name: str, turn_before: bool, candidates: List[Dict], board
     ) -> List[Dict]:
         # board = MemoryManager.get_node_board(node_name)
-        board.turn = turn_before
+        board.turn = turn_before  # TODO: likely useless now
 
         for i, candidate in enumerate(candidates):
             state = board.push_no_stack(Move.from_uci(candidate["move"]))
@@ -115,24 +101,11 @@ class SelectorWorker(BaseWorker):
             candidate_name = f"{node_name}.{i}"
             MemoryManager.set_node_board(candidate_name, board)
 
-            self.hanging_board_memory.add(candidate_name)
-
             board.light_pop(state)
         return candidates
 
     def before_exit(self, *args):
         """"""
-
-        print("cleaning...")
-
-        for node_name in self.hanging_board_memory:
-            try:
-                MemoryManager.remove_node_board_memory(node_name)
-            except:
-                print(f"error erasing: {node_name}")
-                continue
-
-        print("cleaning done")
 
         if getattr(self, "should_profile_code", False):
             self.profiler.stop()

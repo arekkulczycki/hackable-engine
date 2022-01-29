@@ -1,44 +1,48 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+import os
+import sys
 
+sys.path.insert(0, os.getcwd())
+# print(os.getcwd())
+# print(os.path.dirname(__file__))
+# exit(1)
 from arek_chess.main.controller import Controller
-from arek_chess.main.search_tree_manager import SearchTreeManager
+from arek_chess.main.game_tree.search_manager import SearchManager
 
 if __name__ == "__main__":
 
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument(
+        "-c",
         "--clean",
         help="Clean memory for all nodes at given depth and width",
-        action="store_true",
         # type=str,
     )
     arg_parser.add_argument(
         "--fen",
         help="Fen of the starting position, defaults to chess starting position.",
-        action="store_true",
         # type=str,
     )
     arg_parser.add_argument(
         "--run-once",
         help="Find the best move and quit.",
         action="store_true",
-        # type=bool,
     )
 
     args = arg_parser.parse_args()
 
     if args.clean:
         width, depth = args.clean.split(",")
-        SearchTreeManager.run_clean(int(width), int(depth))
+        SearchManager.run_clean(int(width), int(depth))
         exit(0)
 
     controller = Controller()
     controller.boot_up()
 
     if args.run_once:
-        controller.tree_manager.search()
+        controller.search_manager.search()
         controller.tear_down()
         exit(0)
 
@@ -55,6 +59,11 @@ if __name__ == "__main__":
                 controller.boot_up(fen)
             elif key == "move":
                 controller.make_move()
+            try:
+                n = int(key)
+                for i in range(n):
+                    controller.make_move()
+            except:
+                pass
     finally:
         controller.tear_down()
-

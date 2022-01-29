@@ -6,14 +6,15 @@ from typing import Optional
 
 import chess
 
-from arek_chess.main.search_tree_manager import SearchTreeManager
+from arek_chess.main.game_tree.search_manager import SearchManager
+from arek_chess.utils.memory_manager import MemoryManager
 from arek_chess.utils.messaging import Queue
 from arek_chess.workers.eval_worker import EvalWorker
 from arek_chess.workers.selector_worker import SelectorWorker
 
 CPU_CORES = 8
 
-DEPTH = 6
+DEPTH = 8
 
 
 class Controller:
@@ -29,7 +30,7 @@ class Controller:
         self.selector_queue = Queue("selector")
 
         self.board: chess.Board
-        self.tree_manager = SearchTreeManager(self.eval_queue, self.candidates_queue, DEPTH)
+        self.search_manager = SearchManager(self.eval_queue, self.candidates_queue, CPU_CORES, DEPTH)
 
         self.child_processes = []
         for _ in range(
@@ -46,7 +47,7 @@ class Controller:
 
         self.board = chess.Board(fen) if fen else chess.Board()
 
-        self.tree_manager.set_root(fen)
+        self.search_manager.set_root(fen)
 
         for process in self.child_processes:
             process.start()
@@ -54,23 +55,29 @@ class Controller:
     def make_move(self) -> None:
         """"""
 
-        move = self.tree_manager.search()
+        move = self.search_manager.search()
 
         # print(move)
 
         self.board.push(chess.Move.from_uci(move))
 
-        self.tree_manager.set_root(self.board.fen())
+        self.search_manager.set_root(self.board.fen())
 
     def get_best_move(self, fen: str, turn: Optional[bool] = None) -> str:
         """"""
 
-        self.tree_manager.set_root(fen, turn)
+        self.search_manager.set_root(fen, turn)
 
-        return self.tree_manager.search()
+        return self.search_manager.search()
 
     def tear_down(self) -> None:
         """"""
+
+        try:
+            MemoryManager.remove_node_board_memory(self.search_manager.ROOT_NAME)
+        except FileNotFoundError:
+            # will not exist if the search has been run at least once
+            pass
 
         for process in self.child_processes:
             process.terminate()

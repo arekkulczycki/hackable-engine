@@ -18,6 +18,14 @@ Moreover in the requirements.txt there is a commented instruction how to install
 
 ### Before you run
 
+### Basic Usage (play)
+
+### Advanced Usage (implement own criteria)
+
+### Development directions
+
+GUI with the board and sliders for criteria and move suggestions by the engine with given criteria
+
 ##### Board handling speed up
 
 Before running the engine there is one more step left in order to power-up the performance.  

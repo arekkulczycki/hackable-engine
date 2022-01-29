@@ -1,24 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-Module_docstring.
+Tests for the board module.
 """
 
+from time import perf_counter
 from unittest import TestCase
 
 from parameterized import parameterized
-from chess import Move
 
-from arek_chess.board.board import Board
+from arek_chess.board.board import Board, Move
 
 
 class BoardTest(TestCase):
     """
-    Class_docstring
+    Tests for the board module.
     """
 
     @parameterized.expand([
-        # ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "h2h4", 4.0, 0.0),
-        # ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "g5f6", -3.0, -10.0),
+        ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "h2h4", 3.907, 0.0),
+        ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "g5f6", -3.0, -10.0),
         ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "d1a4", -12, 0.0),
     ])
     def test_get_safety_delta(self, fen, move, result_white, result_black):
@@ -31,8 +31,8 @@ class BoardTest(TestCase):
         white = board.get_safety_delta(True, move, piece_type, captured_piece_type)
         black = board.get_safety_delta(False, move, piece_type, captured_piece_type)
 
-        assert white == result_white
-        assert black == result_black
+        assert round(white, 3) == result_white
+        assert round(black, 3) == result_black
 
     @parameterized.expand([
         ("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR", "e2e3", 0.0, 0.0),
@@ -50,11 +50,8 @@ class BoardTest(TestCase):
         white = board.get_under_attack_delta(True, move, piece_type, captured_piece_type)
         black = board.get_under_attack_delta(False, move, piece_type, captured_piece_type)
 
-        # print(white, result_white)
-        # print(black, result_black)
-
-        assert white == result_white
-        assert black == result_black
+        assert round(white, 3) == result_white
+        assert round(black, 3) == result_black
 
     @parameterized.expand([
         (None, "a2a3", True, -1),
@@ -114,8 +111,54 @@ class BoardTest(TestCase):
 
         captured_piece_type = board.get_captured_piece_type(move)
         fast_delta = board.get_pawn_mobility_delta(move, captured_piece_type)
-        # print(actual_delta, fast_delta)
+
         assert actual_delta == fast_delta
 
         # test no side effects
         assert initial_board == board
+
+    # @parameterized.expand([
+    #     ("r1b1k1nr/ppppqppp/2n1p3/8/3P4/3Q4/PPP1PPPP/RN2KBNR w KQkq - 0 5", 35.047, 25.047, 0, 35.005, 33.013, 0)
+    # ])
+    # def test_get_material_and_safety(self, fen, result_white_material, result_white_safety, result_white_under_attack,
+    #                                  result_black_material, result_black_safety, result_black_under_attack):
+    #     board = Board(fen)
+    #
+    #     white_material, white_safety, white_under_attack = board.get_material_and_safety(True)
+    #     black_material, black_safety, black_under_attack = board.get_material_and_safety(False)
+    #
+    #     assert round(white_material, 3) == result_white_material
+    #     assert round(white_safety, 3) == result_white_safety
+    #     assert round(white_under_attack, 3) == result_white_under_attack
+    #     assert round(black_material, 3) == result_black_material
+    #     assert round(black_safety, 3) == result_black_safety
+    #     assert round(black_under_attack, 3) == result_black_under_attack
+
+    @parameterized.expand([
+        ("rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR", 12, 10),
+        ("rnbqkb2/1p2p2p/1Npp1r1n/p1P2pp1/1PQ1BPP1/3P1N2/P3P2P/R1B1K2R", 18, 16),
+        ("rnbqkbnr/ppp1pp1p/8/3P4/3P4/4p3/PP4PP/RNBQKBNR", 25, 18),
+    ])
+    def test_get_space(self, fen, result_white_space, result_black_space):
+        board = Board(fen)
+
+        assert board.get_space(True) == result_white_space
+        assert board.get_space(False) == result_black_space
+
+        # t0 = perf_counter()
+        # for i in range(1000000):
+        #     board.get_space(True)
+        #     board.get_space(False)
+        # print(f"speed: {perf_counter() - t0}")
+
+    # @parameterized.expand(["rnbqkbnr/ppp1pp1p/8/3P4/3P4/4p3/PP4PP/RNBQKBNR"])
+    # def test_get_material_simple(self, fen):
+    #     board = Board(fen)
+    #
+    #     t0 = perf_counter()
+    #     for i in range(1000000):
+    #         board.get_material_simple(True)
+    #         board.get_material_simple(False)
+    #     print(f"speed: {perf_counter() - t0}")
+
+# unittest.main()
