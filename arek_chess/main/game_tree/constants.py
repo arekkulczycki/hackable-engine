@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Constants.
 """
@@ -6,6 +5,8 @@ Constants.
 from enum import IntEnum
 
 INF = 1000000
+
+ROOT_NODE_NAME = "0"
 
 
 class Print(IntEnum):

@@ -1,13 +1,13 @@
-# -*- coding: utf-8 -*-
 """
 Evaluation in the simplest manner, caring for just material and space in order
 to balance risk/reward of pushing forward.
 """
 
-from typing import List
+from typing import List, Optional
 
+from arek_chess.board.board import Board
+from arek_chess.board.mypy_chess import Move
 from arek_chess.criteria.evaluation.base_eval import BaseEval
-from arek_chess.utils.memory_manager import MemoryManager
 
 
 class FastEval(BaseEval):
@@ -22,7 +22,8 @@ class FastEval(BaseEval):
         color: bool,
         move_str: str,
         captured_piece_type: int,
-        action: List[float] = None,
+        board: Optional[Board],
+        action: List[float] = None
     ) -> float:
         """
 
@@ -32,7 +33,10 @@ class FastEval(BaseEval):
         if action is None:
             action = self.DEFAULT_ACTION
 
-        board, move = self.get_board_data(move_str, node_name, color)
+        if not board:
+            board, move = self.get_board_data(move_str, node_name, color)
+        # else:
+        #     move = Move.from_uci(move_str)
 
         # params = MemoryManager.get_node_params(node_name)
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Helper classes.
 """
@@ -12,16 +11,16 @@ from arek_chess.utils.memory_manager import MemoryManager
 
 
 class GetBestMoveMixin:
-    @staticmethod
-    def _remove_stored_node_memory(node: Node):
+
+    def _remove_stored_node_memory(self, node: Node):
         if node.is_leaf:
             try:
-                MemoryManager.remove_node_board_memory(node.name)
+                self.memory_manager.remove_node_board_memory(node.name)
             except FileNotFoundError:
                 pass
         else:
             try:
-                MemoryManager.remove_node_memory(node.name)
+                self.memory_manager.remove_node_memory(node.name)
             except FileNotFoundError:
                 pass
 

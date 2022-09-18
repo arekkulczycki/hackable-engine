@@ -1,11 +1,12 @@
-# -*- coding: utf-8 -*-
 """
 Controls all engine flows and communication to outside world.
 """
+
 from typing import Optional
 
 import chess
 
+from arek_chess.main.game_tree.constants import ROOT_NODE_NAME
 from arek_chess.main.game_tree.search_manager import SearchManager
 from arek_chess.utils.memory_manager import MemoryManager
 from arek_chess.utils.messaging import Queue
@@ -38,6 +39,10 @@ class Controller:
         ):  # one process required for the tree search and one for the selector worker
             evaluator = EvalWorker(self.eval_queue, self.selector_queue)
             self.child_processes.append(evaluator)
+
+        # for _ in range(2):
+        #     selector = SelectorWorker(self.selector_queue, self.candidates_queue)
+        #     self.child_processes.append(selector)
 
         selector = SelectorWorker(self.selector_queue, self.candidates_queue)
         self.child_processes.append(selector)
@@ -74,7 +79,7 @@ class Controller:
         """"""
 
         try:
-            MemoryManager.remove_node_board_memory(self.search_manager.ROOT_NAME)
+            MemoryManager().remove_node_board_memory(ROOT_NODE_NAME)
         except FileNotFoundError:
             # will not exist if the search has been run at least once
             pass

@@ -1,6 +1,5 @@
-# -*- coding: utf-8 -*-
 """
-Module_docstring.
+Handling of board-related logic.
 """
 
 from typing import Tuple, Dict, Iterator, List, Generator

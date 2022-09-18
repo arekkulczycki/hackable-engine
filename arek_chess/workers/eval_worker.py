@@ -8,11 +8,8 @@ from signal import signal, SIGTERM
 
 from pyinstrument import Profiler
 
-from arek_chess.criteria.evaluation.arek_eval import ArekEval
 from arek_chess.criteria.evaluation.fast_eval import FastEval
-from arek_chess.utils.memory_manager import (
-    remove_shm_from_resource_tracker,
-)
+from arek_chess.utils.memory_manager import MemoryManager
 from arek_chess.utils.messaging import Queue
 from arek_chess.workers.base_worker import BaseWorker
 
@@ -33,7 +30,7 @@ class EvalWorker(BaseWorker):
     def setup(self):
         """"""
 
-        remove_shm_from_resource_tracker()
+        # remove_shm_from_resource_tracker()
 
         # self.call_count = 0
         #
@@ -41,8 +38,9 @@ class EvalWorker(BaseWorker):
 
         # self.evaluator = ArekEval()
         self.evaluator = FastEval()
+        self.memory_manager = MemoryManager()
 
-        self.max_items_at_once = 5
+        self.max_items_at_once = 16
 
     def _run(self):
         """
@@ -56,7 +54,9 @@ class EvalWorker(BaseWorker):
             put_items = []
             eval_items = self.eval_queue.get_many(self.max_items_at_once)
             if eval_items:
-                for eval_item in eval_items:
+                names = [item[0] for item in eval_items]
+                boards = self.memory_manager.get_many_boards(names)
+                for eval_item, board in zip(eval_items, boards):
                     (
                         node_name,
                         size,
@@ -70,7 +70,7 @@ class EvalWorker(BaseWorker):
                     # benchmark max perf with random generation
                     # score = uniform(-10, 10)
                     score = self.evaluator.get_score(
-                        node_name, not turn_after, move, captured_piece_type
+                        node_name, not turn_after, move, captured_piece_type, board
                     )
 
                     put_items.append(

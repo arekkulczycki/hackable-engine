@@ -1,27 +1,22 @@
-# -*- coding: utf-8 -*-
 """
 Handling of the search tree including following features: depth control, branch pruning, printing output
 """
 
 import asyncio
-import math
 import time
 from bisect import insort
 from statistics import mean, stdev, median
-from typing import Optional, Tuple
+from typing import Optional
 
 from anytree import Node, LevelOrderIter
 
 from arek_chess.board.board import Board
 from arek_chess.main.dispatcher import Dispatcher
-from arek_chess.main.game_tree.constants import Print, INF
+from arek_chess.main.game_tree.constants import Print, INF, ROOT_NODE_NAME
 from arek_chess.main.game_tree.helpers import GetBestMoveMixin
 from arek_chess.main.game_tree.node import BackpropNode
 from arek_chess.main.game_tree.renderer import PrunedTreeRenderer
-from arek_chess.utils.memory_manager import (
-    MemoryManager,
-    remove_shm_from_resource_tracker,
-)
+from arek_chess.utils.memory_manager import MemoryManager
 from arek_chess.utils.messaging import Queue
 
 LOG_INTERVAL = 1
@@ -32,7 +27,7 @@ COMPARISON_DEPTH = 4
 
 TREE_MAX_LEVEL = 999
 
-remove_shm_from_resource_tracker()
+# remove_shm_from_resource_tracker()
 
 
 class SearchManager(GetBestMoveMixin):
@@ -41,8 +36,7 @@ class SearchManager(GetBestMoveMixin):
     """
 
     SLEEP = 0.001
-    ROOT_NAME = "0"
-    PRINT: int = Print.TREE
+    PRINT: int = Print.NOTHING
 
     def __init__(
         self,
@@ -59,6 +53,7 @@ class SearchManager(GetBestMoveMixin):
         self.eval_queue = eval_queue
         self.candidates_queue = candidates_queue
 
+        self.memory_manager = MemoryManager()
         self.dispatcher = Dispatcher(self.eval_queue, self.candidates_queue)
 
         # self.pruner = ArekPruner()
@@ -81,7 +76,7 @@ class SearchManager(GetBestMoveMixin):
         score = -INF if self.turn else INF
 
         self.root = BackpropNode(
-            self.ROOT_NAME,
+            ROOT_NODE_NAME,
             score=score,
             init_score=score,
             level=0,
@@ -89,9 +84,9 @@ class SearchManager(GetBestMoveMixin):
             move=None,
             # pruned=False,
         )
-        MemoryManager.set_node_board(self.ROOT_NAME, board)
+        self.memory_manager.set_node_board(ROOT_NODE_NAME, board)
 
-        self.tree = {self.ROOT_NAME: self.root}
+        self.tree = {ROOT_NODE_NAME: self.root}
         self.tree_stats = {}
 
         self.sorted_nodes = []
@@ -99,9 +94,13 @@ class SearchManager(GetBestMoveMixin):
     def search(self):
         """"""
 
+        self.initiated = 0
+        self.calculated = 0
+        self.queued = 0
+
         loop = asyncio.get_event_loop() or asyncio.new_event_loop()
 
-        dispatching_results, _ = loop.run_until_complete(
+        async_results, _ = loop.run_until_complete(
             asyncio.wait(
                 [self.dispatching(), self.sorting()],
                 return_when=asyncio.FIRST_COMPLETED,
@@ -110,15 +109,13 @@ class SearchManager(GetBestMoveMixin):
 
         loop.close()
 
-        return next(iter(dispatching_results)).result()
+        return next(iter(async_results)).result()
 
     async def dispatching(self) -> str:
         """"""
 
-        self.dispatcher.dispatch(self.root, self.root_turn)
-
-        self.initiated = 1
-        self.calculated = 0
+        self.dispatcher.dispatch(self.root)
+        self.initiated += 1
 
         t0 = time.time()
         t1 = t0
@@ -127,12 +124,12 @@ class SearchManager(GetBestMoveMixin):
         root_level = True
         while self.initiated > self.calculated:
             t = time.time()
-            n_sorted_nodes = len(self.sorted_nodes)
+            # n_sorted_nodes = len(self.sorted_nodes)
             if t > t1 + LOG_INTERVAL:
                 t1 = t
-                print(f"initiated: {self.initiated}, candidates: {n_sorted_nodes}, calculated: {self.calculated}")
+                print(f"initiated: {self.initiated}, candidates: {self.queued}, calculated: {self.calculated}")
 
-                if self.calculated == last_calculated:
+                if self.calculated == last_calculated or self.calculated > 1000:
                     break
 
                 last_calculated = self.calculated
@@ -140,6 +137,7 @@ class SearchManager(GetBestMoveMixin):
             candidates_item = self.candidates_queue.get()
             if not candidates_item:
                 await asyncio.sleep(0)
+                # print("no items")
                 continue
 
             self.handle_candidates(candidates_item, root_level)
@@ -160,11 +158,15 @@ class SearchManager(GetBestMoveMixin):
         level = len(parent_name_split)
         color = level % 2 == 0 if self.turn else level % 2 == 1
 
-        best_score = math.inf if color else -math.inf
+        nodes_to_dispatch = []
+
+        # best_score = math.inf if color else -math.inf
         for candidate in candidates:
-            node, score = self.create_node(candidate, parent, level, color)
-            if score > best_score and not color or score < best_score and color:
-                best_score = score
+            self.initiated += 1
+
+            node: Node = self.create_node(candidate, parent, level, color)
+            # if score > best_score and not color or score < best_score and color:
+            #     best_score = score
 
             if root_level:
                 node.first_ancestor = node.move
@@ -173,11 +175,15 @@ class SearchManager(GetBestMoveMixin):
 
             # always analyse capture-fest until the last capture
             if node.captured or root_level:  # or node.level % 2 != 1
-                self.initiated += 1
-                self.dispatcher.dispatch(node, node.color)
+                nodes_to_dispatch.append(node)
+                # self.dispatcher.dispatch(node)
             else:
                 # the sorting is done only for the positions when it's same player turn
                 insort(self.sorted_nodes, node)
+                self.queued += 1
+
+        if nodes_to_dispatch:
+            self.dispatcher.dispatch_many(nodes_to_dispatch)
 
     def finish_up(self, n_sorted_nodes, t0) -> str:
         """"""
@@ -195,7 +201,7 @@ class SearchManager(GetBestMoveMixin):
         #     print(f"median for level {level}: {data.get('median')}")
 
         print(
-            f"initiated: {self.initiated}, scheduled: {n_sorted_nodes}, calculated: {self.calculated}"
+            f"initiated: {self.initiated}, scheduled: {self.queued}, calculated: {self.calculated}"
         )
 
         print("chosen move -->", best_score, best_move)
@@ -209,49 +215,46 @@ class SearchManager(GetBestMoveMixin):
 
         last_printed_top_choice = None
         last_top_choice = None
-        already_cut = False
+        dispatched = 0
 
         while True:
             await asyncio.sleep(0)
 
-            if self.calculated > 0.75 * self.initiated:
-                n_to_queue = 64
+            n_to_queue = 8
 
-                top_sample = self.sorted_nodes[:n_to_queue]
-                if top_sample:
-                    del self.sorted_nodes[:n_to_queue]
+            top_nodes = self.sorted_nodes[:n_to_queue]
+            if top_nodes:
+                del self.sorted_nodes[:n_to_queue]
 
-                    last_top_choice = top_sample[0].first_ancestor
-                    for node in top_sample:
-                        self.initiated += 1
-                        self.dispatcher.dispatch(node, node.color)
+                last_top_choice = top_nodes[0].first_ancestor
 
-                if last_top_choice != last_printed_top_choice:
-                    last_printed_top_choice = last_top_choice
-                    print(f"top choice: {last_top_choice}")
+                for node in top_nodes:
+                    self.dispatcher.dispatch(node)
 
-                already_cut = False
+                dispatched += 8
 
-            elif not already_cut:
-                already_cut = True
+            if last_top_choice != last_printed_top_choice:
+                last_printed_top_choice = last_top_choice
+                print(f"top choice: {last_top_choice}")
 
-                n_candidates = len(self.sorted_nodes)
-                del self.sorted_nodes[n_candidates//2:]
+            # n_candidates = len(self.sorted_nodes)
+            # if n_candidates > 10000:
+            #     del self.sorted_nodes[n_candidates//2:]
 
     def get_node(self, node_name):
         """"""
 
         return self.tree[node_name]
 
-    def create_node(self, candidate, parent, level, color) -> Tuple[Node, float]:
+    def create_node(self, candidate, parent, level, color) -> Node:
         """"""
-
-        parent_name = parent.name
-        child_name = f"{parent_name}.{candidate['i']}"
 
         move = candidate["move"]
         captured = candidate["captured"]
         score = candidate["score"]
+
+        parent_name = parent.name
+        child_name = f"{parent_name}.{move}"
 
         node = BackpropNode(
             child_name,
@@ -272,7 +275,7 @@ class SearchManager(GetBestMoveMixin):
         # )
         # node.pruned = to_prune
 
-        return node, score  # , to_prune
+        return node  # , to_prune
 
     def gather_level_stats(self, level: int) -> None:
         """"""
@@ -323,7 +326,8 @@ class SearchManager(GetBestMoveMixin):
                 cls.clean_children(f"{node_name}.{i}", level + 1, depth, width)
             try:
                 print(f"cleaning {node_name}...")
-                MemoryManager.remove_node_params_memory(node_name)
-                MemoryManager.remove_node_board_memory(node_name)
+                memory_manager = MemoryManager()
+                memory_manager.remove_node_params_memory(node_name)
+                memory_manager.remove_node_board_memory(node_name)
             except:
                 continue

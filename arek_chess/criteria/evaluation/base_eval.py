@@ -1,5 +1,4 @@
-# -*- coding: utf-8 -*-
-
+import os
 from abc import ABC
 from typing import List, Tuple
 
@@ -17,6 +16,9 @@ class BaseEval(ABC):
 
     Must implement just the get_score method.
     """
+
+    def __init__(self):
+        self.memory_manager = MemoryManager()
 
     def get_score(
         self,
@@ -41,9 +43,17 @@ class BaseEval(ABC):
     def get_board_data(
         self, move_str: str, node_name: str, turn_before: bool
     ) -> Tuple[Board, Move]:
-        board = MemoryManager.get_node_board(node_name)
-        board.turn = turn_before
+        try:
+            board = self.memory_manager.get_node_board(node_name)
+        except ValueError as e:
+            # print("eval", os.getpid(), e)
+            board = Board()  # TODO: take board from Controller starting position
+            for move in node_name.split(".")[1:]:
+                board.push(Move.from_uci(move))
 
+            self.memory_manager.set_node_board(node_name, board)
+
+        board.turn = turn_before
         move = Move.from_uci(move_str)
 
         return board, move

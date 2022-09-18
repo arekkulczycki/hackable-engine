@@ -1,16 +1,15 @@
-# -*- coding: utf-8 -*-
-
+import asyncio
+import os
 import time
 from signal import signal, SIGTERM
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from pyinstrument import Profiler
 
-from arek_chess.board.board import Move
+from arek_chess.board.board import Move, Board
 from arek_chess.criteria.pre_selection.legacy_selector import LegacySelector
 from arek_chess.utils.memory_manager import (
     MemoryManager,
-    remove_shm_from_resource_tracker,
 )
 from arek_chess.utils.messaging import Queue
 from arek_chess.workers.base_worker import BaseWorker
@@ -26,11 +25,14 @@ class SelectorWorker(BaseWorker):
     def __init__(self, selector_queue: Queue, candidates_queue: Queue):
         super().__init__()
 
+        self.memory_manager = MemoryManager()
         self.selector_queue = selector_queue
         self.candidates_queue = candidates_queue
 
+        self.boards = {}
+
     def setup(self):
-        remove_shm_from_resource_tracker()
+        # remove_shm_from_resource_tracker()
 
         signal(SIGTERM, self.before_exit)
 
@@ -40,6 +42,8 @@ class SelectorWorker(BaseWorker):
 
         self.groups = {}
 
+        self.max_items_at_once = 1024
+
     def _run(self):
         """
 
@@ -48,61 +52,84 @@ class SelectorWorker(BaseWorker):
 
         self.setup()
 
+        loop = asyncio.get_event_loop() or asyncio.new_event_loop()
+
+        items = loop.run_until_complete(self.get_items())
+
         while True:
-            scored_move_items = self.selector_queue.get_many(1)
+            _, items = loop.run_until_complete(
+                asyncio.gather(self.select(items), self.get_items())
+            )
 
-            if scored_move_items:
-                for scored_move_item in scored_move_items:
-                    (
-                        node_name,
-                        size,
-                        move,
-                        turn_after,
-                        captured_piece_type,
-                        score,
-                    ) = scored_move_item
-                    if node_name not in self.groups:
-                        self.groups[node_name] = {"size": size, "moves": []}
+    async def select(self, items) -> None:
+        to_put = []
+        for scored_move_item in items:
+            (
+                node_name,
+                size,
+                move,
+                turn_after,
+                captured_piece_type,
+                score,
+            ) = scored_move_item
+            if node_name not in self.groups:
+                self.groups[node_name] = {"size": size, "moves": []}
 
-                    moves = self.groups[node_name]["moves"]
-                    moves.append(
-                        {
-                            "move": move,
-                            "score": score,
-                            "captured": captured_piece_type,
-                        }
-                    )
+            moves = self.groups[node_name]["moves"]
+            moves.append(
+                {
+                    "move": move,
+                    "score": score,
+                    "captured": captured_piece_type,
+                }
+            )
 
-                    if len(moves) == size:
-                        candidates = self.selector.select(moves, not turn_after)
+            if len(moves) == size:
+                candidates = self.selector.select(moves, not turn_after)
 
-                        board = MemoryManager.get_node_board(node_name)
-                        parsed_candidates = self.parse_candidates(
-                            node_name, not turn_after, candidates, board
-                        )
+                try:
+                    board = self.boards[node_name]
+                except KeyError:
+                    print("selector", f"Not found: {node_name}")
+                    board = Board()
+                    for move in node_name.split(".")[1:]:
+                        board.push(Move.from_uci(move))
 
-                        del self.groups[node_name]
+                await self.store_candidates(node_name, candidates, board)  # not turn_after
+                del self.groups[node_name]
 
-                        self.candidates_queue.put((node_name, parsed_candidates))
-            else:
-                # nothing done, wait a little
-                time.sleep(self.SLEEP)
+                to_put.append((node_name, candidates))
+                # self.candidates_queue.put((node_name, candidates))
+        if to_put:
+            await self.put_items(to_put)
+        # return to_put
 
-    def parse_candidates(
-        self, node_name: str, turn_before: bool, candidates: List[Dict], board
-    ) -> List[Dict]:
-        # board = MemoryManager.get_node_board(node_name)
-        board.turn = turn_before  # TODO: likely useless now
+    async def get_items(self) -> List:
+        items = []
+        # if to_put:
+        #     await self.put_items(to_put)
+        while not items:
+            items = self.selector_queue.get_many(self.max_items_at_once)
+        return items
 
-        for i, candidate in enumerate(candidates):
-            state = board.push_no_stack(Move.from_uci(candidate["move"]))
+    async def put_items(self, items):
+        self.candidates_queue.put_many(items)
 
-            candidate["i"] = i
-            candidate_name = f"{node_name}.{i}"
-            MemoryManager.set_node_board(candidate_name, board)
+    async def store_candidates(self, node_name: str, candidates: List[Dict], board: Board) -> None:
+        # board = self.memory_manager.get_node_board(node_name)
+        # board.turn = turn_before  # TODO: likely useless now
 
-            board.light_pop(state)
-        return candidates
+        to_memo = {}
+        for candidate in candidates:
+            copy = board.copy()
+
+            move = candidate["move"]
+            copy.push_no_stack(Move.from_uci(move))
+            # self.memory_manager.set_node_board(f"{node_name}.{move}", board)
+            to_memo[f"{node_name}.{move}"] = copy
+
+        self.memory_manager.set_many_boards(to_memo)
+        self.boards.update(to_memo)
 
     def before_exit(self, *args):
         """"""

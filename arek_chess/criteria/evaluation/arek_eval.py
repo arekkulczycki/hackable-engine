@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 from typing import List
 
 from arek_chess.criteria.evaluation.base_eval import BaseEval
