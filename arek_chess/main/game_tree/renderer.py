@@ -2,6 +2,8 @@
 Tree renderer class.
 """
 
+from typing import Optional
+
 from anytree import Node, RenderTree
 from anytree.render import _is_last
 
@@ -9,20 +11,24 @@ from arek_chess.main.game_tree.constants import INF
 
 
 class PrunedTreeRenderer(RenderTree):
-    def __init__(self, depth: int, *args, **kwargs):
+    def __init__(self, root: Node, *, depth: int = 0, path: Optional[str] = None, **kwargs):
+        super().__init__(root, **kwargs)
+
         self.depth = depth
-        super().__init__(*args, **kwargs)
+        self.path = path
 
     def __iter__(self):
         return self.__next(self.node, tuple())
 
-    def __next(self, node, continues, level=0):
+    def __next(self, node: Node, continues, level=0):
         yield self._RenderTree__item(node, continues, self.style)
         children = node.children
         new_children = ()
         for i in range(len(children)):
             child = children[i]
-            if self.has_deep_family(child):
+            if (self.path is not None) and (level > 0) and (self.path not in node.name):
+                continue
+            if self.has_deep_family(child):  # and self.path in node.name:
                 new_children += (child,)
         children = new_children
 

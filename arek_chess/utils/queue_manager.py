@@ -7,7 +7,7 @@ from queue import Empty, Full
 from faster_fifo import Queue as FastQueue
 
 
-class Queue:
+class QueueManager:
     """
     Class_docstring
     """

@@ -4,14 +4,12 @@ import kmeans1d
 from numpy import absolute as np_absolute, mean as np_mean, std as np_std
 from numpy.random import choice
 
-from arek_chess.criteria.pre_selection.base_selector import BaseSelector
-
 CLUSTER_2_3_THRESHOLD = 9
 CLUSTER_3_4_THRESHOLD = 15
 CLUSTER_4_5_THRESHOLD = 25
 
 
-class LegacySelector(BaseSelector):
+class LegacySelector:
     """"""
 
     def select(

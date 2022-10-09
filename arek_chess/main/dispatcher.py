@@ -4,11 +4,11 @@ Dispatches to the queue nodes to be calculated by EvalWorkers.
 
 from typing import List
 
-from anytree import Node
-
 from arek_chess.board.board import Board, Move
+from arek_chess.main.game_tree.constants import INF
+from arek_chess.main.game_tree.node.node import Node
 from arek_chess.utils.memory_manager import MemoryManager
-from arek_chess.utils.messaging import Queue
+from arek_chess.utils.queue_manager import QueueManager
 
 
 class Dispatcher:
@@ -16,14 +16,11 @@ class Dispatcher:
     Dispatches to the queue nodes to be calculated by EvalWorkers.
     """
 
-    def __init__(
-        self,
-        eval_queue: Queue,
-        candidates_queue: Queue,
-    ):
+    def __init__(self, eval_queue: QueueManager):
         self.memory_manager = MemoryManager()
         self.eval_queue = eval_queue
-        self.candidates_queue = candidates_queue
+
+        self.dispatched: int = 0
 
     def dispatch(self, node: Node) -> None:
         node_name = node.name
@@ -42,18 +39,15 @@ class Dispatcher:
 
         if moves:
             moves_n = len(moves)
+            self.dispatched += moves_n
 
             put_items = []
             for move in moves:
-                captured_piece_type = board.get_captured_piece_type(move)
-
                 put_items.append(
                     (
                         node_name,
                         moves_n,
                         move.uci(),
-                        not node.color,
-                        captured_piece_type,
                     )
                 )
 
@@ -63,23 +57,32 @@ class Dispatcher:
             node.deep = True
 
             if board.is_checkmate():
-                node.score = -1000000 if node.color else 1000000
+                node.score = -INF if node.color else INF
             else:  # is stalemate
                 node.score = 0
 
-            try:
-                self.memory_manager.remove_node_board_memory(node.name)
-            except:
-                import traceback
-                traceback.print_exc()
+            # try:
+            #     self.memory_manager.remove_node_board_memory(node.name)
+            # except:
+            #     import traceback
+            #
+            #     traceback.print_exc()
 
     def dispatch_many(self, nodes: List[Node]):
         put_items = []
 
         for node in nodes:
             node_name = node.name
-            board = self.memory_manager.get_node_board(node_name)
-            board.turn = node.color
+            try:
+                board = self.memory_manager.get_node_board(node_name)
+            except FileNotFoundError:
+                print(f"fucked up on: {node_name}")
+                continue
+            # board.turn = node.color
+
+            if node.score in [0, -INF, INF]:
+                if board.is_game_over(claim_draw=True):
+                    continue
 
             moves = [move for move in board.legal_moves]
 
@@ -89,33 +92,31 @@ class Dispatcher:
                 # )  # TODO: remove after switching to delta only
 
                 moves_n = len(moves)
+                self.dispatched += moves_n
 
                 for move in moves:
-                    captured_piece_type = board.get_captured_piece_type(move)
-
                     put_items.append(
                         (
                             node_name,
                             moves_n,
                             move.uci(),
-                            not node.color,
-                            captured_piece_type,
                         )
                     )
 
             else:  # is checkmate or stalemate
-                node.deep = True
+                # node.deep = True
 
                 if board.is_checkmate():
-                    node.score = -1000000 if node.color else 1000000
+                    node.score = -INF if node.color else INF
                 else:  # is stalemate
                     node.score = 0
 
-                try:
-                    self.memory_manager.remove_node_board_memory(node.name)
-                except:
-                    import traceback
-                    traceback.print_exc()
+                # try:
+                #     self.memory_manager.remove_node_board_memory(node.name)
+                # except:
+                #     import traceback
+                #
+                #     traceback.print_exc()
 
         self.eval_queue.put_many(put_items)
 

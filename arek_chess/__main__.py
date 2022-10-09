@@ -7,7 +7,6 @@ sys.path.insert(0, os.getcwd())
 # print(os.path.dirname(__file__))
 # exit(1)
 from arek_chess.main.controller import Controller
-from arek_chess.main.game_tree.search_manager import SearchManager
 
 if __name__ == "__main__":
 
@@ -16,7 +15,7 @@ if __name__ == "__main__":
         "-c",
         "--clean",
         help="Clean memory for all nodes at given depth and width",
-        # type=str,
+        action="store_true",
     )
     arg_parser.add_argument(
         "--fen",
@@ -32,12 +31,11 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
 
     if args.clean:
-        width, depth = args.clean.split(",")
-        SearchManager.run_clean(int(width), int(depth))
+        Controller.release_memory()
         exit(0)
 
     controller = Controller()
-    controller.boot_up()
+    controller.boot_up(args.fen)
 
     if args.run_once:
         controller.search_manager.search()
@@ -57,6 +55,8 @@ if __name__ == "__main__":
                 controller.boot_up(fen)
             elif key == "move":
                 controller.make_move()
+            elif key == "play":
+                controller.play()
             try:
                 n = int(key)
                 for i in range(n):

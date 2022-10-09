@@ -4,59 +4,49 @@ Handling of the search tree including following features: depth control, branch 
 
 import asyncio
 import time
-from bisect import insort
-from statistics import mean, stdev, median
-from typing import Optional
-
-from anytree import Node, LevelOrderIter
+from typing import Optional, Dict
 
 from arek_chess.board.board import Board
 from arek_chess.main.dispatcher import Dispatcher
 from arek_chess.main.game_tree.constants import Print, INF, ROOT_NODE_NAME
 from arek_chess.main.game_tree.helpers import GetBestMoveMixin
-from arek_chess.main.game_tree.node import BackpropNode
+from arek_chess.main.game_tree.node.node import Node
+from arek_chess.main.game_tree.node.create_node_mixin import CreateNodeMixin
 from arek_chess.main.game_tree.renderer import PrunedTreeRenderer
+from arek_chess.main.game_tree.traversal import Traversal
 from arek_chess.utils.memory_manager import MemoryManager
-from arek_chess.utils.messaging import Queue
+from arek_chess.utils.queue_manager import QueueManager
 
 LOG_INTERVAL = 1
-
-CPU_CORE_BUFFER = 100
-
-COMPARISON_DEPTH = 4
-
-TREE_MAX_LEVEL = 999
 
 # remove_shm_from_resource_tracker()
 
 
-class SearchManager(GetBestMoveMixin):
+class SearchManager(GetBestMoveMixin, CreateNodeMixin):
     """
     Class_docstring
     """
 
-    SLEEP = 0.001
+    SLEEP = 0.0001
     PRINT: int = Print.NOTHING
+
+    tree: Dict[str, Node]
 
     def __init__(
         self,
-        eval_queue: Queue,
-        candidates_queue: Queue,
-        cpu_cores: int,
-        depth: int,
-        width: float = 0.001,
+        eval_queue: QueueManager,
+        candidates_queue: QueueManager,
     ):
-        self.denominator = int(1 / width)
-        self.cpu_cores = cpu_cores
-        self.depth = depth
-        self.width = width
+        super().__init__()
+
         self.eval_queue = eval_queue
         self.candidates_queue = candidates_queue
 
         self.memory_manager = MemoryManager()
-        self.dispatcher = Dispatcher(self.eval_queue, self.candidates_queue)
+        self.dispatcher = Dispatcher(self.eval_queue)
 
-        # self.pruner = ArekPruner()
+        self.evaluated = 0
+        self.selected = 0
 
     def set_root(self, fen: Optional[str] = None, turn: Optional[bool] = None) -> None:
         """"""
@@ -65,269 +55,233 @@ class SearchManager(GetBestMoveMixin):
             board = Board(fen)
             if turn is not None:
                 board.turn = turn
-                self.root_turn = turn
-            else:
-                self.root_turn = board.turn
         else:
             board = Board()
-            self.root_turn = True
 
-        self.turn = board.turn
-        score = -INF if self.turn else INF
+        score = -INF if board.turn else INF
 
-        self.root = BackpropNode(
-            ROOT_NODE_NAME,
+        self.root = Node(
+            parent=None,
+            name=ROOT_NODE_NAME,
+            move="",
             score=score,
-            init_score=score,
+            captured=0,
             level=0,
-            color=self.turn,
-            move=None,
-            # pruned=False,
+            color=board.turn,
         )
         self.memory_manager.set_node_board(ROOT_NODE_NAME, board)
 
         self.tree = {ROOT_NODE_NAME: self.root}
-        self.tree_stats = {}
 
-        self.sorted_nodes = []
+        self.traversal = Traversal(self.root, self.tree)
 
     def search(self):
         """"""
 
-        self.initiated = 0
-        self.calculated = 0
-        self.queued = 0
+        self.limit = 10000
 
-        loop = asyncio.get_event_loop() or asyncio.new_event_loop()
-
-        async_results, _ = loop.run_until_complete(
-            asyncio.wait(
-                [self.dispatching(), self.sorting()],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-        )
-
-        loop.close()
-
-        return next(iter(async_results)).result()
-
-    async def dispatching(self) -> str:
-        """"""
+        self.t0 = time.time()
+        self.t_tmp = self.t0
+        self.last_evaluated = 0
 
         self.dispatcher.dispatch(self.root)
-        self.initiated += 1
 
-        t0 = time.time()
-        t1 = t0
-        last_calculated = 0
-        n_sorted_nodes = 0
-        root_level = True
-        while self.initiated > self.calculated:
-            t = time.time()
-            # n_sorted_nodes = len(self.sorted_nodes)
-            if t > t1 + LOG_INTERVAL:
-                t1 = t
-                print(f"initiated: {self.initiated}, candidates: {self.queued}, calculated: {self.calculated}")
-
-                if self.calculated == last_calculated or self.calculated > 1000:
+        try:
+            while (
+                self.evaluated < self.dispatcher.dispatched
+                or self.evaluated < self.limit
+            ):
+                # TODO: optimize concurrency
+                self.dispatching()
+                self.selecting()
+                if self.timing():
                     break
 
-                last_calculated = self.calculated
+        except KeyboardInterrupt:
+            self.before_exit()
+        else:
+            return self.finish_up(time.time() - self.t0)
 
-            candidates_item = self.candidates_queue.get()
-            if not candidates_item:
-                await asyncio.sleep(0)
-                # print("no items")
-                continue
-
-            self.handle_candidates(candidates_item, root_level)
-            root_level = False
-
-            self.calculated += 1
-
-            await asyncio.sleep(0)
-
-        return self.finish_up(n_sorted_nodes, t0)
-
-    def handle_candidates(self, candidates_item, root_level=False):
+    def timing(self) -> True:
         """"""
 
-        parent_name, candidates = candidates_item
-        parent = self.get_node(parent_name)
-        parent_name_split = parent_name.split(".")
-        level = len(parent_name_split)
-        color = level % 2 == 0 if self.turn else level % 2 == 1
+        t = time.time()
+
+        if t > self.t_tmp + LOG_INTERVAL:
+            self.t_tmp = t
+
+            progress = round(
+                min(
+                    self.evaluated / self.dispatcher.dispatched,
+                    self.evaluated / self.limit,
+                )
+                * 100
+            )
+            print(
+                f"evaluated: {self.evaluated}, dispatched: {self.dispatcher.dispatched}, progress: {progress}%"
+            )
+
+            if self.evaluated == self.last_evaluated:
+                return True
+
+            self.last_evaluated = self.evaluated
+
+        return False
+
+    async def timing_loop(self):
+        """"""
+
+        while True:
+            if self.timing():
+                break
+            await asyncio.sleep(0)
+
+    def dispatching(self):
+        """"""
+
+        candidates = self.candidates_queue.get_many(1024)  # self.max_items_at_once)
+        if not candidates:
+            time.sleep(self.SLEEP)
+            # print("no items")
+            return
+
+        self.evaluated += len(candidates)
+        self.handle_candidates(candidates)
+
+    async def dispatching_loop(self):
+        """"""
+
+        while True:
+            self.dispatching()
+            await asyncio.sleep(0)
+
+    def handle_candidates(self, candidates):
+        """"""
 
         nodes_to_dispatch = []
 
         # best_score = math.inf if color else -math.inf
         for candidate in candidates:
-            self.initiated += 1
+            (
+                parent_name,
+                size,
+                move_str,
+                moved_piece_type,
+                captured_piece_type,
+                is_check,
+                score,
+            ) = candidate
+            parent = self.get_node(parent_name)
+            level = len(parent_name.split("."))
 
-            node: Node = self.create_node(candidate, parent, level, color)
-            # if score > best_score and not color or score < best_score and color:
-            #     best_score = score
+            to_dispatch = False
+            node: Node = self.create_node(
+                parent, move_str, score, captured_piece_type, level
+            )
 
-            if root_level:
-                node.first_ancestor = node.move
-            else:
-                node.first_ancestor = parent.first_ancestor
+            # analyse capture-fest immediately, provided at least equal value of piece captured as previously
+            if captured_piece_type:
+                piece_value = Board.get_simple_piece_value(moved_piece_type)
+                capture_value = Board.get_simple_piece_value(captured_piece_type)
+                parent_capture_value = Board.get_simple_piece_value(parent.captured)
 
-            # always analyse capture-fest until the last capture
-            if node.captured or root_level:  # or node.level % 2 != 1
-                nodes_to_dispatch.append(node)
-                # self.dispatcher.dispatch(node)
-            else:
-                # the sorting is done only for the positions when it's same player turn
-                insort(self.sorted_nodes, node)
-                self.queued += 1
+                if capture_value > parent_capture_value or (
+                    piece_value > parent_capture_value
+                    and capture_value == parent_capture_value
+                ):
+                    nodes_to_dispatch.append(node)
+                    node.being_processed = True
+                    to_dispatch = True
+            if not to_dispatch:
+                parent.being_processed = False
 
         if nodes_to_dispatch:
             self.dispatcher.dispatch_many(nodes_to_dispatch)
 
-    def finish_up(self, n_sorted_nodes, t0) -> str:
+    def selecting(self) -> None:
         """"""
 
-        best_score, best_move = self.get_best_move(
-            self.root, self.depth, self.root_turn
-        )
+        if (
+            self.evaluated / self.dispatcher.dispatched < 0.9
+            or self.dispatcher.dispatched > self.limit
+        ):
+            return
 
-        execution_time = time.time() - t0
+        top_nodes = [
+            node
+            for node in (self.traversal.get_next_node_to_look_at() for _ in range(4))
+            if node is not None
+        ]
+        if not top_nodes:
+            # print("no nodes")
+            return
 
-        if self.PRINT == Print.TREE:
-            print(PrunedTreeRenderer(self.depth, self.root, maxlevel=TREE_MAX_LEVEL))
+        else:
+            # print("selecting")
+            self.selected += len(top_nodes)
+            self.dispatcher.dispatch_many(top_nodes)
 
-        # for level, data in self.tree_stats.items():
-        #     print(f"median for level {level}: {data.get('median')}")
-
-        print(
-            f"initiated: {self.initiated}, scheduled: {self.queued}, calculated: {self.calculated}"
-        )
-
-        print("chosen move -->", best_score, best_move)
-
-        print(f"time: {execution_time}")
-
-        return best_move
-
-    async def sorting(self):
+    async def selecting_loop(self):
         """"""
-
-        last_printed_top_choice = None
-        last_top_choice = None
-        dispatched = 0
 
         while True:
+            self.selecting()
             await asyncio.sleep(0)
-
-            n_to_queue = 8
-
-            top_nodes = self.sorted_nodes[:n_to_queue]
-            if top_nodes:
-                del self.sorted_nodes[:n_to_queue]
-
-                last_top_choice = top_nodes[0].first_ancestor
-
-                for node in top_nodes:
-                    self.dispatcher.dispatch(node)
-
-                dispatched += 8
-
-            if last_top_choice != last_printed_top_choice:
-                last_printed_top_choice = last_top_choice
-                print(f"top choice: {last_top_choice}")
-
-            # n_candidates = len(self.sorted_nodes)
-            # if n_candidates > 10000:
-            #     del self.sorted_nodes[n_candidates//2:]
 
     def get_node(self, node_name):
         """"""
 
         return self.tree[node_name]
 
-    def create_node(self, candidate, parent, level, color) -> Node:
+    def finish_up(self, total_time: float) -> str:
         """"""
 
-        move = candidate["move"]
-        captured = candidate["captured"]
-        score = candidate["score"]
-
-        parent_name = parent.name
-        child_name = f"{parent_name}.{move}"
-
-        node = BackpropNode(
-            child_name,
-            parent=parent,
-            score=score,
-            init_score=score,
-            move=move,
-            captured=captured,
-            level=level,
-            color=color,
-            # pruned=False,
-        )
-
-        self.tree[child_name] = node
-
-        # to_prune = self.pruner.should_prune(
-        #     self.tree_stats, score, parent, not turn_after, captured, self.depth
+        # best_score, best_move = self.get_best_move(
+        #     self.root, self.depth, self.root_turn
         # )
-        # node.pruned = to_prune
+        best_score, best_move = self.get_best_move()
 
-        return node  # , to_prune
+        if self.PRINT == Print.TREE:
+            # print(PrunedTreeRenderer(self.root, depth=3, maxlevel=5))
+            print(PrunedTreeRenderer(self.root, depth=5, maxlevel=5, path="f3e5"))
+        elif self.PRINT == Print.CANDIDATES:
+            print(PrunedTreeRenderer(self.root, depth=3, maxlevel=2))
 
-    def gather_level_stats(self, level: int) -> None:
+        # print(f"evaluated: {self.evaluated}, dispatched: {self.dispatcher.dispatched}, selected: {self.selected}")
+
+        print("chosen move -->", round(best_score, 3), best_move)
+
+        print(f"time: {total_time}, nodes/s: {round(self.evaluated / total_time)}")
+
+        self.evaluated = 0
+        self.selected = 0
+        self.dispatcher.dispatched = 0
+
+        return best_move
+
+    def before_exit(self, *args):
         """"""
 
-        if level in self.tree_stats:
-            return
+        print(PrunedTreeRenderer(self.root, depth=6, maxlevel=7))
+        print(f"evaluated: {self.evaluated}, dispatched: {self.dispatcher.dispatched}")
 
-        nodes = []
-        scores = []
-        for node in LevelOrderIter(self.root, maxlevel=level + 1):
-            if node.level != level:
-                continue
-
-            nodes.append(node)
-            scores.append(node.score)
-
-        _number = len(nodes)
-        # number = self.tree_stats.get(level, {}).get("number")
-        #
-        # if number != _number:
-        _min = min(scores)
-        _max = max(scores)
-        _median = median(scores)
-        _mean = mean(scores) if _number > 3 else None
-        _stdev = stdev(scores) if _number > 3 else None
-
-        self.tree_stats[level] = {
-            "number": _number,
-            "min": _min,
-            "max": _max,
-            "median": _median,
-            "mean": _mean,
-            "stdev": _stdev,
-        }
-
-    @classmethod
-    def run_clean(cls, depth, width):
-        """"""
-
-        cls.clean_children("0", 0, depth, width)
-
-    @classmethod
-    def clean_children(cls, node_name, level, depth, width):
-        """"""
-
-        for i in range(width):
-            if level <= depth:
-                cls.clean_children(f"{node_name}.{i}", level + 1, depth, width)
-            try:
-                print(f"cleaning {node_name}...")
-                memory_manager = MemoryManager()
-                memory_manager.remove_node_params_memory(node_name)
-                memory_manager.remove_node_board_memory(node_name)
-            except:
-                continue
+    # @classmethod
+    # def run_clean(cls, depth, width):
+    #     """"""
+    #
+    #     cls.clean_children("0", 0, depth, width)
+    #
+    # @classmethod
+    # def clean_children(cls, node_name, level, depth, width):
+    #     """"""
+    #
+    #     for i in range(width):
+    #         if level <= depth:
+    #             cls.clean_children(f"{node_name}.{i}", level + 1, depth, width)
+    #         try:
+    #             print(f"cleaning {node_name}...")
+    #             memory_manager = MemoryManager()
+    #             memory_manager.remove_node_params_memory(node_name)
+    #             memory_manager.remove_node_board_memory(node_name)
+    #         except:
+    #             continue

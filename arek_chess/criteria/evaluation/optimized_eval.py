@@ -1,6 +1,18 @@
 """
-Evaluation in the simplest manner, caring for just material and space in order
-to balance risk/reward of pushing forward.
+Evaluation by all the attributes that are obtained from board in an optimized way.
+
+Desired:
+[x] is_check
+[x] material
+[ ] mobility
+[ ] king mobility
+[ ] threats (x ray included)
+[ ] king threats
+[ ] protection
+[ ] advancement
+[ ] protection x advancement
+[ ] pawn structure defined as a binary number
+[ ]
 """
 
 from typing import List
@@ -12,8 +24,8 @@ from arek_chess.criteria.evaluation.base_eval import BaseEval
 class FastEval(BaseEval):
     """"""
 
-    # material, space, is_check
-    DEFAULT_ACTION: List[float] = [100.0, 1.0, 10.0]
+    # is_check, material
+    DEFAULT_ACTION: List[float] = [10.0, 100.0, 1.0]
 
     def get_score(
         self,
@@ -29,13 +41,9 @@ class FastEval(BaseEval):
 
         material = board.get_material_simple(True) - board.get_material_simple(False)
         space = board.get_space(True) - board.get_space(False)
-        is_check = (
-            -int(board.is_check()) if board.turn else int(board.is_check())
-        )  # color is the one who gave the check
         params = [
             material,
             space,
-            is_check
         ]
 
         return board.calculate_score(action, params)

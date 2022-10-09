@@ -5,10 +5,11 @@ Manages the shared memory between multiple processes.
 
 import _posixshmem
 import mmap
+import os
 import traceback
 from multiprocessing import resource_tracker
 from os import O_RDWR, O_EXCL, ftruncate, close, fstat, O_CREAT
-from typing import List
+from typing import List, Dict
 
 import numpy
 from larch import pickle
@@ -29,22 +30,50 @@ class SharedMemory(BaseMemory):
         shm = DangerousSharedMemory(name=key)
         return shm.buf.tobytes()
 
+    def get_many(self, keys: List[str]) -> List[bytes]:
+        return [self.get(key) for key in keys]
+
     def set(self, key: str, value: bytes) -> None:
-        shm = DangerousSharedMemory(
-            name=key,
-            create=True,
-            size=len(value),
-        )
-        shm.buf[:] = value
+        size = len(value)
+        if size == 0:
+            raise ValueError(f"Empty value given for: {key}")
+        try:
+            shm = DangerousSharedMemory(
+                name=key,
+                create=True,
+                size=size,
+                write=True,
+            )
+            shm.buf[:] = value
+        except FileExistsError:
+            try:
+                shm = DangerousSharedMemory(
+                    name=key,
+                    create=False,
+                    size=size,
+                    write=True,
+                )
+                shm.buf[:] = value
+            except ValueError:
+                print(f"Cannot mmap empty file: {key}, size: {size}")
+                self.remove(key)
+                self.set(key, value)
+
+    def set_many(self, many: Dict[str, bytes]):
+        for key, value in many.items():
+            self.set(key, value)
 
     def remove(self, key: str) -> None:
         try:
-            shm = DangerousSharedMemory(name=key, create=False)
+            shm = DangerousSharedMemory(name=key, create=False, write=True)
         except FileNotFoundError:
             pass
         else:
             shm.close()
             shm.unlink()
+
+    def get_action(self):
+        return self.get("action")
 
     @classmethod
     def get_node_params(cls, node_name: str) -> List[float]:
@@ -72,7 +101,7 @@ class SharedMemory(BaseMemory):
 
         parent_node_name, _, node_move = node_name.rpartition(".")
         board = SharedMemory.get_node_board(parent_node_name)
-        board.light_push(Move.from_uci(node_move))
+        board.light_push(Move.from_uci(node_move), state_required=True)
 
         SharedMemory.set_node_board(node_name, board)
 
@@ -176,6 +205,15 @@ class SharedMemory(BaseMemory):
             shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
         ).tolist()
 
+    def clean(self) -> None:
+        """"""
+
+        for filename in os.listdir("/dev/shm"):
+            path = os.path.join("/dev/shm", filename)
+            if os.path.isfile(path) and filename.startswith("0."):
+                os.unlink(path)
+
+        print("OK")  # just to align with what Redis does :)
 
 class DangerousSharedMemory:
     """
@@ -193,13 +231,13 @@ class DangerousSharedMemory:
     _mode = 0o600
     _prepend_leading_slash = True
 
-    def __init__(self, name: str = None, create: bool = False, size: int = 0):
+    def __init__(self, name: str = None, create: bool = False, size: int = 0, write: bool = False):
         if not size >= 0:
             raise ValueError("'size' must be a positive integer")
 
-        self.do_init(name, create, size)
+        self.do_init(name, create, size, write)
 
-    def do_init(self, name, create, size):
+    def do_init(self, name, create, size, write):
         if create:
             _O_CREX = O_CREAT | O_EXCL
             self._flags = _O_CREX | O_RDWR
@@ -213,7 +251,8 @@ class DangerousSharedMemory:
                 ftruncate(self._fd, size)
             stats = fstat(self._fd)
             size = stats.st_size
-            self._mmap = mmap.mmap(self._fd, size)
+            access = mmap.ACCESS_WRITE if write else mmap.ACCESS_READ
+            self._mmap = mmap.mmap(self._fd, size, access=access)
         except OSError:
             self.unlink()
             raise

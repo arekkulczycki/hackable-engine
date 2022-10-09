@@ -1910,13 +1910,6 @@ class Board(BaseBoard):
         unless *claim_draw* is given. Note that checking the latter can be
         slow.
         """
-        # Variant support.
-        if self.is_variant_loss():
-            return Outcome(Termination.VARIANT_LOSS, not self.turn)
-        if self.is_variant_win():
-            return Outcome(Termination.VARIANT_WIN, self.turn)
-        if self.is_variant_draw():
-            return Outcome(Termination.VARIANT_DRAW, None)
 
         # Normal game end.
         if self.is_checkmate():
@@ -5007,6 +5000,9 @@ class Board(BaseBoard):
     def get_captured_piece_type(self, move: Move) -> int:
         return self.piece_type_at(move.to_square) or 0
 
+    def get_captured_simple_piece_value(self, move: Move) -> int:
+        return self.get_simple_piece_value(self.piece_type_at(move.to_square))
+
     @staticmethod
     def is_on_border(square, rank=None) -> bool:
         return square_file(square) in [0, 7] or (rank or square_rank(square)) in [0, 7]
@@ -5035,8 +5031,26 @@ class Board(BaseBoard):
         return 0
 
     @staticmethod
+    def get_simple_piece_value(piece_type) -> int:
+        if piece_type == PAWN:
+            return 1
+        if piece_type == KNIGHT:
+            return 3
+        if piece_type == BISHOP:
+            return 3
+        if piece_type == ROOK:
+            return 5
+        if piece_type == QUEEN:
+            return 9
+
+        return 0
+
+    @staticmethod
     def get_fen_opposite_turn(fen: str) -> str:
         return fen.replace(" w ", " b ") if " w " in fen else fen.replace(" b ", " w ")
+
+
+### END CUSTOM CODE ###
 
 
 class PseudoLegalMoveGenerator:
