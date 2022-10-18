@@ -2,6 +2,7 @@
 """
 Manages the memory between multiple processes by storing in Redis.
 """
+
 import os
 from typing import Dict, List
 

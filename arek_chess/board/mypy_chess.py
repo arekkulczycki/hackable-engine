@@ -5049,6 +5049,45 @@ class Board(BaseBoard):
     def get_fen_opposite_turn(fen: str) -> str:
         return fen.replace(" w ", " b ") if " w " in fen else fen.replace(" b ", " w ")
 
+    def simple_outcome(self) -> Optional[Outcome]:
+        """"""
+
+        if self.is_insufficient_material():
+            return Outcome(Termination.INSUFFICIENT_MATERIAL, None)
+
+        if self.can_claim_fifty_moves():
+            return Outcome(Termination.FIFTY_MOVES, None)
+        if self.simple_can_claim_threefold_repetition():
+            return Outcome(Termination.THREEFOLD_REPETITION, None)
+
+        return None
+
+    def simple_can_claim_threefold_repetition(self) -> bool:
+        """"""
+
+        transposition_key = self._transposition_key()
+        transpositions: Counter[Hashable] = collections.Counter()
+        transpositions.update((transposition_key, ))
+
+        # Count positions.
+        switchyard = []
+        while self.move_stack:
+            move = self.pop()
+            switchyard.append(move)
+
+            if self.is_irreversible(move):
+                break
+
+            transpositions.update((self._transposition_key(), ))
+
+        while switchyard:
+            self.push(switchyard.pop())
+
+        # Threefold repetition occured.
+        if transpositions[transposition_key] >= 3:
+            return True
+
+        return False
 
 ### END CUSTOM CODE ###
 

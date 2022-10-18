@@ -1,30 +1,36 @@
 # -*- coding: utf-8 -*-
 """
-Module_docstring.
+Worker that performs evaluation on nodes picked up from queue.
 """
 
-import time
+import sys
 from signal import signal, SIGTERM
+from time import sleep
+from typing import Tuple
 
 from faster_fifo import Full
 from pyinstrument import Profiler
 
+from arek_chess.board.board import Board
 from arek_chess.criteria.evaluation.legacy_eval import LegacyEval
-from arek_chess.criteria.evaluation.fast_eval import FastEval
-from arek_chess.main.game_tree.constants import INF
-from arek_chess.utils.memory_manager import MemoryManager
+from arek_chess.constants import INF
 from arek_chess.utils.queue_manager import QueueManager
 from arek_chess.workers.base_worker import BaseWorker
 
 
 class EvalWorker(BaseWorker):
     """
-    Class_docstring
+    Worker that performs evaluation on nodes picked up from queue.
     """
 
     SLEEP = 0.0001
 
-    def __init__(self, input_queue: QueueManager, output_queue: QueueManager, constant_action: bool = False):
+    def __init__(
+        self,
+        input_queue: QueueManager,
+        output_queue: QueueManager,
+        constant_action: bool = False,
+    ):
         super().__init__()
 
         self.input_queue = input_queue
@@ -43,9 +49,8 @@ class EvalWorker(BaseWorker):
 
         self.evaluator = LegacyEval()
         # self.evaluator = FastEval()
-        self.memory_manager = MemoryManager()
 
-        self.max_items_at_once = 16
+        self.max_items_at_once = 128
 
     def _run(self):
         """
@@ -54,72 +59,86 @@ class EvalWorker(BaseWorker):
         """
 
         self.setup()
+        memory_manager = self.memory_manager
+        input_queue = self.input_queue
+        max_items_at_once = self.max_items_at_once
+        eval_items = self.eval_items
+        _sleep = self.SLEEP
 
         while True:
-            eval_items = self.input_queue.get_many(self.max_items_at_once)
-            if eval_items:
-                self.eval_items(eval_items)
+            items_to_eval = input_queue.get_many(max_items_at_once)
+            if items_to_eval:
+                eval_items(items_to_eval, memory_manager)
             else:
-                time.sleep(self.SLEEP)
+                sleep(_sleep)
 
-    def eval_items(self, eval_items):
+    def eval_items(self, eval_items, memory_manager):
         """"""
 
-        put_items = []
-        to_set = {}
+        names = [item[0] for item in eval_items]  # generators are slower :|
+        boards = memory_manager.get_many_boards(names)
 
-        names = [item[0] for item in eval_items]
-        boards = self.memory_manager.get_many_boards(names)
-        for eval_item, board in zip(eval_items, boards):
-            (
-                node_name,
-                size,
-                move_str,
-            ) = eval_item
+        queue_items = [
+            self.collect_item(board, node_name, move_str)
+            for (node_name, move_str), board in zip(eval_items, boards)
+        ]
 
-            # self.call_count += 1
-
-            board, captured_piece_type, moved_piece_type = self.get_board_data(board, node_name, move_str)  # board after the move
-            to_set[f"{node_name}.{move_str}"] = board
-
-            if board.is_game_over(claim_draw=True):
-                winner = board.outcome(claim_draw=True).winner
-                score = 0 if winner is None else INF if winner else -INF
-
-            else:
-                action = None if self.constant_action else self.get_action(self.evaluator.ACTION_SIZE)
-                score = self.evaluator.get_score(board, move_str, captured_piece_type, action=action)
-
-            put_items.append(
-                (
-                    node_name,
-                    size,
-                    move_str,
-                    moved_piece_type,
-                    captured_piece_type,
-                    board.is_check(),
-                    score,
-                )
-            )
-        self.memory_manager.set_many_boards(to_set)
-
+        # self.output_queue.put_many(put_items)
         while True:
             try:
-                self.output_queue.put_many(put_items)
+                self.output_queue.put_many(queue_items)
                 break
             except Full:
-                time.sleep(self.SLEEP)
+                sleep(self.SLEEP)
 
-    def profile_code(self):
+    def collect_item(self, board: Board, node_name: str, move_str: str) -> Tuple:
+        """"""
+
+        # self.call_count += 1
+
+        board, captured_piece_type, moved_piece_type = self.get_board_data(
+            board, node_name, move_str
+        )  # board after the move
+
+        # to_set.append((f"{node_name}.{move_str}", board))
+
+        outcome = board.simple_outcome()
+        if outcome is not None:
+            winner = outcome.winner
+            score = 0 if winner is None else INF if winner else -INF
+
+        else:
+            action = (
+                None
+                if self.constant_action
+                else self.get_action(self.evaluator.ACTION_SIZE)
+            )
+            score = self.evaluator.get_score(
+                board, move_str, captured_piece_type, action=action
+            )
+
+        return (
+            node_name,
+            move_str,
+            moved_piece_type,
+            captured_piece_type,
+            board.is_check(),
+            score,
+        )
+
+    def profile_code(self) -> None:
+        """"""
+
         profiler = Profiler()
         profiler.start()
 
-        def before_exit(*args):
+        def before_exit(*_) -> None:
             """"""
+
             # print(f"call count: {self.call_count}")
             profiler.stop()
             profiler.print(show_all=True)
             # self.terminate()
-            exit(0)
+            sys.exit(0)
 
         signal(SIGTERM, before_exit)

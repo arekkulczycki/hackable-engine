@@ -5,7 +5,7 @@ Manages the shared memory between multiple processes.
 from typing import List, Dict, Tuple
 
 import numpy
-from larch import pickle
+from larch.pickle.pickle import dumps, loads
 
 from arek_chess.board.board import Board
 from arek_chess.utils.memory.base_memory import BaseMemory
@@ -49,14 +49,14 @@ class MemoryManager:
         if not board_bytes:
             raise ValueError(f"Not found: {node_name}")
 
-        return pickle.loads(board_bytes)
+        return loads(board_bytes)
 
     async def get_node_board_async(self, node_name: str) -> Board:
         board_bytes = await self.memory.get_async(f"{node_name}.board")
         if not board_bytes:
             raise ValueError(f"Not found: {node_name}")
 
-        return pickle.loads(board_bytes)
+        return loads(board_bytes)
 
     def set_node_params(self, node_name: str, params: List[float]) -> None:
         data = numpy.ndarray(shape=(len(params),), dtype=numpy.float16)
@@ -66,28 +66,28 @@ class MemoryManager:
 
     def set_node_board(self, node_name: str, board: Board) -> None:
         self.memory.set(
-            f"{node_name}.board", pickle.dumps(board, protocol=5, with_refs=False)
+            f"{node_name}.board", dumps(board, protocol=5, with_refs=False)
         )
 
     async def set_node_board_async(self, node_name: str, board: Board) -> None:
         await self.memory.set_async(
-            f"{node_name}.board", pickle.dumps(board, protocol=5, with_refs=False)
+            f"{node_name}.board", dumps(board, protocol=5, with_refs=False)
         )
 
     def get_many_boards(self, names: List[str]) -> List[Board]:
         boards: List[bytes] = self.memory.get_many([f"{name}.board" for name in names])
-        return [pickle.loads(board) for board in boards if board]
+        return [loads(board) for board in boards if board]
 
-    def set_many_boards(self, name_to_board: Dict[str, Board]):
-        name_to_bytes = {
-            f"{name}.board": pickle.dumps(board, protocol=5, with_refs=False)
-            for name, board in name_to_board.items()
-        }
+    def set_many_boards(self, name_to_board: List[Tuple[str, Board]]):
+        name_to_bytes = [
+            (f"{name}.board", dumps(board, protocol=5, with_refs=False))
+            for name, board in name_to_board
+        ]
         self.memory.set_many(name_to_bytes)
 
     async def set_many_boards_async(self, name_to_board: Dict[str, Board]):
         name_to_bytes = {
-            f"{name}.board": pickle.dumps(board, protocol=5, with_refs=False)
+            f"{name}.board": dumps(board, protocol=5, with_refs=False)
             for name, board in name_to_board.items()
         }
         await self.memory.set_many_async(name_to_bytes)

@@ -1,3 +1,7 @@
+"""
+Base class for node evaluation.
+"""
+
 from abc import ABC
 from typing import List, Tuple
 

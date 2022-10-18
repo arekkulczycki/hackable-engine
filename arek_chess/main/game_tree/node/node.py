@@ -41,6 +41,7 @@ class Node:
         self.color: bool = color
 
         self.children: List[Node] = []
+        self.looked_at: bool = False
         self.being_processed: bool = False
 
     def __repr__(self):

@@ -6,6 +6,7 @@ Tests for the board module.
 from time import perf_counter
 from unittest import TestCase
 
+from larch.pickle.pickle import dumps, loads
 from parameterized import parameterized
 
 from arek_chess.board.board import Board, Move
@@ -15,6 +16,30 @@ class BoardTest(TestCase):
     """
     Tests for the board module.
     """
+
+    @parameterized.expand([
+        ("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR",),
+        ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R",),
+        ("rnbqkbnr/ppp2ppp/8/3pp3/3PP3/2N5/PPP2PPP/R1BQKBNR",),
+    ])
+    def test_pickling(self, fen: str):
+        board = Board(fen)
+        board_bytes = dumps(board)
+        recovered_board = loads(board_bytes)
+
+        assert board == recovered_board
+
+    @parameterized.expand([
+        ("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR",),
+        ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R",),
+        ("rnbqkbnr/ppp2ppp/8/3pp3/3PP3/2N5/PPP2PPP/R1BQKBNR",),
+    ])
+    def test_outcome(self, fen: str):
+        board = Board(fen)
+
+        t_0 = perf_counter()
+        outcomes = [board.simple_outcome() for _ in range(10000)]
+        print(perf_counter() - t_0)
 
     @parameterized.expand([
         ("r2qk2r/pppb1ppp/2n1pn2/6B1/1bBP4/2N1PN2/PP3PPP/R2QK2R", "h2h4", 3.907, 0.0),

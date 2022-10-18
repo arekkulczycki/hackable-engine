@@ -3,7 +3,7 @@
 Base class to manage memory between multiple processes.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 
 class BaseMemory:
@@ -20,7 +20,7 @@ class BaseMemory:
     def set(self, key: str, value: bytes):
         raise NotImplementedError
 
-    def set_many(self, many: Dict[str, bytes]):
+    def set_many(self, many: List[Tuple[str, bytes]]):
         raise NotImplementedError
 
     def remove(self, key: str):

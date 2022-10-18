@@ -9,13 +9,13 @@ import os
 import traceback
 from multiprocessing import resource_tracker
 from os import O_RDWR, O_EXCL, ftruncate, close, fstat, O_CREAT
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 import numpy
-from larch import pickle
+from larch.pickle.pickle import dumps, loads
 
 from arek_chess.board.board import Board, Move
-from arek_chess.main.game_tree.constants import ROOT_NODE_NAME
+from arek_chess.constants import ROOT_NODE_NAME
 from arek_chess.utils.memory.base_memory import BaseMemory
 
 PARAM_MEMORY_SIZE = 5  # TODO: this should be custom for each criteria/evaluator
@@ -59,8 +59,8 @@ class SharedMemory(BaseMemory):
                 self.remove(key)
                 self.set(key, value)
 
-    def set_many(self, many: Dict[str, bytes]):
-        for key, value in many.items():
+    def set_many(self, many: List[Tuple[str, bytes]]):
+        for key, value in many:
             self.set(key, value)
 
     def remove(self, key: str) -> None:
@@ -88,7 +88,7 @@ class SharedMemory(BaseMemory):
             return SharedMemory.recreate_node_board(node_name)
 
         # TODO: tobytes copies the data which could be just read into loads, find improvement
-        board = pickle.loads(shm.buf.tobytes())
+        board = loads(shm.buf.tobytes())
         if not isinstance(board, Board):
             return SharedMemory.recreate_node_board(node_name)
         else:
@@ -109,7 +109,7 @@ class SharedMemory(BaseMemory):
 
     @staticmethod
     def set_node_board(node_name: str, board: Board) -> None:
-        b = pickle.dumps(board, protocol=5, with_refs=False)
+        b = dumps(board, protocol=5, with_refs=False)
         size = len(b)
         try:
             shm = DangerousSharedMemory(

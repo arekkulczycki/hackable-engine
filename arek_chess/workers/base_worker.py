@@ -3,6 +3,7 @@
 Module_docstring.
 """
 
+import sys
 from multiprocessing import Process
 from typing import Optional, Tuple
 
@@ -17,21 +18,29 @@ class BaseWorker(Process):
     Base for the worker process.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
+        """"""
+
         super().__init__(*args, **kwargs)
 
         self.memory_manager = MemoryManager()
 
-    def run(self):
+    def run(self) -> None:
+        """"""
+
         try:
             self._run()
         except KeyboardInterrupt:
-            exit(0)
+            sys.exit(0)
 
-    def _run(self):
+    def _run(self) -> None:
+        """"""
+
         raise NotImplementedError
 
     def get_board_data(self, board: Optional[Board], node_name: str, move_str: str) -> Tuple[Board, int, int]:
+        """"""
+
         if not board:
             board = self.memory_manager.get_node_board(node_name)
 

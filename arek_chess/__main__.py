@@ -27,6 +27,18 @@ if __name__ == "__main__":
         help="Find the best move and quit.",
         action="store_true",
     )
+    arg_parser.add_argument(
+        "-p",
+        "--printing",
+        type=int,
+        default=0,
+        help="0 - nothing, 1 - top candidates, 2 - entire searched tree (look at --tree-params)",
+    )
+    arg_parser.add_argument(
+        "--tree-params",
+        default="3,5,",
+        help="3 values split by comma: min_depth, max_depth, candidate. Example: --tree-params=3,7,f3e5",
+    )
 
     args = arg_parser.parse_args()
 
@@ -34,7 +46,7 @@ if __name__ == "__main__":
         Controller.release_memory()
         exit(0)
 
-    controller = Controller()
+    controller = Controller(args.printing, args.tree_params)
     controller.boot_up(args.fen)
 
     if args.run_once:

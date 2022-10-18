@@ -10,7 +10,7 @@ class LegacyEval(BaseEval):
     """"""
 
     # material, safety, under_attack, mobility, king_mobility, king_threats, is_check
-    DEFAULT_ACTION: List[float] = [100.0, 1.0, -1.0, 1.0, -1.0, 2.0, 10.0]
+    DEFAULT_ACTION: List[float] = [100.0, 1.0, -1.0, 1.0, -1.0, 5.0, 10.0]
     ACTION_SIZE = 7
 
     def get_score(

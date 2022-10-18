@@ -3,26 +3,26 @@
 Tree traversal model.
 """
 
-from typing import Optional, Dict
+from typing import Optional, List
 
+from arek_chess.criteria.selection.base_selector import BaseSelector
+from arek_chess.criteria.selection.fast_selector import FastSelector
 from arek_chess.main.game_tree.node.node import Node
 
-from arek_chess.main.game_tree.node.create_node_mixin import CreateNodeMixin
 
-
-class Traversal(CreateNodeMixin):
+class Traversal:
     """
     Tree traversal model.
     """
 
     root: Node
-    tree: Dict[str, Node]
 
-    def __init__(self, root: Node, tree: Dict[str, Node]):
+    def __init__(self, root: Node):
         super().__init__()
 
         self.root = root
-        self.tree = tree
+
+        self.selector: BaseSelector = FastSelector()
 
         self.last_best_node = None
 
@@ -40,7 +40,16 @@ class Traversal(CreateNodeMixin):
 
             children = best_node.children
             if not children:
-                # no children - TODO: handle if is checkmate
+                # no children, because not yet received on the queue
+                if best_node.being_processed:
+                    return None
+
+                # was looked at and no children - if the best bath leads to checkmate then don't select anything more
+                if best_node.looked_at:
+                    return None
+
+                # is a leaf that hasn't yet been looked at
+                best_node.looked_at = True
                 best_node.being_processed = True
                 return best_node
 
@@ -51,3 +60,10 @@ class Traversal(CreateNodeMixin):
                 return None
 
             k += 1
+
+    def select_promising_node(self, nodes: List[Node], color: bool) -> Node:
+        """
+        Get the child node, selected based on implemented criteria.
+        """
+
+        return self.selector.select(nodes, color)

@@ -7,13 +7,14 @@ from typing import Optional
 import chess
 
 from arek_chess.criteria.evaluation.base_eval import BaseEval
-from arek_chess.main.game_tree.search_manager import SearchManager
+from arek_chess.constants import Print
+from arek_chess.main.search_manager import SearchManager
 from arek_chess.utils.memory_manager import MemoryManager
 from arek_chess.utils.queue_manager import QueueManager
-from arek_chess.workers.collector_worker import CollectorWorker
+from arek_chess.workers.dispatcher_worker import DispatcherWorker
 from arek_chess.workers.eval_worker import EvalWorker
 
-CPU_CORES = 5
+CPU_CORES = 8
 
 
 class Controller:
@@ -21,17 +22,27 @@ class Controller:
     Controls all engine flows and communication to outside world.
     """
 
-    def __init__(self):
+    def __init__(self, printing: Print, tree_params: str):
         """"""
 
-        self.eval_queue: QueueManager = QueueManager("eval")
-        self.candidates_queue: QueueManager = QueueManager("candidate")
-        # self.collector_queue: QueueManager = QueueManager("collector")
+        self.dispatcher_queue: QueueManager = QueueManager("dispatcher")
+        self.eval_queue: QueueManager = QueueManager("evaluator")
+        self.selector_queue: QueueManager = QueueManager("selector")
 
         self.board: chess.Board
-        self.search_manager = SearchManager(self.eval_queue, self.candidates_queue)
+        self.search_manager = SearchManager(
+            self.dispatcher_queue,
+            self.eval_queue,
+            self.selector_queue,
+            printing,
+            tree_params,
+        )
 
-    def boot_up(self, fen: Optional[str] = None, action: Optional[BaseEval.ActionType] = None) -> None:
+        self.initial_fen: Optional[str] = None
+
+    def boot_up(
+        self, fen: Optional[str] = None, action: Optional[BaseEval.ActionType] = None
+    ) -> None:
         """"""
 
         if fen:
@@ -49,13 +60,13 @@ class Controller:
 
         self.child_processes = []
         for _ in range(
-            CPU_CORES - 1
-        ):  # one process required for the tree search and one for the selector worker
-            evaluator = EvalWorker(self.eval_queue, self.candidates_queue, action is None)
+            CPU_CORES - 2
+        ):  # one process required for the tree search and one for the dispatcher worker
+            evaluator = EvalWorker(self.eval_queue, self.selector_queue, action is None)
             self.child_processes.append(evaluator)
 
-        # collector = CollectorWorker(self.initial_fen, self.collector_queue, self.candidates_queue)
-        # self.child_processes.append(collector)
+        dispatcher = DispatcherWorker(self.dispatcher_queue, self.eval_queue)
+        self.child_processes.append(dispatcher)
 
         for process in self.child_processes:
             process.start()
@@ -79,7 +90,9 @@ class Controller:
             self.make_move()
             print(self.board.fen())
 
-        print(f"game over, result: {self.board.result()}, {self.board.outcome().termination}")
+        print(
+            f"game over, result: {self.board.result()}, {self.board.outcome().termination}"
+        )
 
     def get_best_move(self, fen: str, turn: Optional[bool] = None) -> str:
         """"""
