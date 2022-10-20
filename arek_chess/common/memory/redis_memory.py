@@ -9,7 +9,7 @@ from typing import Dict, List
 from redis import Redis
 from redis.asyncio import Redis as AsyncRedis
 
-from arek_chess.utils.memory.base_memory import BaseMemory
+from arek_chess.common.memory.base_memory import BaseMemory
 
 
 class RedisMemory(BaseMemory):

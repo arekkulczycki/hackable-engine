@@ -2,9 +2,12 @@
 Module_docstring.
 """
 
+from functools import partial
 from queue import Empty, Full
 
-from faster_fifo import Queue as FastQueue
+from faster_fifo import Queue
+
+from larch.pickle.pickle import dumps, loads
 
 
 class QueueManager:
@@ -18,7 +21,14 @@ class QueueManager:
         """
 
         self.name = name
-        self.queue = FastQueue(1000 * 1000 * 100)
+
+        queue_loads = lambda _bytes: loads(_bytes.tobytes())
+        queue_dumps = partial(dumps, protocol=5, with_refs=False)
+        self.queue = Queue(
+            max_size_bytes=1000 * 1000 * 100,
+            loads=queue_loads,
+            dumps=queue_dumps,
+        )
 
     def put(self, item):
         """
@@ -49,7 +59,7 @@ class QueueManager:
         """
 
         try:
-            return self.queue.get(timeout=0)
+            return self.queue.get_nowait(timeout=0)
         except Empty:
             return None
 
@@ -63,3 +73,19 @@ class QueueManager:
             return self.queue.get_many_nowait(max_messages_to_get=max_messages_to_get)
         except Empty:
             return None
+
+    def empty(self) -> bool:
+        """
+
+        :return:
+        """
+
+        return self.queue.empty()
+
+    def size(self) -> int:
+        """
+
+        :return:
+        """
+
+        return self.queue.qsize()

@@ -9,14 +9,14 @@ import os
 import traceback
 from multiprocessing import resource_tracker
 from os import O_RDWR, O_EXCL, ftruncate, close, fstat, O_CREAT
-from typing import List, Dict, Tuple
+from typing import List, Tuple, Optional
 
 import numpy
 from larch.pickle.pickle import dumps, loads
 
 from arek_chess.board.board import Board, Move
-from arek_chess.constants import ROOT_NODE_NAME
-from arek_chess.utils.memory.base_memory import BaseMemory
+from arek_chess.common.constants import ROOT_NODE_NAME
+from arek_chess.common.memory.base_memory import BaseMemory
 
 PARAM_MEMORY_SIZE = 5  # TODO: this should be custom for each criteria/evaluator
 
@@ -26,14 +26,31 @@ class SharedMemory(BaseMemory):
     Manages the shared memory between multiple processes.
     """
 
-    def get(self, key: str) -> bytes:
-        shm = DangerousSharedMemory(name=key)
-        return shm.buf.tobytes()
+    @staticmethod
+    def parse_key(key: str) -> str:
+        if len(key) > 254:
+            return key[-254:].partition(".")[2]
+        return key
 
-    def get_many(self, keys: List[str]) -> List[bytes]:
+    def get(self, key: str, default: Optional[bytes] = None) -> Optional[bytes]:
+        key = self.parse_key(key)
+
+        try:
+            shm = DangerousSharedMemory(name=key)
+            return shm.buf.tobytes()
+        except:
+            if default is not None:
+                return default
+            print(f"Error! Not found: {key}")
+            # traceback.print_exc()
+            return None
+
+    def get_many(self, keys: List[str]) -> List[Optional[bytes]]:
         return [self.get(key) for key in keys]
 
     def set(self, key: str, value: bytes) -> None:
+        key = self.parse_key(key)
+
         size = len(value)
         if size == 0:
             raise ValueError(f"Empty value given for: {key}")
@@ -46,18 +63,12 @@ class SharedMemory(BaseMemory):
             )
             shm.buf[:] = value
         except FileExistsError:
-            try:
-                shm = DangerousSharedMemory(
-                    name=key,
-                    create=False,
-                    size=size,
-                    write=True,
-                )
-                shm.buf[:] = value
-            except ValueError:
-                print(f"Cannot mmap empty file: {key}, size: {size}")
-                self.remove(key)
-                self.set(key, value)
+            # print(f"Re-created file for: {key}")
+            self.remove(key)
+            self.set(key, value)
+        except:
+            # traceback.print_exc()
+            print(f"Error! Cannot set: {key}")
 
     def set_many(self, many: List[Tuple[str, bytes]]):
         for key, value in many:

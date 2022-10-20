@@ -1,9 +1,9 @@
 ##### main
 python-chess==1.999
-chess==1.61
+chess==1.6.1
 #sklearn==0.*  this installs newer scikit-learn...
 faster-fifo==1.4.*
-anytree==2.*  # TODO: fork the lib and add local changes
+anytree==2.*
 #scikit-learn==0.*
 kmeans1d==0.3.*
 
@@ -17,7 +17,7 @@ redis==4.*
 
 ##### dev
 #mypy==0.920
-mypy==0.961  # for newer versions compiled board fails on pickling, WARNING 3.11 requires mypy>0.981 to compile Board
+mypy==0.961  # for newer versions compiled board fails on pickling, WARNING 3.11 requires mypy>=0.981 to compile Board
 mypy-extensions==0.4.*
 pylint==2.15.4
 perflint==0.7.3

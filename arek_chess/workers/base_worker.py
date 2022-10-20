@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 from arek_chess.board.board import Board
 from arek_chess.board.board import Move
 from arek_chess.criteria.evaluation.base_eval import BaseEval
-from arek_chess.utils.memory_manager import MemoryManager
+from arek_chess.common.memory_manager import MemoryManager
 
 
 class BaseWorker(Process):
@@ -38,11 +38,9 @@ class BaseWorker(Process):
 
         raise NotImplementedError
 
-    def get_board_data(self, board: Optional[Board], node_name: str, move_str: str) -> Tuple[Board, int, int]:
+    @staticmethod
+    def get_board_data(board: Board, move_str: str) -> Tuple[Board, int, int]:
         """"""
-
-        if not board:
-            board = self.memory_manager.get_node_board(node_name)
 
         move = Move.from_uci(move_str)
 

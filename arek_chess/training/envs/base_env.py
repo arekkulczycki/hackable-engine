@@ -1,12 +1,14 @@
+from abc import ABC
 from typing import Tuple
 
 import gym
 import numpy
 
+from arek_chess.common.constants import Print
 from arek_chess.main.controller import Controller
 
 
-class BaseEnv(gym.Env):
+class BaseEnv(gym.Env, ABC):
     # metadata = {}
 
     ACTION_SIZE = 7
@@ -22,16 +24,19 @@ class BaseEnv(gym.Env):
 
         self.reward_range = (-1, 1)
 
-        self.action_space = gym.spaces.Box(
-            numpy.array([0 for _ in range(self.ACTION_SIZE)], dtype=numpy.float32),
-            numpy.array([1 for _ in range(self.ACTION_SIZE)], dtype=numpy.float32),
-        )
-        self.observation_space = gym.spaces.MultiDiscrete([13 for _ in range(64)])
+        self.action_space = self._get_action_space()
+        self.observation_space = self._get_observation_space()
 
-        self.controller = Controller()
+        self.controller = Controller(Print.NOTHING)
         self.controller.boot_up(initial_fen)
 
         self.obs = self.observation()
+
+    def _get_action_space(self):
+        raise NotImplemented
+
+    def _get_observation_space(self):
+        raise NotImplemented
 
     def step(self, action: Tuple[numpy.float32, numpy.float32]):
         self._run_action(action)
@@ -50,20 +55,7 @@ class BaseEnv(gym.Env):
         print(self.obs)
 
     def observation(self):
-        return self.board_to_obs(self.controller.board)
-
-    def board_to_obs(self, piece_map) -> list:
-        observation = []
-        for i in range(64):
-            if i in piece_map:
-                piece = piece_map[i]
-                symbol = 1 if piece.symbol().islower() else -1
-                piece_type = int(piece.piece_type)
-                piece_int = piece_type * symbol + 6
-                observation.append(piece_int)
-            else:
-                observation.append(0)
-        return observation
+        raise NotImplemented
 
     def _run_action(self, action: Tuple[numpy.float32, ...]) -> None:
         self.controller.make_move(action)

@@ -1,8 +1,8 @@
 """
 Handling of board-related logic.
 """
-
-from typing import Tuple, Dict, Iterator, List, Generator
+import collections
+from typing import Tuple, Dict, Iterator, List, Generator, Optional, Counter, Hashable
 
 import numpy
 from chess import (
@@ -44,7 +44,7 @@ from chess import (
     BB_RANK_3,
     BB_PAWN_ATTACKS,
     BB_RANK_1,
-    BB_RANK_8,
+    BB_RANK_8, Outcome, Termination,
 )
 
 BB_DIAG_MASKS: List[int]
@@ -1432,3 +1432,46 @@ class Board(ChessBoard):
     @staticmethod
     def get_fen_opposite_turn(fen: str) -> str:
         return fen.replace(" w ", " b ") if " w " in fen else fen.replace(" b ", " w ")
+
+    def simple_outcome(self) -> Optional[Outcome]:
+        """"""
+
+        if self.is_insufficient_material():
+            return Outcome(Termination.INSUFFICIENT_MATERIAL, None)
+
+        if self.can_claim_ten_moves():
+            return Outcome(Termination.FIFTY_MOVES, None)
+        if self.simple_can_claim_threefold_repetition():
+            return Outcome(Termination.THREEFOLD_REPETITION, None)
+
+        return None
+
+    def can_claim_ten_moves(self) -> bool:
+        return self._is_halfmoves(20)
+
+    def simple_can_claim_threefold_repetition(self) -> bool:
+        """"""
+
+        transposition_key = self._transposition_key()
+        transpositions: Counter[Hashable] = collections.Counter()
+        transpositions.update((transposition_key, ))
+
+        # Count positions.
+        switchyard = []
+        while self.move_stack:
+            move = self.pop()
+            switchyard.append(move)
+
+            if self.is_irreversible(move):
+                break
+
+            transpositions.update((self._transposition_key(), ))
+
+        while switchyard:
+            self.push(switchyard.pop())
+
+        # Threefold repetition occured.
+        if transpositions[transposition_key] >= 2:  # changed to 2 to avoid engine repeat positions
+            return True
+
+        return False

@@ -1,4 +1,8 @@
-""""""
+"""
+Evaluation by attributes that were initially drafted to be significant.
+
+Uncorrelated to any training observation method. Can be trained vs full board environment.
+"""
 
 from typing import List
 
@@ -22,11 +26,9 @@ class LegacyEval(BaseEval):
     ) -> float:
         """
 
-        :param node_name:
-        :param color: color is a color to move before the move was made into current position
+        :param board: board with the move given already pushed, hence turn is opposite to one making the move
         :param move_str:
         :param captured_piece_type:
-        :param board:
         :param action:
         :return:
         """
@@ -34,19 +36,8 @@ class LegacyEval(BaseEval):
         if action is None:
             action = self.DEFAULT_ACTION
 
-        material, safety, under_attack = [
-            a - b
-            for a, b in zip(
-                board.get_material_and_safety(True),
-                board.get_material_and_safety(False),
-            )
-        ]
-        mobility, king_mobility = [
-            a - b
-            for a, b in zip(
-                board.get_total_mobility(True), board.get_total_mobility(False)
-            )
-        ]
+        material, safety, under_attack = self.get_for_both_players(board.get_material_and_safety)
+        mobility, king_mobility = self.get_for_both_players(board.get_total_mobility)
         king_threats = board.get_king_threats(True) - board.get_king_threats(False)
         is_check = (
             -int(board.is_check()) if board.turn else int(board.is_check())

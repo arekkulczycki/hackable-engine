@@ -5055,12 +5055,15 @@ class Board(BaseBoard):
         if self.is_insufficient_material():
             return Outcome(Termination.INSUFFICIENT_MATERIAL, None)
 
-        if self.can_claim_fifty_moves():
+        if self.can_claim_ten_moves():
             return Outcome(Termination.FIFTY_MOVES, None)
         if self.simple_can_claim_threefold_repetition():
             return Outcome(Termination.THREEFOLD_REPETITION, None)
 
         return None
+
+    def can_claim_ten_moves(self) -> bool:
+        return self._is_halfmoves(20)
 
     def simple_can_claim_threefold_repetition(self) -> bool:
         """"""
@@ -5084,7 +5087,7 @@ class Board(BaseBoard):
             self.push(switchyard.pop())
 
         # Threefold repetition occured.
-        if transpositions[transposition_key] >= 3:
+        if transpositions[transposition_key] >= 2:  # changed to 2 to avoid engine repeat positions
             return True
 
         return False

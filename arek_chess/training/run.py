@@ -1,42 +1,46 @@
 import math
 from argparse import ArgumentParser
 from time import perf_counter
-from typing import Optional
 
-import gym
 import matplotlib.pyplot as plt
 import numpy
+from gym.envs.registration import register
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import load_results
 from stable_baselines3.common.results_plotter import ts2xy
 from stable_baselines3.common.vec_env import VecMonitor
 
-from training.envs.base_env import BaseEnv
+register(
+    id='chess-v0',
+    entry_point='arek_chess.training.envs:FullBoardEnv',
+)
 
 LOG_PATH = "./logs/"
+EQUAL_MIDDLEGAME_FEN = "r3k2r/1ppbqpp1/pb1p1n1p/n3p3/2B1P2B/2PP1N1P/PPQN1PP1/R3K2R w KQkq - 0 12"
 
 
 def train(version=-1):
     t0 = perf_counter()
 
-    env = make_vec_env("chess-v0", n_envs=4)  # , vec_env_cls=SubprocVecEnv)
+    env = make_vec_env("chess-v0", n_envs=1, env_kwargs={"fen": EQUAL_MIDDLEGAME_FEN})  # , vec_env_cls=SubprocVecEnv)
+    # env = make("chess-v0", fen=EQUAL_MIDDLEGAME_FEN)
+    # env = VecEnv([lambda: FullBoardEnv(EQUAL_MIDDLEGAME_FEN)])
+    # env = FullBoardEnv(EQUAL_MIDDLEGAME_FEN)
 
     env = VecMonitor(env, LOG_PATH)
 
     if version >= 0:
-        model = PPO.load(f"./chess.v{version}", env=env, custom_objects={"n_steps": 8, "learning_rate": 3e-5})
+        model = PPO.load(f"./chess.v{version}", env=env)
     else:
-        model = PPO("MlpPolicy", env, verbose=2)
+        model = PPO("MlpPolicy", env, verbose=2, n_steps=64)
 
-    model.learn(total_timesteps=int(math.pow(2, 20)))
+    print("training started...")
+
+    model.learn(total_timesteps=int(math.pow(2, 0)))
     model.save(f"./chess.v{version + 1}")
 
     print(f"training finished in: {perf_counter() - t0}")
-
-
-def find_move(version: Optional[str] = None):
-    """"""
 
 
 def moving_average(values, window):
@@ -78,6 +82,10 @@ def get_args():
     parser.add_argument("-v", "--version", type=int, default=-1, help="version of the model to use")
 
     return parser.parse_args()
+
+
+def find_move():
+    ...
 
 
 if __name__ == "__main__":

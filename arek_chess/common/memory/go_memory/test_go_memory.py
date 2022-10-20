@@ -7,7 +7,7 @@ import larch
 from chess import Board
 from larch import pickle
 
-from arek_chess.utils.memory_manager import DangerousSharedMemory
+from arek_chess.common.memory_manager import DangerousSharedMemory
 
 path = os.path.join(os.path.abspath(__file__).replace(os.path.basename(__file__), ''), "memory.so")
 memory = ctypes.CDLL(path)

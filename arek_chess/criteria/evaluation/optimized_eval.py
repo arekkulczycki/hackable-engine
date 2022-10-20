@@ -1,17 +1,33 @@
 """
-Evaluation by all the attributes that are obtained from board in an optimized way.
+Evaluation by all the attributes that can be obtained from board in an optimized way.
 
 Desired:
 [x] is_check
-[x] material
+[x] material (with advanced pawn bonus)
+[ ] color on which white pieces are
+[ ] color on which black pieces are
+[ ] color on which white pawns are
+[ ] color on which black pawns are
 [ ] mobility
-[ ] king mobility
-[ ] threats (x ray included)
-[ ] king threats
+[ ] threats (x ray)
+[ ] king threats (x ray)
+[ ] king proximity threats (direct)
+[ ] king mobility (?)
 [ ] protection
 [ ] advancement
 [ ] protection x advancement
 [ ] pawn structure defined as a binary number
+[ ]
+
+Observation:
+[ ] material on board
+[ ] white king location
+[ ] black king location
+[ ] white forces location (density of attacks, 64 floats or simplified to just avg coordinates)
+[ ] black forces location (density of attacks, 64 floats or simplified to just avg coordinates)
+[ ] openness of the position (many pawns locked -> many pawns gone)
+[ ] colors of remaining white bishops
+[ ] colors of remaining black bishops
 [ ]
 """
 
@@ -21,7 +37,7 @@ from arek_chess.board.board import Board
 from arek_chess.criteria.evaluation.base_eval import BaseEval
 
 
-class FastEval(BaseEval):
+class OptimizedEval(BaseEval):
     """"""
 
     # is_check, material
@@ -39,9 +55,13 @@ class FastEval(BaseEval):
         if action is None:
             action = self.DEFAULT_ACTION
 
+        is_check = (
+            -int(board.is_check()) if board.turn else int(board.is_check())
+        )  # color is the one who gave the check
         material = board.get_material_simple(True) - board.get_material_simple(False)
         space = board.get_space(True) - board.get_space(False)
         params = [
+            is_check,
             material,
             space,
         ]

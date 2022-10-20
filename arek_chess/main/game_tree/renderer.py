@@ -7,7 +7,7 @@ from typing import Optional, Generator
 from anytree import Node, RenderTree
 from anytree.render import _is_last
 
-from arek_chess.constants import INF
+from arek_chess.common.constants import INF
 
 
 class PrunedTreeRenderer(RenderTree):

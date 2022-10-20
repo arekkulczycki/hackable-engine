@@ -3,7 +3,7 @@ Base class for node evaluation.
 """
 
 from abc import ABC
-from typing import List, Tuple
+from typing import List, Tuple, Callable
 
 import numpy
 
@@ -19,6 +19,8 @@ class BaseEval(ABC):
     Board class should provide all the board-specific or chess-specific logic about the current state of the game.
 
     Must implement just the get_score method.
+
+    Any eval model should be designed for a specific training observation method.
     """
 
     ActionType = Tuple[numpy.float32, ...]
@@ -40,3 +42,9 @@ class BaseEval(ABC):
         """
 
         raise NotImplementedError
+
+    @staticmethod
+    def get_for_both_players(function: Callable[[bool], Tuple[float, ...]]):
+        """"""
+
+        return tuple(a - b for a, b in zip(function(True), function(False)))
