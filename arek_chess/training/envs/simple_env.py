@@ -16,15 +16,15 @@ DEFAULT_ACTION: BaseEval.ActionType = (
 )
 
 
-class FullBoardEnv(gym.Env):
+class SimpleEnv(gym.Env):
     # metadata = {}
 
     ACTION_SIZE = 7
     REWARDS = {
-        '*': 0.0,
-        '1/2-1/2': 0.0,
-        '1-0': + 1.0,
-        '0-1': - 1.0,
+        "*": 0.0,
+        "1/2-1/2": 0.0,
+        "1-0": +1.0,
+        "0-1": -1.0,
     }
 
     def __init__(self, fen: str):
@@ -47,7 +47,7 @@ class FullBoardEnv(gym.Env):
         )
 
     def _get_observation_space(self):
-        return gym.spaces.MultiDiscrete([13 for _ in range(64)])
+        return gym.spaces.Box(numpy.array([0]), numpy.array([1]))
 
     def step(self, action: BaseEval.ActionType):
         self._run_action(tuple(action))
@@ -64,7 +64,7 @@ class FullBoardEnv(gym.Env):
 
     def reset(self):
         self.render()
-        self.controller.restart(self.action_space.sample())
+        self.controller.restart(action=self.action_space.sample())
 
         return self.observation()
 
@@ -73,20 +73,13 @@ class FullBoardEnv(gym.Env):
         print(self.controller.board.fen())
 
     def observation(self):
-        return self._board_to_obs(self.controller.board.piece_map())
+        return self._board_to_obs()
 
-    def _board_to_obs(self, piece_map) -> list:
-        observation = []
-        for i in range(64):
-            if i in piece_map:
-                piece = piece_map[i]
-                symbol = 1 if piece.symbol().islower() else -1
-                piece_type = int(piece.piece_type)
-                piece_int = piece_type * symbol + 6
-                observation.append(piece_int)
-            else:
-                observation.append(0)
-        return observation
+    def _board_to_obs(self) -> numpy.double:
+        own_material = self.controller.board.get_material_simple(
+            self.controller.board.turn
+        )
+        return numpy.double(own_material / 40)
 
     def _run_action(self, action: BaseEval.ActionType) -> None:
         self.controller.make_move(action)

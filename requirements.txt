@@ -26,6 +26,7 @@ parameterized==0.8.*
 ### training
 # gym and pytorch included in the below lib
 stable-baselines3==1.6.2
+pyqt5==5.15  # for displaying training graphs
 
 ### gui
 

@@ -3,9 +3,9 @@ Base class for node evaluation.
 """
 
 from abc import ABC
-from typing import List, Tuple, Callable
+from typing import Tuple, Callable, Optional
 
-import numpy
+from numpy import double
 
 from arek_chess.board.board import Board
 
@@ -23,15 +23,15 @@ class BaseEval(ABC):
     Any eval model should be designed for a specific training observation method.
     """
 
-    ActionType = Tuple[numpy.float32, ...]
+    ActionType = Tuple[double, ...]
 
     def get_score(
         self,
         board: Board,
         move_str: str,
         captured_piece_type: int,
-        action: List[float] = None,
-    ) -> float:
+        action: Optional[ActionType] = None,
+    ) -> double:
         """
         :param board
         :param move_str:
@@ -44,7 +44,7 @@ class BaseEval(ABC):
         raise NotImplementedError
 
     @staticmethod
-    def get_for_both_players(function: Callable[[bool], Tuple[float, ...]]):
+    def get_for_both_players(function: Callable[[bool], ActionType]) -> Tuple[double, ...]:
         """"""
 
         return tuple(a - b for a, b in zip(function(True), function(False)))

@@ -23,8 +23,15 @@ if __name__ == "__main__":
 
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument(
-        "--run-once",
+        "-m",
+        "--move",
         help="Find the best move and quit.",
+        action="store_true",
+    )
+    arg_parser.add_argument(
+        "-g",
+        "--game",
+        help="Play entire game and quit.",
         action="store_true",
     )
     arg_parser.add_argument(
@@ -71,9 +78,12 @@ if __name__ == "__main__":
     controller = Controller(args.printing, args.tree_params, args.search_limit)
     controller.boot_up(args.fen)
 
-    if args.run_once:
+    if args.move:
         controller.make_move()
-        controller.tear_down()
+        controller.stop_child_processes()
+        sys.exit(0)
+    elif args.game:
+        controller.play()
         sys.exit(0)
 
     try:

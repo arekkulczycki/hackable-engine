@@ -9,11 +9,11 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import load_results
 from stable_baselines3.common.results_plotter import ts2xy
-from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3.common.vec_env import VecMonitor, DummyVecEnv
 
 register(
     id='chess-v0',
-    entry_point='arek_chess.training.envs:FullBoardEnv',
+    entry_point='arek_chess.training.envs.optimized_env:OptimizedEnv',
 )
 
 LOG_PATH = "./logs/"
@@ -23,7 +23,8 @@ EQUAL_MIDDLEGAME_FEN = "r3k2r/1ppbqpp1/pb1p1n1p/n3p3/2B1P2B/2PP1N1P/PPQN1PP1/R3K
 def train(version=-1):
     t0 = perf_counter()
 
-    env = make_vec_env("chess-v0", n_envs=1, env_kwargs={"fen": EQUAL_MIDDLEGAME_FEN})  # , vec_env_cls=SubprocVecEnv)
+    print("loading env...")
+    env: DummyVecEnv = make_vec_env("chess-v0", n_envs=1, env_kwargs={"fen": EQUAL_MIDDLEGAME_FEN})  # , vec_env_cls=SubprocVecEnv)
     # env = make("chess-v0", fen=EQUAL_MIDDLEGAME_FEN)
     # env = VecEnv([lambda: FullBoardEnv(EQUAL_MIDDLEGAME_FEN)])
     # env = FullBoardEnv(EQUAL_MIDDLEGAME_FEN)
@@ -31,16 +32,60 @@ def train(version=-1):
     env = VecMonitor(env, LOG_PATH)
 
     if version >= 0:
+        # model = PPO.load(f"./chess.v{version}", env=env, custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
         model = PPO.load(f"./chess.v{version}", env=env)
     else:
-        model = PPO("MlpPolicy", env, verbose=2, n_steps=64)
+        print("setting up model...")
+        # model = PPO("MlpPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
+        model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
 
     print("training started...")
 
-    model.learn(total_timesteps=int(math.pow(2, 0)))
+    model.learn(total_timesteps=int(2**13))
     model.save(f"./chess.v{version + 1}")
 
+    env.envs[0].controller.tear_down()
     print(f"training finished in: {perf_counter() - t0}")
+
+
+def loop_train(version=-1, loops=5):
+    print("loading env...")
+    env: DummyVecEnv = get_env()
+
+    for _ in range(loops):
+        t0 = perf_counter()
+        if version >= 0:
+            # custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
+            model = PPO.load(f"./chess.v{version}", env=env)
+        else:
+            print("setting up model...")
+            # model = PPO("MlpPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
+            model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
+
+        print("training started...")
+
+        try:
+            model.learn(total_timesteps=int(2**13))
+        except:
+            # start over with new env
+            env.envs[0].controller.tear_down()
+            env = get_env()
+        else:
+            # on success increment the version and keep learning
+            version += 1
+            model.save(f"./chess.v{version}")
+        finally:
+            print(f"training finished in: {perf_counter() - t0}")
+
+    env.envs[0].controller.tear_down()
+
+
+def get_env():
+    env: DummyVecEnv = make_vec_env("chess-v0", n_envs=1, env_kwargs={"fen": EQUAL_MIDDLEGAME_FEN})
+
+    env = VecMonitor(env, LOG_PATH)
+
+    return env
 
 
 def moving_average(values, window):
@@ -78,7 +123,9 @@ def plot_results(log_folder, title='Learning Curve'):
 def get_args():
     parser = ArgumentParser()
     parser.add_argument("-t", "--train", help="training mode", action="store_true")
-    parser.add_argument("-l", "--plot", help="show last learning progress plot", action="store_true")
+    parser.add_argument("-lt", "--loop-train", help="loop training mode", action="store_true")
+    parser.add_argument("-l", "--loops", type=int, default=3, help="iteration of training to perform")
+    parser.add_argument("-pl", "--plot", help="show last learning progress plot", action="store_true")
     parser.add_argument("-v", "--version", type=int, default=-1, help="version of the model to use")
 
     return parser.parse_args()
@@ -92,6 +139,8 @@ if __name__ == "__main__":
     args = get_args()
     if args.train:
         train(args.version)
+    elif args.loop_train:
+        loop_train(args.version, args.loops)
     elif args.plot:
         plot_results(LOG_PATH)
     else:

@@ -3688,12 +3688,8 @@ class Board(BaseBoard):
 ##### CUSTOM CODE
 
     @staticmethod
-    def calculate_score(action: List[float], params: List[float], piece_type=None):
-        # TODO: when no pieces on board, transform action params of pieces to columns of pawns to use! train pawn endgames separately
-        # piece_type_bonus = (
-        #     0  # 10.0 * action[piece_type - 1 + 4] if piece_type is not None else 0
-        # )
-        return numpy.dot(action, params)  # + piece_type_bonus
+    def calculate_score(action: Tuple[numpy.double, ...], params: Tuple[numpy.double, ...]):
+        return numpy.dot(action, params)
 
     @staticmethod
     def get_bit_count(bb: Bitboard) -> int:
@@ -4246,11 +4242,11 @@ class Board(BaseBoard):
                 - blocked_attacked_before
             )
 
-    def get_material_and_safety(self, color: bool) -> Tuple[float, float, float]:
-        material = 0.0
-        safety = 0.0
-        under_attack = 0.0
-        n_pawns = 0
+    def get_material_and_safety(self, color: bool) -> Tuple[numpy.double, numpy.double, numpy.double]:
+        material: numpy.double = numpy.double(0)
+        safety: numpy.double = numpy.double(0)
+        under_attack: numpy.double = numpy.double(0)
+        n_pawns: int = 0
 
         for pawn in self.pieces(piece_type=PAWN, color=color):
             n_pawns += 1
@@ -4715,14 +4711,14 @@ class Board(BaseBoard):
 
         return pawn_mobility_change
 
-    def get_total_mobility(self, turn: bool) -> Tuple[int, int]:
+    def get_total_mobility(self, turn: bool) -> Tuple[numpy.double, numpy.double]:
         king_square = self.king(turn)
         original_turn = self.turn
         if original_turn != turn:
             self.turn = not self.turn
 
-        mobilty = 0
-        king_mobility = 0
+        mobilty = numpy.double(0)
+        king_mobility = numpy.double(0)
         # for move, is_legal in self.generate_moves_with_legal_flag(king_square):
         for move in self.generate_pseudo_legal_moves_no_castling():
             # if is_legal:
@@ -4737,11 +4733,11 @@ class Board(BaseBoard):
 
         return mobilty, king_mobility
 
-    def get_king_threats(self, color: bool):
+    def get_king_threats(self, color: bool) -> numpy.double:
         king_square = self.king(not color)
         assert king_square is not None
         king_proximity_squares = self.attacks(king_square)
-        king_threats = 0
+        king_threats = numpy.double(0)
         for square in king_proximity_squares:
             mask = self.attackers_mask(color, square)
             king_threats += self.get_bit_count(mask)

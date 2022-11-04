@@ -12,7 +12,8 @@ from arek_chess.common.constants import (
     INF,
     ROOT_NODE_NAME,
     SLEEP,
-    LOG_INTERVAL, FINISHED,
+    LOG_INTERVAL,
+    FINISHED,
 )
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory_manager import MemoryManager
@@ -54,6 +55,7 @@ class SearchManager:
         self.dispatched = 0
         self.evaluated = 0
         self.selected = 0
+        # self.selected_nodes = []
         self.explored = 0
 
         self.limit: int = 2 ** (search_limit or 14)  # 14 -> 16384, 15 -> 32768
@@ -111,7 +113,7 @@ class SearchManager:
                 # selecting(dispatcher_queue, control_queue, queue_throttle)
                 if monitoring():
                     # print("no change detected")
-                    raise SearchFailed
+                    raise SearchFailed("nodes not delivered on queues")
 
             # # wait for workers to empty queues
             # while (
@@ -175,7 +177,7 @@ class SearchManager:
     ) -> None:
         """"""
 
-        candidates = selector_queue.get_many(queue_throttle)  # self.max_items_at_once)
+        candidates: List[Tuple[str, str, int, int, float]] = selector_queue.get_many(queue_throttle)  # self.max_items_at_once)
         if not candidates:
             sleep(SLEEP)
             self.selecting(dispatcher_queue)
@@ -205,7 +207,7 @@ class SearchManager:
             gathering(selector_queue, dispatcher_queue, control_queue, queue_throttle)
             await asyncio_sleep(0)
 
-    def handle_candidates(self, dispatcher_queue: QM, candidates: List) -> None:
+    def handle_candidates(self, dispatcher_queue: QM, candidates: List[Tuple[str, str, int, int, float]]) -> None:
         """"""
 
         nodes_to_dispatch = []
@@ -222,13 +224,15 @@ class SearchManager:
             try:
                 parent = self.get_node(parent_name)
             except KeyError:
-                print("node not found in items: ", parent_name, self.nodes_dict.keys())
-                return
+                # print("node not found in items: ", parent_name, self.nodes_dict.keys())
+                if len(self.nodes_dict.keys()) == 1:
+                    # was never meant to be here, but somehow queue delivers phantom items
+                    continue
+                else:
+                    raise SearchFailed(f"node not found in items: {parent_name}, {self.nodes_dict.keys()}")
             level = len(parent_name.split("."))
 
-            self.create_node(
-                parent, move_str, score, captured_piece_type, level
-            )
+            self.create_node(parent, move_str, score, captured_piece_type, level)
 
             # # analyse suspicious captures immediately
             # to_dispatch = False
@@ -249,26 +253,27 @@ class SearchManager:
         if nodes_to_dispatch:
             self.queue_to_dispatch(dispatcher_queue, nodes_to_dispatch)
 
-    def selecting(
-        self, dispatcher_queue: QM
-    ) -> None:
+    def selecting(self, dispatcher_queue: QM) -> None:
         """"""
 
         if (
-            self.dispatched > 0
-            and (
-                (
-                    self.evaluated < self.limit / 2
-                    and self.evaluated / self.dispatched < 0.9
-                )  # TODO: pass to function as args?
-                or self.evaluated / self.dispatched < 0.75
+            self.dispatched == 0
+            or (
+                self.dispatched > 0
+                and (
+                    (
+                        self.evaluated < self.limit / 2
+                        and self.evaluated / self.dispatched < 0.9
+                    )  # TODO: pass to function as args?
+                    or self.evaluated / self.dispatched < 0.75
+                )
             )
         ) or self.evaluated > self.limit:
             return
 
         top_nodes = [
             node
-            for node in (self.traversal.get_next_node_to_look_at() for _ in range(4))
+            for node in (self.traversal.get_next_node_to_look_at() for _ in range(1))
             if node is not None
         ]
         if not top_nodes:
@@ -278,6 +283,7 @@ class SearchManager:
         # print("selecting")
         n_nodes: int = len(top_nodes)
         self.selected += n_nodes
+        # self.selected_nodes.append(top_nodes)
         self.explored += n_nodes
 
         self.queue_to_dispatch(dispatcher_queue, top_nodes)
@@ -289,9 +295,7 @@ class SearchManager:
             [(node.name, node.move, node.score) for node in nodes]
         )
 
-    async def selecting_loop(
-        self, dispatcher_queue: QM
-    ) -> None:
+    async def selecting_loop(self, dispatcher_queue: QM) -> None:
         """"""
 
         while True:
@@ -309,8 +313,12 @@ class SearchManager:
         parent_name = parent.name
         child_name = f"{parent_name}.{move}"
         if captured == -1:  # node reversed from dispatcher when found checkmate
-            self.nodes_dict[child_name].score = score
-            self.nodes_dict[child_name].captured = -1
+            try:
+                self.nodes_dict[child_name].score = score
+                self.nodes_dict[child_name].captured = -1
+            except KeyError:
+                # was never meant to be here, but somehow queue delivers phantom items
+                pass
             return None
 
         color = level % 2 == 0 if self.root.color else level % 2 == 1
@@ -345,7 +353,11 @@ class SearchManager:
 
         if self.printing != Print.NOTHING:
             if self.printing != Print.MOVE:
-                print(f"evaluated: {self.evaluated}, dispatched: {self.dispatched}")
+                print(
+                    f"evaluated: {self.evaluated}, dispatched: {self.dispatched}, "
+                    f"selected: {self.selected}, explored: {self.explored}"
+                    # f"selected: {','.join([node[0].name for node in self.selected_nodes])}, explored: {self.explored}"
+                )
 
                 print(
                     f"time: {total_time}, nodes/s: {round(self.evaluated / total_time)}"
@@ -371,7 +383,7 @@ class SearchManager:
             if child.children or child.captured == -1
         ]
         if not explored_children:
-            raise SearchFailed
+            raise SearchFailed("finished without analysis")
 
         sorted_children: List[Node] = sorted(
             explored_children, key=lambda node: node.score, reverse=self.root.color

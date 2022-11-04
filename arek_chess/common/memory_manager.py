@@ -10,28 +10,33 @@ from larch.pickle.pickle import dumps, loads
 from arek_chess.board.board import Board
 from arek_chess.common.memory.base_memory import BaseMemory
 from arek_chess.common.memory.shared_memory import SharedMemory
+from arek_chess.criteria.evaluation.base_eval import BaseEval
 
 
 class MemoryManager:
     """
     Manages the shared memory between multiple processes.
+
+    WARNING! larch library leaks memory, but is very fast, so still is the best choice here.
+    In order to release the memory the process using MemoryManager must be killed.
+    The leak is small enough to let the engine work until a game is over, then needs a hard restart.
     """
 
     def __init__(self):
         self.memory: BaseMemory = SharedMemory()
         # self.memory: BaseMemory = RedisMemory()
 
-    def get_action(self, size: int) -> List[float]:
+    def get_action(self, size: int) -> BaseEval.ActionType:
         action_bytes = self.memory.get("action")
 
         action = numpy.ndarray(
-            shape=(size,), dtype=numpy.float32, buffer=action_bytes
+            shape=(size,), dtype=numpy.double, buffer=action_bytes
         ).tolist()
 
         return action
 
-    def set_action(self, action: Tuple[numpy.float32, ...], size: int) -> None:
-        data = numpy.ndarray(shape=(size,), dtype=numpy.float32)
+    def set_action(self, action: BaseEval.ActionType, size: int) -> None:
+        data = numpy.ndarray(shape=(size,), dtype=numpy.double)
         data[:] = (*action,)
 
         self.memory.set("action", data.tobytes())
@@ -55,6 +60,7 @@ class MemoryManager:
 
     def get_node_board(self, node_name: str) -> Optional[Board]:
         board_bytes: Optional[bytes] = self.memory.get(f"{node_name}")
+        # print(len(board_bytes))
 
         return loads(board_bytes) if board_bytes is not None else None
 

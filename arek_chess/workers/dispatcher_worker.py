@@ -2,14 +2,12 @@
 Dispatches to the queue nodes to be calculated by EvalWorkers.
 """
 
-import sys
-from signal import SIGTERM, signal
 from time import sleep
 from typing import List, Tuple, Optional
 
-from pyinstrument import Profiler
+from chess import Move
 
-from arek_chess.board.board import Move, Board
+from arek_chess.board.board import Board
 from arek_chess.common.constants import INF, SLEEP, FINISHED
 from arek_chess.common.queue_manager import QueueManager as QM
 from arek_chess.workers.base_worker import BaseWorker
@@ -31,12 +29,10 @@ class DispatcherWorker(BaseWorker):
         self.control_queue = control_queue
         self.queue_throttle = throttle
 
-        self.dispatched = 0
-
     def setup(self):
         """"""
 
-        signal(SIGTERM, self.before_exit)
+        self.dispatched = 0
 
         # self.profile_code()
 
@@ -68,12 +64,24 @@ class DispatcherWorker(BaseWorker):
         for node_name, move_str, score in items:  # TODO: get_many_boards ?
             if node_name == FINISHED:
                 self.dispatched = 0
+                # del self.memory_manager
+                # gc.collect()
+                # self.memory_manager.reset()
+
+                # if tracemalloc.is_tracing():
+                #     snapshot = tracemalloc.take_snapshot()
+                #     top_stats = snapshot.statistics('lineno')
+                #     print("[ Top 10 ]")
+                #     for stat in top_stats[:10]:
+                #         print(stat)
+
+                # self.memory_manager = MemoryManager()
                 return
 
             try:
                 board = self.create_node_board(node_name, move_str)
             except Exception as e:
-                print(f"dispatcher error: {e}")
+                # print(f"dispatcher error: {e}")
                 continue
 
             if board.is_game_over(claim_draw=False):
@@ -125,23 +133,6 @@ class DispatcherWorker(BaseWorker):
         self.memory_manager.set_node_board(node_name, board)
 
         return board
-
-    def before_exit(self, *args) -> None:
-        """"""
-
-        if getattr(self, "should_profile_code", False):
-            self.profiler.stop()
-            self.profiler.print(show_all=True)
-
-        sys.exit(0)
-
-    def profile_code(self) -> None:
-        """"""
-
-        self.profiler = Profiler()
-        self.profiler.start()
-
-        self.should_profile_code = True
 
     # def create_node_params_cache(self, board: Board, node_name) -> None:  TODO: is this idea useful?
     #     # white_params = [

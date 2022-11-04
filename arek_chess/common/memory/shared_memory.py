@@ -3,18 +3,19 @@
 Manages the shared memory between multiple processes.
 """
 
-import _posixshmem
-import mmap
 import os
 import traceback
 from multiprocessing import resource_tracker
 from os import O_RDWR, O_EXCL, ftruncate, close, fstat, O_CREAT
 from typing import List, Tuple, Optional
 
+import _posixshmem
+import mmap
 import numpy
+from chess import Move
 from larch.pickle.pickle import dumps, loads
 
-from arek_chess.board.board import Board, Move
+from arek_chess.board.board import Board
 from arek_chess.common.constants import ROOT_NODE_NAME
 from arek_chess.common.memory.base_memory import BaseMemory
 
@@ -41,7 +42,7 @@ class SharedMemory(BaseMemory):
         except:
             if default is not None:
                 return default
-            print(f"Error! Not found: {key}")
+            # print(f"Error! Not found: {key}")
             # traceback.print_exc()
             return None
 
@@ -225,6 +226,7 @@ class SharedMemory(BaseMemory):
                 os.unlink(path)
 
         print("OK")  # just to align with what Redis does :)
+
 
 class DangerousSharedMemory:
     """

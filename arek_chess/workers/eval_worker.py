@@ -3,18 +3,17 @@
 Worker that performs evaluation on nodes picked up from queue.
 """
 
-import sys
-from signal import signal, SIGTERM
 from time import sleep
 from typing import Tuple, Optional, List
 
 from faster_fifo import Full
-from pyinstrument import Profiler
+from numpy import double
 
 from arek_chess.board.board import Board
 from arek_chess.common.constants import INF, SLEEP
+from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.queue_manager import QueueManager
-from arek_chess.criteria.evaluation.legacy_eval import LegacyEval
+from arek_chess.criteria.evaluation.optimized_eval import OptimizedEval
 from arek_chess.workers.base_worker import BaseWorker
 
 
@@ -43,25 +42,21 @@ class EvalWorker(BaseWorker):
     def setup(self):
         """"""
 
-        # remove_shm_from_resource_tracker()
-
+        # self.profile_code()
         # self.call_count = 0
 
-        # self.profile_code()
-
         # evaluators = {
+        #     "optimized": OptimizedEval(),
         #     "legacy": LegacyEval(),
         #     "fast": FastEval(),
         # }
 
-        self.evaluator = LegacyEval()
+        self.evaluator = OptimizedEval()
+        # self.evaluator = LegacyEval()
         # self.evaluator = FastEval()
 
     def _run(self):
-        """
-
-        :return:
-        """
+        """"""
 
         self.setup()
 
@@ -71,20 +66,35 @@ class EvalWorker(BaseWorker):
         eval_items = self.eval_items
 
         while True:
-            items_to_eval = input_queue.get_many(queue_throttle)
+            items_to_eval: List[Tuple[str, str]] = input_queue.get_many(queue_throttle)
             if items_to_eval:
                 eval_items(items_to_eval, memory_manager)
             else:
                 sleep(SLEEP)
 
-    def eval_items(self, eval_items, memory_manager):
+    def eval_items(self, eval_items: List[Tuple[str, str]], memory_manager: MemoryManager):
         """"""
 
-        names = [item[0] for item in eval_items]  # generators are slower in this case :|
-        boards: List[Optional[Board]] = memory_manager.get_many_boards(names)
+        # names = [item[0] for item in eval_items]  # generators are slower in this case :|
+        # boards: List[Optional[Board]] = memory_manager.get_many_boards(names)
+
+        # above is replaced as the parent node name is likely to repeat one after another
+        boards = []
+        name = None
+        board = None
+        for item in eval_items:
+            item_name = item[0]
+            if item_name == name:
+                # TODO: find out why is None at times
+                boards.append(board.copy() if board is not None else None)
+                continue
+
+            name = item_name
+            board = memory_manager.get_node_board(name)
+            boards.append(board)
 
         queue_items = [
-            self.collect_item(board, node_name, move_str)
+            self.eval_item(board, node_name, move_str)
             for (node_name, move_str), board in zip(eval_items, boards) if board is not None
         ]
 
@@ -96,7 +106,7 @@ class EvalWorker(BaseWorker):
             except Full:
                 sleep(SLEEP)
 
-    def collect_item(self, board: Board, node_name: str, move_str: str) -> Tuple:
+    def eval_item(self, board: Board, node_name: str, move_str: str) -> Tuple:
         """"""
 
         # self.call_count += 1
@@ -111,14 +121,7 @@ class EvalWorker(BaseWorker):
             score = 0 if winner is None else INF if winner else -INF
 
         else:
-            action = (
-                None
-                if self.constant_action
-                else self.get_action(self.evaluator.ACTION_SIZE)
-            )
-            score = self.evaluator.get_score(
-                board, move_str, captured_piece_type, action=action
-            )
+            score = self.evaluate(board, move_str, captured_piece_type)
 
         return (
             node_name,
@@ -128,19 +131,14 @@ class EvalWorker(BaseWorker):
             score,
         )
 
-    def profile_code(self) -> None:
+    def evaluate(self, board, move_str, captured_piece_type) -> double:
         """"""
 
-        profiler = Profiler()
-        profiler.start()
-
-        def before_exit(*_) -> None:
-            """"""
-
-            # print(f"call count: {self.call_count}")
-            profiler.stop()
-            profiler.print(show_all=True)
-            # self.terminate()
-            sys.exit(0)
-
-        signal(SIGTERM, before_exit)
+        action = (
+            None
+            if self.constant_action
+            else self.get_action(self.evaluator.ACTION_SIZE)
+        )
+        return self.evaluator.get_score(
+            board, move_str, captured_piece_type, action=action
+        )

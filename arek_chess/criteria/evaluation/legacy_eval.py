@@ -4,9 +4,9 @@ Evaluation by attributes that were initially drafted to be significant.
 Uncorrelated to any training observation method. Can be trained vs full board environment.
 """
 
-from typing import List
+from numpy import double
 
-from arek_chess.board.board import Board
+from arek_chess.board.legacy_board import Board
 from arek_chess.criteria.evaluation.base_eval import BaseEval
 
 
@@ -14,7 +14,15 @@ class LegacyEval(BaseEval):
     """"""
 
     # material, safety, under_attack, mobility, king_mobility, king_threats, is_check
-    DEFAULT_ACTION: List[float] = [100.0, 1.0, -1.0, 1.0, -1.0, 5.0, 10.0]
+    DEFAULT_ACTION: BaseEval.ActionType = (
+        double(100.0),
+        double(1.0),
+        double(-1.0),
+        double(1.0),
+        double(-1.0),
+        double(5.0),
+        double(10.0),
+    )
     ACTION_SIZE = 7
 
     def get_score(
@@ -22,8 +30,8 @@ class LegacyEval(BaseEval):
         board: Board,
         move_str: str,
         captured_piece_type: int,
-        action: List[float] = None,
-    ) -> float:
+        action: BaseEval.ActionType = None,
+    ) -> double:
         """
 
         :param board: board with the move given already pushed, hence turn is opposite to one making the move
@@ -36,14 +44,23 @@ class LegacyEval(BaseEval):
         if action is None:
             action = self.DEFAULT_ACTION
 
-        material, safety, under_attack = self.get_for_both_players(board.get_material_and_safety)
+        material, safety, under_attack = self.get_for_both_players(
+            board.get_material_and_safety
+        )
         mobility, king_mobility = self.get_for_both_players(board.get_total_mobility)
-        king_threats = board.get_king_threats(True) - board.get_king_threats(False)
-        is_check = (
+        try:
+            king_threats = board.get_king_threats(True) - board.get_king_threats(False)
+        except AssertionError:
+            print(board.fen())
+            print(board.turn)
+            print(board.move_stack)
+            print(move_str)
+            raise
+        is_check = double(
             -int(board.is_check()) if board.turn else int(board.is_check())
         )  # color is the one who gave the check
 
-        params = [
+        params = (
             material,
             safety,
             under_attack,
@@ -51,7 +68,7 @@ class LegacyEval(BaseEval):
             king_mobility,
             king_threats,
             is_check,
-        ]
+        )
 
         return board.calculate_score(action, params)
 

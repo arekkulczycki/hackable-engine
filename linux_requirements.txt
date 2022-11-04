@@ -1,3 +1,7 @@
+python3.9
+python3.9-dev
+# python3.11
+# python3.11-dev
 libboost-all-dev
 
 # for pypy
