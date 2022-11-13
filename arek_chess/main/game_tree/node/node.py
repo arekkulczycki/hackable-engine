@@ -40,6 +40,8 @@ class Node:
         self.level: int = level
         self.color: bool = color
 
+        self.position: int = 0
+
         self.children: List[Node] = []
         self.looked_at: bool = False
         self.being_processed: bool = False

@@ -139,7 +139,7 @@ class SharedMemory(BaseMemory):
                     size=size,
                 )
             except:
-                print("sad")
+                print("I'm sad")
             # shm.close()
             # shm.unlink()
             #
@@ -222,8 +222,13 @@ class SharedMemory(BaseMemory):
 
         for filename in os.listdir("/dev/shm"):
             path = os.path.join("/dev/shm", filename)
-            if os.path.isfile(path) and filename.startswith("0."):
+            if os.path.isfile(path) and filename.startswith(f"{ROOT_NODE_NAME}."):
                 os.unlink(path)
+        try:
+            os.unlink(os.path.join("/dev/shm", ROOT_NODE_NAME))
+            os.unlink(os.path.join("/dev/shm", "action"))
+        except:
+            pass
 
         print("OK")  # just to align with what Redis does :)
 

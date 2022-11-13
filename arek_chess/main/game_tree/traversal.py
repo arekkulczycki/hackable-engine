@@ -7,6 +7,7 @@ from typing import Optional, List
 
 from arek_chess.criteria.selection.base_selector import BaseSelector
 from arek_chess.criteria.selection.fast_selector import FastSelector
+from arek_chess.criteria.selection.linear_probability_selector import LinearProbabilitySelector
 from arek_chess.main.game_tree.node.node import Node
 
 
@@ -22,7 +23,8 @@ class Traversal:
 
         self.root = root
 
-        self.selector: BaseSelector = FastSelector()
+        # self.selector: BaseSelector = FastSelector()
+        self.selector: BaseSelector = LinearProbabilitySelector()
 
         self.last_best_node = None
 
@@ -53,7 +55,8 @@ class Traversal:
                 best_node.being_processed = True
                 return best_node
 
-            children = [node for node in children if not node.being_processed]
+            # children except ones being processed or checkmate
+            children = [node for node in children if not (node.being_processed or node.captured == -1)]
             if children:
                 best_node = self.select_promising_node(children, best_node.color)
             else:

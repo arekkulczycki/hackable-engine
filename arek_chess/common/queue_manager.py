@@ -4,6 +4,7 @@ Module_docstring.
 
 from functools import partial
 from queue import Empty, Full
+from typing import Optional
 
 from faster_fifo import Queue
 
@@ -71,6 +72,17 @@ class QueueManager:
 
         try:
             return self.queue.get_many_nowait(max_messages_to_get=max_messages_to_get)
+        except Empty:
+            return None
+
+    def get_many_blocking(self, timeout: float, max_messages_to_get: int = 10):
+        """
+
+        :return:
+        """
+
+        try:
+            return self.queue.get_many(max_messages_to_get=max_messages_to_get, block=True, timeout=timeout)
         except Empty:
             return None
 

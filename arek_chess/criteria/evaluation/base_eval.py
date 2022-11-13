@@ -30,12 +30,14 @@ class BaseEval(ABC):
         board: Board,
         move_str: str,
         captured_piece_type: int,
+        is_check: bool,
         action: Optional[ActionType] = None,
     ) -> double:
         """
         :param board
         :param move_str:
         :param captured_piece_type: 0 - no capture, 1 - PAWN, 2 - KNIGHT, 3 - BISHOP, 4 - ROOK, 5 - QUEEN
+        :param is_check:
         :param action:
 
         :return: score given to the candidate move in the current position

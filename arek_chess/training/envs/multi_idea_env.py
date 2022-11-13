@@ -1,3 +1,5 @@
+from itertools import cycle
+from time import sleep
 from typing import Dict
 
 import gym
@@ -16,6 +18,7 @@ DEFAULT_ACTION: BaseEval.ActionType = (
     double(2.0),  # king threats
     double(2.0),  # direct threats
     double(-10.0),  # king safety/mobility
+    double(3.0),  # protection
     double(0.0),  # light_pieces_white
     double(0.0),
     double(0.0),
@@ -33,6 +36,7 @@ MEDIUM_ACTION: BaseEval.ActionType = (
     double(2.0),  # king threats
     double(2.0),  # direct threats
     double(-3.0),  # king safety/mobility
+    double(2.0),  # protection
     double(0.0),  # light_pieces_white
     double(0.0),
     double(0.0),
@@ -42,10 +46,33 @@ MEDIUM_ACTION: BaseEval.ActionType = (
     double(0.0),
     double(0.0),
 )
-ACTION_SIZE: int = 15
+WEAK_ACTION: BaseEval.ActionType = (
+    double(10.0),  # is_check
+    double(5.0),  # material
+    double(0.0),  # mobility
+    double(0.0),  # threats
+    double(0.0),  # king threats
+    double(0.0),  # direct threats
+    double(0.0),  # king safety/mobility
+    double(0.0),  # protection
+    double(0.0),  # light_pieces_white
+    double(0.0),
+    double(0.0),
+    double(0.0),
+    double(0.0),  # light_pawns_white
+    double(0.0),
+    double(0.0),
+    double(0.0),
+)
+ACTION_SIZE: int = 16
+EQUAL_MIDDLEGAME_FEN = "r3k2r/1ppbqpp1/pb1p1n1p/n3p3/2B1P2B/2PP1N1P/PPQN1PP1/R3K2R w KQkq - 0 12"
+SHARP_MIDDLEGAME_FEN = "rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"
+ADVANTAGE_MIDDLEGAME_FEN = "r2qk2r/pp1nbppp/2p1pn2/5b2/2BP1B2/2N1PN2/PP3PPP/R2Q1RK1 w kq - 3 9"
+DISADVANTAGE_MIDDLEGAME_FEN = "rn1qkb1r/p3pppp/2p5/1p1n1b2/2pP4/2N1PNB1/PP3PPP/R2QKB1R w KQkq - 0 8"
+fens = cycle([EQUAL_MIDDLEGAME_FEN, SHARP_MIDDLEGAME_FEN, ADVANTAGE_MIDDLEGAME_FEN, DISADVANTAGE_MIDDLEGAME_FEN])
 
 
-class OptimizedEnv(gym.Env):
+class MultiIdeaEnv(gym.Env):
     # metadata = {}
 
     REWARDS: Dict[str, double] = {
@@ -55,7 +82,7 @@ class OptimizedEnv(gym.Env):
         "0-1": double(-1.0),
     }
 
-    def __init__(self, fen: str):
+    def __init__(self):
         super().__init__()
 
         self.reward_range = (double(-1.0), double(1.0))
@@ -64,9 +91,10 @@ class OptimizedEnv(gym.Env):
         self.observation_space = self._get_observation_space()
 
         self.controller = Controller(Print.NOTHING, search_limit=9)
-        self.controller.boot_up(fen, self.action_space.sample())
+        self.controller.boot_up(next(fens), self.action_space.sample())
 
         self.obs = self.observation()
+        self.steps_done = 0
 
     def _get_action_space(self):
         return gym.spaces.Box(
@@ -116,24 +144,27 @@ class OptimizedEnv(gym.Env):
             # self.controller.make_move(self.action_space.sample())
 
             # playing against configured action
-            self.controller.make_move(MEDIUM_ACTION)
+            sleep(0.05)  # sleep is needed for the queues to clear, otherwise they crash...
+            self.controller.make_move(DEFAULT_ACTION)
 
             result = self.controller.board.result()
 
         self.obs = self.observation()
         reward = self._get_reward(result)
+        self.steps_done += 1
 
         return self.obs, reward, result != "*", {}
 
     def reset(self):
         self.render()
-        self.controller.restart(action=self.action_space.sample())
+        self.controller.restart(fen=next(fens), action=self.action_space.sample())
 
         return self.observation()
 
     def render(self, mode="human", close=False):
         # ...
         print(self.controller.board.fen())
+        print(self.steps_done)
 
     def observation(self):
         return self._board_to_obs()

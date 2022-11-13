@@ -3,15 +3,16 @@ Handling of the search tree including following features: depth control, branch 
 """
 
 from asyncio import sleep as asyncio_sleep
-from time import sleep, time
+from time import time
 from typing import Optional, Dict, List, Tuple
+
+from numpy import double
 
 from arek_chess.board.board import Board
 from arek_chess.common.constants import (
     Print,
     INF,
     ROOT_NODE_NAME,
-    SLEEP,
     LOG_INTERVAL,
     FINISHED,
 )
@@ -96,40 +97,41 @@ class SearchManager:
         self.t_tmp: float = self.t_0
         self.last_evaluated: int = 0
 
-        # limit = self.limit
+        limit = self.limit
         queue_throttle = self.queue_throttle
         dispatcher_queue = self.dispatcher_queue
         selector_queue = self.selector_queue
         control_queue = self.control_queue
         gathering = self.gathering
-        # selecting = self.selecting
+        selecting = self.selecting
         monitoring = self.monitoring
         try:
             while self.evaluated < self.dispatched or self.evaluated < self.limit:
-                # TODO: refactor to use concurrency
+                # TODO: refactor to use concurrency?
                 gathering(
                     selector_queue, dispatcher_queue, control_queue, queue_throttle
                 )
-                # selecting(dispatcher_queue, control_queue, queue_throttle)
+                if not (
+                    self.dispatched == 0
+                    or self.evaluated > limit
+                    or self.evaluated / self.dispatched < 0.75
+                    or (
+                        self.evaluated / self.dispatched < 0.9
+                        and self.evaluated < limit / 2
+                    )
+                ):
+                    selecting(dispatcher_queue)
+
                 if monitoring():
                     # print("no change detected")
                     raise SearchFailed("nodes not delivered on queues")
-
-            # # wait for workers to empty queues
-            # while (
-            #     not eval_queue.empty()
-            #     or not dispatcher_queue.empty()
-            #     or not selector_queue.empty()
-            # ):
-            #     gathering(selector_queue, dispatcher_queue, control_queue, queue_throttle)
-            #     monitoring()
 
         except KeyboardInterrupt:
             self.before_exit()
         else:
             return self.finish_up(time() - self.t_0)
         finally:
-            self.dispatcher_queue.put((FINISHED, None, None))
+            self.dispatcher_queue.put((FINISHED, "", 0.0))
 
     def monitoring(self) -> bool:
         """"""
@@ -137,9 +139,16 @@ class SearchManager:
         t = time()
 
         if t > self.t_tmp + LOG_INTERVAL:
+            if self.evaluated == self.last_evaluated:
+                print(
+                    f"dispatched: {self.dispatched}, evaluated: {self.evaluated}, "
+                    f"selected: {self.selected}"
+                )
+                return True
+
             self.t_tmp = t
 
-            if self.printing != Print.NOTHING:
+            if self.printing not in [Print.NOTHING, Print.MOVE]:
                 progress = round(
                     min(
                         self.evaluated / self.dispatched,
@@ -152,9 +161,6 @@ class SearchManager:
                     f"dispatched: {self.dispatched}, evaluated: {self.evaluated}, "
                     f"selected: {self.selected}, explored: {self.explored}, progress: {progress}%"
                 )
-
-            if self.evaluated == self.last_evaluated:
-                return True
 
             self.last_evaluated = self.evaluated
 
@@ -177,15 +183,17 @@ class SearchManager:
     ) -> None:
         """"""
 
-        candidates: List[Tuple[str, str, int, int, float]] = selector_queue.get_many(queue_throttle)  # self.max_items_at_once)
+        candidates: List[
+            Tuple[str, str, int, int, double]
+        ] = selector_queue.get_many_blocking(
+            0.015,
+            queue_throttle,  # the timeout value set for optimal first iteration start
+        )  # self.max_items_at_once)
         if not candidates:
-            sleep(SLEEP)
-            self.selecting(dispatcher_queue)
             # print(f"no items")
             return
 
-        gathered = len(candidates)
-        self.evaluated += gathered
+        self.evaluated += len(candidates)
 
         self.handle_candidates(dispatcher_queue, candidates)
 
@@ -207,10 +215,12 @@ class SearchManager:
             gathering(selector_queue, dispatcher_queue, control_queue, queue_throttle)
             await asyncio_sleep(0)
 
-    def handle_candidates(self, dispatcher_queue: QM, candidates: List[Tuple[str, str, int, int, float]]) -> None:
+    def handle_candidates(
+        self, dispatcher_queue: QM, candidates: List[Tuple[str, str, int, int, double]]
+    ) -> None:
         """"""
 
-        nodes_to_dispatch = []
+        nodes_to_dispatch: List[Node] = []
 
         # best_score = math.inf if color else -math.inf
         for candidate in candidates:
@@ -223,31 +233,38 @@ class SearchManager:
             ) = candidate
             try:
                 parent = self.get_node(parent_name)
+                parent_score = parent.score
             except KeyError:
                 # print("node not found in items: ", parent_name, self.nodes_dict.keys())
                 if len(self.nodes_dict.keys()) == 1:
                     # was never meant to be here, but somehow queue delivers phantom items
                     continue
                 else:
-                    raise SearchFailed(f"node not found in items: {parent_name}, {self.nodes_dict.keys()}")
+                    raise SearchFailed(
+                        f"node not found in items: {parent_name}, {self.nodes_dict.keys()}"
+                    )
             level = len(parent_name.split("."))
 
-            self.create_node(parent, move_str, score, captured_piece_type, level)
+            node = self.create_node(parent, move_str, score, captured_piece_type, level)
 
-            # # analyse suspicious captures immediately
-            # to_dispatch = False
-            # if captured_piece_type:
-            #     piece_value = Board.get_simple_piece_value(moved_piece_type)
-            #     capture_value = Board.get_simple_piece_value(captured_piece_type)
-            #     parent_capture_value = Board.get_simple_piece_value(parent.captured)
-            #
-            #     if capture_value > parent_capture_value or capture_value > piece_value:
-            #         nodes_to_dispatch.append(node)
-            #         node.being_processed = True
-            #         self.explored += 1
-            #         to_dispatch = True
-            # if not to_dispatch:
-            #     parent.being_processed = False
+            to_dispatch = False
+            # analyse "good" captures immediately
+            if captured_piece_type > 0 and (  # if parent_name == ROOT_NODE_NAME:
+                (
+                    parent.parent is None
+                    and captured_piece_type > parent.captured
+                    and not (captured_piece_type == 3 and parent.captured == 2)
+                )
+                or (
+                    parent.parent is not None and score > parent.parent.score and score > parent.parent.init_score
+                )
+            ):
+                nodes_to_dispatch.append(node)
+                node.being_processed = True
+                self.explored += 1
+                to_dispatch = True
+            if not to_dispatch:
+                parent.being_processed = False
             parent.being_processed = False
 
         if nodes_to_dispatch:
@@ -256,24 +273,9 @@ class SearchManager:
     def selecting(self, dispatcher_queue: QM) -> None:
         """"""
 
-        if (
-            self.dispatched == 0
-            or (
-                self.dispatched > 0
-                and (
-                    (
-                        self.evaluated < self.limit / 2
-                        and self.evaluated / self.dispatched < 0.9
-                    )  # TODO: pass to function as args?
-                    or self.evaluated / self.dispatched < 0.75
-                )
-            )
-        ) or self.evaluated > self.limit:
-            return
-
         top_nodes = [
             node
-            for node in (self.traversal.get_next_node_to_look_at() for _ in range(1))
+            for node in (self.traversal.get_next_node_to_look_at() for _ in range(4))
             if node is not None
         ]
         if not top_nodes:
@@ -283,7 +285,6 @@ class SearchManager:
         # print("selecting")
         n_nodes: int = len(top_nodes)
         self.selected += n_nodes
-        # self.selected_nodes.append(top_nodes)
         self.explored += n_nodes
 
         self.queue_to_dispatch(dispatcher_queue, top_nodes)
@@ -307,7 +308,9 @@ class SearchManager:
 
         return self.nodes_dict[node_name]
 
-    def create_node(self, parent: Node, move, score, captured, level) -> Optional[Node]:
+    def create_node(
+        self, parent: Node, move: str, score: double, captured: int, level: int
+    ) -> Optional[Node]:
         """"""
 
         parent_name = parent.name
@@ -316,10 +319,10 @@ class SearchManager:
             try:
                 self.nodes_dict[child_name].score = score
                 self.nodes_dict[child_name].captured = -1
+                return None
             except KeyError:
                 # was never meant to be here, but somehow queue delivers phantom items
                 pass
-            return None
 
         color = level % 2 == 0 if self.root.color else level % 2 == 1
 
@@ -351,7 +354,7 @@ class SearchManager:
 
         best_score, best_move = self.get_best_move()
 
-        if self.printing != Print.NOTHING:
+        if self.printing not in [Print.NOTHING, Print.MOVE]:
             if self.printing != Print.MOVE:
                 print(
                     f"evaluated: {self.evaluated}, dispatched: {self.dispatched}, "
@@ -364,6 +367,8 @@ class SearchManager:
                 )
 
             print("chosen move -->", round(best_score, 3), best_move)
+        elif self.printing == Print.MOVE:
+            print(best_move)
 
         self.dispatched = 0
         self.evaluated = 0
@@ -372,7 +377,7 @@ class SearchManager:
 
         return best_move
 
-    def get_best_move(self) -> Tuple[float, str]:
+    def get_best_move(self) -> Tuple[double, str]:
         """
         Get the first move with the highest score with respect to color.
         """

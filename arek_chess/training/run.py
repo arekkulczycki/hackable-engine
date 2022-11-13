@@ -1,4 +1,4 @@
-import math
+import os
 from argparse import ArgumentParser
 from time import perf_counter
 
@@ -13,31 +13,30 @@ from stable_baselines3.common.vec_env import VecMonitor, DummyVecEnv
 
 register(
     id='chess-v0',
-    entry_point='arek_chess.training.envs.optimized_env:OptimizedEnv',
+    entry_point='arek_chess.training.envs.square_control_env:SquareControlEnv',
 )
 
-LOG_PATH = "./logs/"
-EQUAL_MIDDLEGAME_FEN = "r3k2r/1ppbqpp1/pb1p1n1p/n3p3/2B1P2B/2PP1N1P/PPQN1PP1/R3K2R w KQkq - 0 12"
+LOG_PATH = "./arek_chess/training/logs/"
 
 
 def train(version=-1):
     t0 = perf_counter()
 
     print("loading env...")
-    env: DummyVecEnv = make_vec_env("chess-v0", n_envs=1, env_kwargs={"fen": EQUAL_MIDDLEGAME_FEN})  # , vec_env_cls=SubprocVecEnv)
+    env: DummyVecEnv = make_vec_env("chess-v0", n_envs=1)  # , vec_env_cls=SubprocVecEnv)
     # env = make("chess-v0", fen=EQUAL_MIDDLEGAME_FEN)
     # env = VecEnv([lambda: FullBoardEnv(EQUAL_MIDDLEGAME_FEN)])
     # env = FullBoardEnv(EQUAL_MIDDLEGAME_FEN)
 
-    env = VecMonitor(env, LOG_PATH)
+    env = VecMonitor(env, os.path.join(LOG_PATH, f"v{version}"))
 
     if version >= 0:
         # model = PPO.load(f"./chess.v{version}", env=env, custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
-        model = PPO.load(f"./chess.v{version}", env=env)
+        model = PPO.load(f"./chess.v{version}", env=env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
     else:
         print("setting up model...")
-        # model = PPO("MlpPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
-        model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
+        model = PPO("MlpPolicy", env=env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
+        # model = PPO("MultiInputPolicy", env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
 
     print("training started...")
 
@@ -50,17 +49,17 @@ def train(version=-1):
 
 def loop_train(version=-1, loops=5):
     print("loading env...")
-    env: DummyVecEnv = get_env()
+    env: DummyVecEnv = get_env(version)
 
     for _ in range(loops):
         t0 = perf_counter()
         if version >= 0:
             # custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
-            model = PPO.load(f"./chess.v{version}", env=env)
+            model = PPO.load(f"./chess.v{version}", env=env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
         else:
             print("setting up model...")
-            # model = PPO("MlpPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
-            model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
+            model = PPO("MlpPolicy", env=env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
+            # model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
 
         print("training started...")
 
@@ -69,7 +68,7 @@ def loop_train(version=-1, loops=5):
         except:
             # start over with new env
             env.envs[0].controller.tear_down()
-            env = get_env()
+            env = get_env(version)
         else:
             # on success increment the version and keep learning
             version += 1
@@ -80,10 +79,10 @@ def loop_train(version=-1, loops=5):
     env.envs[0].controller.tear_down()
 
 
-def get_env():
-    env: DummyVecEnv = make_vec_env("chess-v0", n_envs=1, env_kwargs={"fen": EQUAL_MIDDLEGAME_FEN})
+def get_env(version):
+    env: DummyVecEnv = make_vec_env("chess-v0", n_envs=1)
 
-    env = VecMonitor(env, LOG_PATH)
+    env = VecMonitor(env, os.path.join(LOG_PATH, f"v{version}"))
 
     return env
 

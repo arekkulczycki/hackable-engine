@@ -43,7 +43,7 @@ class Controller:
         self.tree_params = tree_params
         self.search_limit = search_limit
 
-        self.queue_throttle = 128
+        self.queue_throttle = (CPU_CORES - 2) * search_limit * 2
 
         self.create_queues()
 
@@ -108,9 +108,8 @@ class Controller:
         fails = 0
         while True:
             if fails == 3:
-                sleep(3)
                 self.restart(fen=self.board.fen())
-                sleep(3)
+                sleep(0.5)
             elif fails > 4:
                 raise RuntimeError
             try:
@@ -124,22 +123,30 @@ class Controller:
                 fails += 1
 
                 self.search_manager.set_root(Board(self.board.fen()))
-                sleep(1)
+                sleep(0.5)
 
         self.release_memory()
-        # self.tear_down()
-        # self.clear_queues()
 
-        # print(move)
-
-        self.board.push(Move.from_uci(move))
+        if not move:
+            raise RuntimeError
+        chess_move = Move.from_uci(move)
+        self.board.push(chess_move)
 
         self.search_manager.set_root(Board(self.board.fen()))
+
+    def search(self) -> Move:
+        move = self.search_manager.search()
+        if not move:
+            raise RuntimeError
+        chess_move = Move.from_uci(move)
+        # self.board.push(chess_move)
+        self.release_memory()
+        return chess_move
 
     def play(self) -> None:
         """"""
 
-        while not self.board.is_game_over() and self.board.simple_outcome() is None:
+        while not self.board.is_game_over() and self.board.outcome() is None:
             self.make_move()
             print(self.board.fen())
             sleep(0.05)
@@ -147,8 +154,6 @@ class Controller:
         self.tear_down()
 
         outcome = self.board.outcome()
-        if outcome is None:
-            outcome = self.board.simple_outcome()
 
         termination = ""
         for key, value in Termination.__dict__.items():
@@ -179,6 +184,8 @@ class Controller:
 
     def restart(self, fen: Optional[str] = None, action: Optional[BaseEval.ActionType] = None) -> None:
         """"""
+
+        print("restarting engine")
 
         self.release_memory()
         self.restart_child_processes(action)
@@ -221,6 +228,7 @@ class Controller:
     def recreate_queues(self):
         """"""
 
+        self.clear_queues()
         del self.search_manager
         del self.dispatcher_queue
         del self.eval_queue
@@ -232,12 +240,14 @@ class Controller:
     def clear_queues(self):
         """"""
 
-        for queue in [self.dispatcher_queue, self.eval_queue, self.selector_queue]:
+        for queue in [self.dispatcher_queue, self.eval_queue, self.selector_queue, self.control_queue]:
             while not queue.empty():
                 queue.get_many()
 
     def tear_down(self) -> None:
         """"""
+
+        print("closing engine")
 
         self.stop_child_processes()
 

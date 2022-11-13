@@ -24,7 +24,6 @@ class MemoryManager:
 
     def __init__(self):
         self.memory: BaseMemory = SharedMemory()
-        # self.memory: BaseMemory = RedisMemory()
 
     def get_action(self, size: int) -> BaseEval.ActionType:
         action_bytes = self.memory.get("action")
@@ -79,28 +78,28 @@ class MemoryManager:
 
     def set_node_board(self, node_name: str, board: Board) -> None:
         self.memory.set(
-            f"{node_name}", dumps(board, protocol=5, with_refs=False)
+            node_name, dumps(board, protocol=5, with_refs=False)
         )
 
     async def set_node_board_async(self, node_name: str, board: Board) -> None:
         await self.memory.set_async(
-            f"{node_name}", dumps(board, protocol=5, with_refs=False)
+            node_name, dumps(board, protocol=5, with_refs=False)
         )
 
     def get_many_boards(self, names: List[str]) -> List[Board]:
-        boards: List[bytes] = self.memory.get_many([f"{name}" for name in names])
+        boards: List[bytes] = self.memory.get_many([name for name in names])
         return [loads(board) if board is not None else None for board in boards]
 
     def set_many_boards(self, name_to_board: List[Tuple[str, Board]]):
         name_to_bytes = [
-            (f"{name}", dumps(board, protocol=5, with_refs=False))
+            (name, dumps(board, protocol=5, with_refs=False))
             for name, board in name_to_board
         ]
         self.memory.set_many(name_to_bytes)
 
     async def set_many_boards_async(self, name_to_board: Dict[str, Board]):
         name_to_bytes = {
-            f"{name}": dumps(board, protocol=5, with_refs=False)
+            name: dumps(board, protocol=5, with_refs=False)
             for name, board in name_to_board.items()
         }
         await self.memory.set_many_async(name_to_bytes)
@@ -109,7 +108,7 @@ class MemoryManager:
         self.memory.remove(f"{node_name}.params")
 
     def remove_node_board_memory(self, node_name: str) -> None:
-        self.memory.remove(f"{node_name}")
+        self.memory.remove(node_name)
 
     def remove_node_memory(self, node_name: str) -> None:
         self.memory.remove(f"{node_name}.params")

@@ -13,8 +13,8 @@ Desired:
 [x] color on which black pieces are
 [x] color on which white pawns are
 [x] color on which black pawns are
+[x] protection
 [ ] king proximity threats (direct)
-[ ] protection
 [ ] advancement
 [ ] protection x advancement
 [ ] pawn structure defined as a binary number
@@ -60,7 +60,7 @@ ACTION_TYPE = Tuple[
 ]
 
 
-class OptimizedEval(BaseEval):
+class MultiIdeaEval(BaseEval):
     """"""
 
     DEFAULT_ACTION: BaseEval.ActionType = (
@@ -71,6 +71,7 @@ class OptimizedEval(BaseEval):
         double(2.0),  # king threats
         double(2.0),  # direct threats
         double(-10.0),  # king safety/mobility
+        double(3.0),  # protection
         double(0.0),  # light_pieces_white
         double(0.0),
         double(0.0),
@@ -80,13 +81,14 @@ class OptimizedEval(BaseEval):
         double(0.0),
         double(0.0),
     )
-    ACTION_SIZE: int = 15
+    ACTION_SIZE: int = 16
 
     def get_score(
         self,
         board: Board,
         move_str: str,
         captured_piece_type: int,
+        is_check: bool,
         action: Optional[BaseEval.ActionType] = None,
     ) -> double:
         """"""
@@ -94,8 +96,8 @@ class OptimizedEval(BaseEval):
         if action is None:
             action = self.DEFAULT_ACTION
 
-        is_check = (
-            -int(board.is_check()) if board.turn else int(board.is_check())
+        is_check_int = (
+            -int(is_check) if board.turn else int(is_check)
         )  # color is the one who gave the check
         material = (
             board.get_material_no_pawns(True)
@@ -110,6 +112,7 @@ class OptimizedEval(BaseEval):
             False
         )
         king_mobility = board.get_king_mobility(True) - board.get_king_mobility(False)
+        protection = board.get_protection(True) - board.get_protection(False)
 
         light_pieces_white = board.pieces_on_light_squares(True)
         dark_pieces_white = board.pieces_on_dark_squares(True)
@@ -122,13 +125,14 @@ class OptimizedEval(BaseEval):
         dark_pawns_black = board.pawns_on_dark_squares(False)
 
         params = (
-            double(is_check),
+            double(is_check_int),
             double(material),
             double(mobility),
             double(threats),
             double(king_threats),
             double(direct_threats),
             double(king_mobility),
+            double(protection),
             double(light_pieces_white),
             double(light_pieces_black),
             double(dark_pieces_white),
