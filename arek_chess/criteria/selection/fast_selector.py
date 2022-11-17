@@ -9,7 +9,7 @@ from typing import List
 
 from arek_chess.common.constants import INF
 from arek_chess.criteria.selection.base_selector import BaseSelector
-from arek_chess.main.game_tree.node.node import Node
+from arek_chess.game_tree.node.node import Node
 
 
 class FastSelector(BaseSelector):
@@ -17,7 +17,8 @@ class FastSelector(BaseSelector):
     Selecting one best node fast.
     """
 
-    def select(self, nodes: List[Node], color: bool) -> Node:
+    @staticmethod
+    def select(nodes: List[Node], color: bool) -> Node:
         best_node: Node
         best_score: double = -INF if color else INF
 

@@ -3,7 +3,7 @@ import numpy
 
 from arek_chess.common.constants import Print
 from arek_chess.criteria.evaluation.base_eval import BaseEval
-from arek_chess.main.controller import Controller
+from arek_chess.controller import Controller
 
 DEFAULT_ACTION: BaseEval.ActionType = (
     numpy.double(100.0),

@@ -8,7 +8,7 @@ from numpy import double
 
 from arek_chess.common.constants import Print
 from arek_chess.criteria.evaluation.base_eval import BaseEval
-from arek_chess.main.controller import Controller
+from arek_chess.controller import Controller
 
 DEFAULT_ACTION: BaseEval.ActionType = (
     double(0.15),  # castling_rights

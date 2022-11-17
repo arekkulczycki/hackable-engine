@@ -3,34 +3,38 @@
 Selecting one best node fast.
 """
 
-from numpy import double
-
 from typing import List
 
-from arek_chess.common.constants import INF
+import kmeans1d
+
 from arek_chess.criteria.selection.base_selector import BaseSelector
-from arek_chess.main.game_tree.node.node import Node
+from arek_chess.criteria.selection.linear_probability_selector import LinearProbabilitySelector
+from arek_chess.game_tree.node.node import Node
+
+CLUSTER_2_3_THRESHOLD: int = 9
+CLUSTER_3_4_THRESHOLD: int = 15
+CLUSTER_4_5_THRESHOLD: int = 25
 
 
-class FastSelector(BaseSelector):
+class Cluster1dSelector(BaseSelector):
     """
-    Selecting one best node fast.
+    Selecting randomly with higher probability the higher the score, but only from the top subset.
     """
 
     def select(self, nodes: List[Node], color: bool) -> Node:
-        best_node: Node
-        best_score: double = -INF if color else INF
+        nnodes = len(nodes)
+        k = (
+            2
+            if nnodes < CLUSTER_2_3_THRESHOLD
+            else 3
+            if nnodes < CLUSTER_3_4_THRESHOLD
+            else 4
+            if nnodes < CLUSTER_4_5_THRESHOLD
+            else 5
+        )  # number of clusters
+        clusters, centroids = kmeans1d.cluster(
+            [node.score for node in nodes], k
+        )
 
-        for node in nodes:
-            # node white-to-move then best child is one with the highest score
-            score = node.score
-            if color:
-                if score >= best_score:
-                    best_node = node
-                    best_score = score
-            else:
-                if score <= best_score:
-                    best_node = node
-                    best_score = score
-
-        return best_node
+        top_nodes = [node for node in nodes if node.score in clusters[0]]
+        return LinearProbabilitySelector.select(top_nodes, color)

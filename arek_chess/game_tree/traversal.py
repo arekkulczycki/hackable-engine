@@ -8,7 +8,7 @@ from typing import Optional, List
 from arek_chess.criteria.selection.base_selector import BaseSelector
 from arek_chess.criteria.selection.fast_selector import FastSelector
 from arek_chess.criteria.selection.linear_probability_selector import LinearProbabilitySelector
-from arek_chess.main.game_tree.node.node import Node
+from arek_chess.game_tree.node.node import Node
 
 
 class Traversal:
@@ -23,8 +23,8 @@ class Traversal:
 
         self.root = root
 
-        # self.selector: BaseSelector = FastSelector()
-        self.selector: BaseSelector = LinearProbabilitySelector()
+        self.selector: BaseSelector = FastSelector()
+        # self.selector: BaseSelector = LinearProbabilitySelector()
 
         self.last_best_node = None
 

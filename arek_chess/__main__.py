@@ -6,11 +6,11 @@ import argparse
 import os
 import sys
 
-sys.path.insert(0, os.getcwd())
+sys.path.insert(0, os.getcwd())  # instead of writing PYTHONPATH=.
 # print(os.getcwd())
 # print(os.path.dirname(__file__))
 # exit(1)
-from arek_chess.main.controller import Controller
+from arek_chess.controller import Controller
 
 
 def validate_tree_params(tree_params: str) -> None:

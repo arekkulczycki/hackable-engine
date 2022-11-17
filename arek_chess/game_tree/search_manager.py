@@ -19,9 +19,9 @@ from arek_chess.common.constants import (
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.queue_manager import QueueManager as QM
-from arek_chess.main.game_tree.node.node import Node
-from arek_chess.main.game_tree.renderer import PrunedTreeRenderer
-from arek_chess.main.game_tree.traversal import Traversal
+from arek_chess.game_tree.node.node import Node
+from arek_chess.game_tree.renderer import PrunedTreeRenderer
+from arek_chess.game_tree.traversal import Traversal
 
 
 class SearchManager:

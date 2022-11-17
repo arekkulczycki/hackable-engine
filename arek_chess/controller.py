@@ -7,13 +7,14 @@ from time import sleep
 from typing import Optional, List, Union
 
 from chess import Move, Termination
+
 from arek_chess.board.board import Board
 from arek_chess.common.constants import Print
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.queue_manager import QueueManager
 from arek_chess.criteria.evaluation.base_eval import BaseEval
-from arek_chess.main.search_manager import SearchManager
+from arek_chess.game_tree.search_manager import SearchManager
 from arek_chess.workers.dispatcher_worker import DispatcherWorker
 from arek_chess.workers.eval_worker import EvalWorker
 
