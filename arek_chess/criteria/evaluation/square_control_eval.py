@@ -40,6 +40,7 @@ ACTION_TYPE = Tuple[
     double,
 ]
 ONES_DOUBLE: NDArray[Shape["64"], Double] = ones((64,), dtype=double)
+HALFS_DOUBLE: NDArray[Shape["64"], Double] = ones((64,), dtype=double) / 2
 ONES_INT: NDArray[Shape["64"], Int] = ones((64,), dtype=int)
 
 
@@ -88,41 +89,52 @@ class SquareControlEval(BaseEval):
 
         # how many attacks on each of 64 squares, number of white minus number of black attacks
         square_control_diff: NDArray[
-            Shape["64,"], Int
+            Shape["64"], Int
         ] = board.get_square_control_map_for_both()
 
         try:
             white_king_proximity_map: NDArray[
-                Shape["64,"], Double
+                Shape["64"], Double
             ] = board.get_king_proximity_map_normalized(True)
+        except Exception as e:
+            print("no king position analysed")
+            print(board.fen())
+            print(move_str, "white")
+            print(bin(board.kings))
+            print(bin(board.occupied_co[True]))
+            raise ValueError from e
+        try:
             black_king_proximity_map: NDArray[
-                Shape["64,"], Int
+                Shape["64"], Int
             ] = board.get_king_proximity_map_normalized(False)
         except Exception as e:
             print("no king position analysed")
-            print(board.fen(), move_str)
+            print(board.fen())
+            print(move_str, "black")
+            print(bin(board.kings))
+            print(bin(board.occupied_co[False]))
             raise ValueError from e
 
         white_piece_value_map: NDArray[
-            Shape["64,"], Double
+            Shape["64"], Double
         ] = board.get_occupied_square_value_map(True)
         black_piece_value_map: NDArray[
-            Shape["64,"], Double
+            Shape["64"], Double
         ] = board.get_occupied_square_value_map(False)
-        empty_square_map: NDArray[Shape["64,"], Int] = board.get_empty_square_map()
+        empty_square_map: NDArray[Shape["64"], Int] = board.get_empty_square_map()
 
         # TODO: for attacks on material should be considered 3 options: equal, more white attack or more black attacks
         white_material_square_control: NDArray[
-            Shape["64,"], Double
+            Shape["64"], Double
         ] = white_piece_value_map * np_min(
             square_control_diff,
-            ONES_DOUBLE,  # defending multiple times considered equal to defending once
+            HALFS_DOUBLE,  # defending multiple times considered equal to defending half
         )
         black_material_square_control: NDArray[
-            Shape["64,"], Double
+            Shape["64"], Double
         ] = black_piece_value_map * np_max(
             square_control_diff,
-            -ONES_DOUBLE,  # defending multiple times considered equal to defending once
+            -HALFS_DOUBLE,  # defending multiple times considered equal to defending half
         )
 
         own_occupied_square_control: double = (
@@ -138,11 +150,12 @@ class SquareControlEval(BaseEval):
         empty_square_control: double = matmul(
             square_control_diff * empty_square_map, ONES_INT
         )
+        k: int = 1  # 4
         king_proximity_square_control: double = matmul(
             (
                 (
-                    white_king_proximity_map ** (1 + 4 * action[-1])
-                    - black_king_proximity_map ** (1 + 4 * action[-1])
+                    white_king_proximity_map ** (1 + k * action[-1])
+                    - black_king_proximity_map ** (1 + k * action[-1])
                 )
                 * square_control_diff
             ),
@@ -162,8 +175,5 @@ class SquareControlEval(BaseEval):
 
         return self.calculate_score(action[:-1], params)
 
-    @staticmethod
-    def calculate_score(
-        action: BaseEval.ActionType, params: BaseEval.ActionType
-    ) -> double:
-        return dot(action, params)
+        # n = len(board.move_stack)
+        # return self.calculate_score(action[:-1], params, board.turn, n)

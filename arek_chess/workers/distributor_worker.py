@@ -1,5 +1,5 @@
 """
-Dispatches to the queue nodes to be calculated by EvalWorkers.
+Distributes to the queue nodes to be calculated by EvalWorkers.
 """
 
 from time import sleep
@@ -14,14 +14,14 @@ from arek_chess.common.queue_manager import QueueManager as QM
 from arek_chess.workers.base_worker import BaseWorker
 
 
-class DispatcherWorker(BaseWorker):
+class DistributorWorker(BaseWorker):
     """
-    Dispatches to the queue nodes to be calculated by EvalWorkers.
+    Distributes to the queue nodes to be calculated by EvalWorkers.
     """
 
     def __init__(
         self,
-        dispatcher_queue: QM,
+        distributor_queue: QM,
         eval_queue: QM,
         selector_queue: QM,
         control_queue: QM,
@@ -31,7 +31,7 @@ class DispatcherWorker(BaseWorker):
 
         super().__init__()
 
-        self.dispatcher_queue = dispatcher_queue
+        self.distributor_queue = distributor_queue
         self.eval_queue = eval_queue
         self.selector_queue = selector_queue
         self.control_queue = control_queue
@@ -40,7 +40,7 @@ class DispatcherWorker(BaseWorker):
     def setup(self):
         """"""
 
-        self.dispatched = 0
+        self.distributed = 0
 
         # self.profile_code()
 
@@ -51,11 +51,11 @@ class DispatcherWorker(BaseWorker):
 
         queue_throttle = self.queue_throttle
         get_items = self.get_items
-        dispatch = self.dispatch
+        distribute = self.distribute
         while True:
             items: List[Tuple[str, str, double]] = get_items(queue_throttle)
             if items:
-                dispatch(items)
+                distribute(items)
             else:
                 sleep(SLEEP)
 
@@ -63,9 +63,9 @@ class DispatcherWorker(BaseWorker):
         """"""
 
         # the timeout value set for optimal first iteration start
-        return self.dispatcher_queue.get_many_blocking(0.015, queue_throttle)
+        return self.distributor_queue.get_many_blocking(0.015, queue_throttle)
 
-    def dispatch(self, items: List[Tuple[str, str, double]]) -> None:
+    def distribute(self, items: List[Tuple[str, str, double]]) -> None:
         """"""
 
         queue_items = []
@@ -73,7 +73,7 @@ class DispatcherWorker(BaseWorker):
         for node_name, move_str, score in items:  # TODO: get_many_boards ?
             # not a real node, just a signal for finishing processing iteration
             if node_name == FINISHED:
-                self.dispatched = 0
+                self.distributed = 0
                 return None
 
             # root board is already created at the very start in the search_manager
@@ -119,8 +119,8 @@ class DispatcherWorker(BaseWorker):
                 queue_items += new_queue_items
 
         if queue_items:
-            self.dispatched += len(queue_items)
-            self.control_queue.put(self.dispatched)
+            self.distributed += len(queue_items)
+            self.control_queue.put(self.distributed)
             self.eval_queue.put_many(queue_items)
 
     def create_node_board(

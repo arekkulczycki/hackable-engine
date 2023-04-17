@@ -13,13 +13,14 @@ from arek_chess.common.constants import INF
 class PrunedTreeRenderer(RenderTree):
     """"""
 
-    def __init__(self, root: Node, *, depth: int = 0, path: str = "", **kwargs) -> None:
+    def __init__(self, root: Node, *, depth: int = 0, path: str = "", to_file: bool = False, **kwargs) -> None:
         """"""
 
         super().__init__(root, **kwargs)
 
-        self.depth = depth
-        self.path = path
+        self.depth: int = depth
+        self.path: str = path
+        self.to_file: bool = to_file
 
     def __iter__(self) -> Generator:
         """"""

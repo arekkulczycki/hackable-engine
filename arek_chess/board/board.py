@@ -52,6 +52,7 @@ from chess import (
     BB_RANK_MASKS,
     BB_FILE_MASKS,
     PieceType,
+    square_distance,
 )
 from nptyping import NDArray, Shape, Int, Double
 from numpy import double, empty
@@ -267,7 +268,7 @@ class Board(ChessBoard):
         b = cls()
 
         white, black, b.kings, b.queens, b.rooks, b.bishops, b.knights, b.pawns = [
-            (2**64 - 1) & (position >> k * 64) for k in range(8)
+            ONES & (position >> k * 64) for k in range(8)
         ]
         b.occupied_co = [black, white]
         b.occupied = black | white
@@ -452,95 +453,7 @@ class Board(ChessBoard):
 
         return 0
 
-    def get_square_control_map(self, color: Color) -> NDArray[Shape["64,"], Int]:
-        """
-        Returns list of 64 values, accumulated attacks on each square.
-
-        :param color: counting attacks threatened by this color
-        """
-
-        q_and_r: Bitboard = self.queens | self.rooks
-        q_and_b: Bitboard = self.queens | self.bishops
-        oc_co: Bitboard = self.occupied_co[color]
-        pawn_attacks = BB_PAWN_ATTACKS[not color]
-
-        arr = empty(shape=(64,), dtype=int)
-        _attackers_mask_light = self._attackers_mask_light
-        oc = self.occupied
-        for (
-            square,
-            king_att,
-            knight_att,
-            rank_att,
-            file_att,
-            diag_att,
-            pawn_att,
-            rank_m,
-            file_m,
-            diag_m,
-        ) in zip(
-            SQUARES,
-            BB_KING_ATTACKS,
-            BB_KNIGHT_ATTACKS,
-            BB_RANK_ATTACKS,
-            BB_FILE_ATTACKS,
-            BB_DIAG_ATTACKS,
-            pawn_attacks,
-            BB_RANK_MASKS,
-            BB_FILE_MASKS,
-            BB_DIAG_MASKS,
-        ):
-            arr[square] = get_bit_count(
-                _attackers_mask_light(
-                    oc,
-                    q_and_r,
-                    q_and_b,
-                    oc_co,
-                    king_att,
-                    knight_att,
-                    rank_att,
-                    file_att,
-                    diag_att,
-                    pawn_att,
-                    rank_m,
-                    file_m,
-                    diag_m,
-                )
-            )
-        return arr
-
-    def _attackers_mask_light(
-        self,
-        occupied: Bitboard,
-        q_and_r: Bitboard,
-        q_and_b: Bitboard,
-        occo: Bitboard,
-        king_att: Bitboard,
-        knight_att: Bitboard,
-        rank_att: Dict[Bitboard, Bitboard],
-        file_att: Dict[Bitboard, Bitboard],
-        diag_att: Dict[Bitboard, Bitboard],
-        pawn_att: Bitboard,
-        rank_mask: Bitboard,
-        file_mask: Bitboard,
-        diag_mask: Bitboard,
-    ) -> Bitboard:
-        rank_pieces = rank_mask & occupied
-        file_pieces = file_mask & occupied
-        diag_pieces = diag_mask & occupied
-
-        attackers = (
-            (king_att & self.kings)
-            | (knight_att & self.knights)
-            | (rank_att[rank_pieces] & q_and_r)
-            | (file_att[file_pieces] & q_and_r)
-            | (diag_att[diag_pieces] & q_and_b)
-            | (pawn_att & self.pawns)
-        )
-
-        return attackers & occo
-
-    def get_square_control_map_for_both(self) -> NDArray[Shape["64,"], Int]:
+    def get_square_control_map_for_both(self) -> NDArray[Shape["64"], Int]:
         """
         Returns list of 64 values, accumulated attacks on each square.
         """
@@ -615,39 +528,12 @@ class Board(ChessBoard):
             | (diag_att[diag_mask & occupied] & q_and_b)
         )
 
-    def get_lines(
-        self, square: Square, occupied: Bitboard
-    ) -> Tuple[Bitboard, Bitboard, Bitboard]:
-        rank_pieces = BB_RANK_MASKS[square] & occupied
-        file_pieces = BB_FILE_MASKS[square] & occupied
-        diag_pieces = BB_DIAG_MASKS[square] & occupied
-        return rank_pieces, file_pieces, diag_pieces
-
-    def get_attackers(
-        self,
-        square: Square,
-        rank_pieces: Bitboard,
-        file_pieces: Bitboard,
-        diag_pieces: Bitboard,
-        q_and_r: Bitboard,
-        q_and_b: Bitboard,
-        pawn_attacks: List[Bitboard],
-    ) -> Bitboard:
-        return (
-            (BB_KING_ATTACKS[square] & self.kings)
-            | (BB_KNIGHT_ATTACKS[square] & self.knights)
-            | (BB_RANK_ATTACKS[square][rank_pieces] & q_and_r)
-            | (BB_FILE_ATTACKS[square][file_pieces] & q_and_r)
-            | (BB_DIAG_ATTACKS[square][diag_pieces] & q_and_b)
-            | (pawn_attacks[square] & self.pawns)
-        )
-
-    def get_empty_square_map(self) -> NDArray[Shape["64,"], Int]:
+    def get_empty_square_map(self) -> NDArray[Shape["64"], Int]:
         """
         Returns list of 64 values, each is empty or not.
         """
 
-        non_occupied: Bitboard = self.occupied ^ (2**64 - 1)
+        non_occupied: Bitboard = self.occupied ^ ONES
 
         arr = empty(shape=(64,), dtype=int)
         for square in SQUARES:
@@ -656,7 +542,7 @@ class Board(ChessBoard):
 
     def get_occupied_square_value_map(
         self, color: Color
-    ) -> NDArray[Shape["64,"], Double]:
+    ) -> NDArray[Shape["64"], Double]:
         """
         Returns list of 64 values, value of a piece on each square.
 
@@ -719,7 +605,7 @@ class Board(ChessBoard):
     @staticmethod
     def generate_king_proximity_map_normalized(
         king: Square,
-    ) -> NDArray[Shape["64,"], Double]:
+    ) -> NDArray[Shape["64"], Double]:
         """
         Returns list of 64 values, each distance from king.
         Normalized so that:
@@ -732,19 +618,14 @@ class Board(ChessBoard):
         seven: double = double(7.0)  # pff
 
         arr = empty(shape=(64,), dtype=double)
-        king_square_rank: int = square_rank(king)
-        king_square_file: int = square_file(king)
         for square in SQUARES:
-            file_distance = king_square_file - square & 7
-            rank_distance = king_square_rank - square >> 3
-            distance = rank_distance if rank_distance > file_distance else file_distance
-            arr[square] = double(distance)
+            arr[square] = double(square_distance(square, king))
         return (seven - arr) / seven
 
     def get_king_proximity_map_normalized(
         self, color: Color
-    ) -> NDArray[Shape["64,"], Double]:
-        king: Square = cast(Square, self.king(color))
+    ) -> NDArray[Shape["64"], Double]:
+        king: Bitboard = self.kings & self.occupied_co[color]
         return KING_PROXIMITY_MAPS_NORMALIZED[king]
 
     def get_normalized_threats_map(self, color: Color) -> List[double]:
@@ -1114,13 +995,13 @@ class Board(ChessBoard):
         self.occupied = board_state.occupied
 
 
-KING_PROXIMITY_MAPS_NORMALIZED = {
-    square: Board.generate_king_proximity_map_normalized(square) for square in SQUARES
+KING_PROXIMITY_MAPS_NORMALIZED: Dict[Bitboard, NDArray[Shape["64"], Double]] = {
+    mask: Board.generate_king_proximity_map_normalized(square) for mask, square in zip(BB_SQUARES, SQUARES)
 }
 pawn_attacks_white: List[Bitboard] = BB_PAWN_ATTACKS[False]
 pawn_attacks_black: List[Bitboard] = BB_PAWN_ATTACKS[True]
-SQUARE_MASK_ITERATOR: Iterable[Tuple[int, Bitboard]] = zip(SQUARES, BB_SQUARES)
-SQUARE_CONTROL_FOR_BOTH_ITERATOR: Iterable[
+SQUARE_MASK_ITERATOR: List[Tuple[int, Bitboard]] = list(zip(SQUARES, BB_SQUARES))
+SQUARE_CONTROL_FOR_BOTH_ITERATOR: List[
     Tuple[
         Bitboard,
         Bitboard,
@@ -1135,7 +1016,7 @@ SQUARE_CONTROL_FOR_BOTH_ITERATOR: Iterable[
         Bitboard,
     ]
 ] = cast(
-    Iterable[
+    List[
         Tuple[
             Bitboard,
             Bitboard,
@@ -1150,18 +1031,20 @@ SQUARE_CONTROL_FOR_BOTH_ITERATOR: Iterable[
             Bitboard,
         ]
     ],
-    zip(
-        SQUARES,
-        BB_KING_ATTACKS,
-        BB_KNIGHT_ATTACKS,
-        BB_RANK_ATTACKS,
-        BB_FILE_ATTACKS,
-        BB_DIAG_ATTACKS,
-        BB_PAWN_ATTACKS[False],  # false for white
-        BB_PAWN_ATTACKS[True],  # true for black
-        BB_RANK_MASKS,
-        BB_FILE_MASKS,
-        BB_DIAG_MASKS,
+    list(
+        zip(
+            SQUARES,
+            BB_KING_ATTACKS,
+            BB_KNIGHT_ATTACKS,
+            BB_RANK_ATTACKS,
+            BB_FILE_ATTACKS,
+            BB_DIAG_ATTACKS,
+            BB_PAWN_ATTACKS[False],  # false for white
+            BB_PAWN_ATTACKS[True],  # true for black
+            BB_RANK_MASKS,
+            BB_FILE_MASKS,
+            BB_DIAG_MASKS,
+        )
     ),
 )
 PAWN_VALUES: Dict[int, double] = {
@@ -1170,3 +1053,4 @@ PAWN_VALUES: Dict[int, double] = {
 KING_ATTACKS: Dict[Bitboard, Bitboard] = {
     mask: BB_KING_ATTACKS[square] for square, mask in zip(SQUARES, BB_SQUARES)
 }
+ONES: Bitboard = (2**64 - 1)

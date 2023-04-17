@@ -6,8 +6,10 @@ Tree traversal model.
 from typing import Optional, List
 
 from arek_chess.criteria.selection.base_selector import BaseSelector
+from arek_chess.criteria.selection.cluster1d_selector import Cluster1dSelector
 from arek_chess.criteria.selection.fast_selector import FastSelector
 from arek_chess.criteria.selection.linear_probability_selector import LinearProbabilitySelector
+from arek_chess.criteria.selection.square_probability_selector import SquareProbabilitySelector
 from arek_chess.game_tree.node.node import Node
 
 
@@ -23,8 +25,10 @@ class Traversal:
 
         self.root = root
 
-        self.selector: BaseSelector = FastSelector()
         # self.selector: BaseSelector = LinearProbabilitySelector()
+        # self.selector: BaseSelector = SquareProbabilitySelector()
+        self.selector: BaseSelector = FastSelector()
+        # self.selector: BaseSelector = Cluster1dSelector()
 
         self.last_best_node = None
 

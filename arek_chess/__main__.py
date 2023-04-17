@@ -44,7 +44,6 @@ if __name__ == "__main__":
         "-f",
         "--fen",
         help="Fen of the starting position, defaults to chess starting position.",
-        # type=str,
     )
     arg_parser.add_argument(
         "-p",

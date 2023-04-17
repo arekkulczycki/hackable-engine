@@ -157,6 +157,86 @@ class BoardTest(TestCase):
     #     print(k)
     #     assert k > 240000
 
+    def test_get_king_mobility(self):
+        fen = "1rN4r/1p4p1/1n5p/k5p1/2P3Q1/pPp5/1PK5/8 w - - 0 1"
+        board = Board(fen)
+        assert board.get_king_mobility(True) == 5
+        assert board.get_king_mobility(False) == 4
+
+    def test_get_king_proximity_map_normalized(self):
+        fen = "1rN4r/1p4p1/1n5p/k5p1/2P3Q1/pPp5/1PK5/8 w - - 0 1"
+        board = Board(fen)
+        white_proximity = (
+            7.0 - board.get_king_proximity_map_normalized(True) * 7.0
+        ).tolist()
+        black_proximity = (
+            7.0 - board.get_king_proximity_map_normalized(False) * 7.0
+        ).tolist()
+        # fmt: off
+        assert [int(k) for k in white_proximity] == [
+            2, 1, 1, 1, 2, 3, 4, 5,
+            2, 1, 0, 1, 2, 3, 4, 5,
+            2, 1, 1, 1, 2, 3, 4, 5,
+            2, 2, 2, 2, 2, 3, 4, 5,
+            3, 3, 3, 3, 3, 3, 4, 5,
+            4, 4, 4, 4, 4, 4, 4, 5,
+            5, 5, 5, 5, 5, 5, 5, 5,
+            6, 6, 6, 6, 6, 6, 6, 6
+        ]
+        assert [int(k) for k in black_proximity] == [
+            4, 4, 4, 4, 4, 5, 6, 7,
+            3, 3, 3, 3, 4, 5, 6, 7,
+            2, 2, 2, 3, 4, 5, 6, 7,
+            1, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            1, 1, 2, 3, 4, 5, 6, 7,
+            2, 2, 2, 3, 4, 5, 6, 7,
+            3, 3, 3, 3, 4, 5, 6, 7
+        ]
+        # fmt: on
+
+    def test_get_square_control_map_for_both(self):
+        fen = "1rN4r/1p4p1/1n5p/k5p1/2P3Q1/pPp5/1PK5/8 w - - 0 1"
+        board = Board(fen)
+        # fmt: off
+        assert board.get_square_control_map_for_both().tolist() == [
+            0, 1, 1, 2, 0, 0, 1, 0,
+            0, -1, 0, 0, 1, 0, 1, 0,
+            1, 1, 2, 1, 0, 1, 1, 1,
+            -1, -1, 1, 1, 1, 0, 0, 0,
+            0, 0, 0, 0, 0, 1, 0, 1,
+            -2, 0, -1, 1, 1, -1, 0, -2,
+            1, -1, 0, 0, 1, 0, 0, -1,
+            -2, 0, -2, -1, -1, -1, -1, 0,
+        ]
+        # fmt: on
+
+    def test_get_occupied_square_value_map(self):
+        fen = "nR4R1/n1B5/3b2Q1/2kN3r/6bq/2rBK3/7N/8 w - - 0 1"
+        board = Board(fen)
+        # fmt: off
+        assert [int(k) for k in board.get_occupied_square_value_map(True)] == [
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 3,
+            0, 0, 0, 3, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 3, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 9, 0,
+            0, 0, 3, 0, 0, 0, 0, 0,
+            0, 5, 0, 0, 0, 0, 5, 0,
+        ]
+        assert [int(k) for k in board.get_occupied_square_value_map(False)] == [
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 5, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 9,
+            0, 0, 0, 0, 0, 0, 0, 5,
+            0, 0, 0, 3, 0, 0, 0, 0,
+            3, 0, 0, 0, 0, 0, 0, 0,
+            3, 0, 0, 0, 0, 0, 0, 0,
+        ]
+        # fmt: on
+
     def test_eval_perf(self):
         fen = "rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"  # stockfish +0.6
         # fen = "r3k2r/1ppbqpp1/pb1p1n1p/n3p3/2B1P2B/2PP1N1P/PPQN1PP1/R3K2R w KQkq - 0 12"  # stockfish -0.6

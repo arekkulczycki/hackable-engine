@@ -12,8 +12,8 @@ from stable_baselines3.common.results_plotter import ts2xy
 from stable_baselines3.common.vec_env import VecMonitor, DummyVecEnv
 
 register(
-    id='chess-v0',
-    entry_point='arek_chess.training.envs.square_control_env:SquareControlEnv',
+    id="chess-v0",
+    entry_point="arek_chess.training.envs.square_control_env:SquareControlEnv",
 )
 
 LOG_PATH = "./arek_chess/training/logs/"
@@ -23,7 +23,9 @@ def train(version=-1):
     t0 = perf_counter()
 
     print("loading env...")
-    env: DummyVecEnv = make_vec_env("chess-v0", n_envs=1)  # , vec_env_cls=SubprocVecEnv)
+    env: DummyVecEnv = make_vec_env(
+        "chess-v0", n_envs=1
+    )  # , vec_env_cls=SubprocVecEnv)
     # env = make("chess-v0", fen=EQUAL_MIDDLEGAME_FEN)
     # env = VecEnv([lambda: FullBoardEnv(EQUAL_MIDDLEGAME_FEN)])
     # env = FullBoardEnv(EQUAL_MIDDLEGAME_FEN)
@@ -32,15 +34,26 @@ def train(version=-1):
 
     if version >= 0:
         # model = PPO.load(f"./chess.v{version}", env=env, custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
-        model = PPO.load(f"./chess.v{version}", env=env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
+        model = PPO.load(
+            f"./chess.v{version}",
+            env=env,
+            verbose=2,
+            custom_objecs={"clip_range": 0.3, "learning_rate": 3e-3, "n_steps": 128},
+        )
     else:
         print("setting up model...")
-        model = PPO("MlpPolicy", env=env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
+        model = PPO(
+            "MlpPolicy",
+            env=env,
+            verbose=2,
+            clip_range=0.3,
+            learning_rate=3e-3,
+        )
         # model = PPO("MultiInputPolicy", env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
 
     print("training started...")
 
-    model.learn(total_timesteps=int(2**13))
+    model.learn(total_timesteps=int(2**14))
     model.save(f"./chess.v{version + 1}")
 
     env.envs[0].controller.tear_down()
@@ -55,10 +68,21 @@ def loop_train(version=-1, loops=5):
         t0 = perf_counter()
         if version >= 0:
             # custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
-            model = PPO.load(f"./chess.v{version}", env=env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
+            model = PPO.load(
+                f"./chess.v{version}",
+                env=env,
+                verbose=2,
+                custom_objecs={"clip_range": 0.3, "learning_rate": 3e-3, "n_steps": 128},
+            )
         else:
             print("setting up model...")
-            model = PPO("MlpPolicy", env=env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
+            model = PPO(
+                "MlpPolicy",
+                env=env,
+                verbose=2,
+                clip_range=0.3,
+                learning_rate=3e-3,
+            )
             # model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
 
         print("training started...")
@@ -96,25 +120,25 @@ def moving_average(values, window):
     """
 
     weights = numpy.repeat(1.0, window) / window
-    return numpy.convolve(values, weights, 'valid')
+    return numpy.convolve(values, weights, "valid")
 
 
-def plot_results(log_folder, title='Learning Curve'):
+def plot_results(log_folder, title="Learning Curve"):
     """
     plot the results
 
     :param log_folder: (str) the save location of the results to plot
     :param title: (str) the title of the task to plot
     """
-    x, y = ts2xy(load_results(log_folder), 'timesteps')
+    x, y = ts2xy(load_results(log_folder), "timesteps")
     y = moving_average(y, window=50)
     # Truncate x
-    x = x[len(x) - len(y):]
+    x = x[len(x) - len(y) :]
 
     fig = plt.figure(title)
     plt.plot(x, y)
-    plt.xlabel('Number of Timesteps')
-    plt.ylabel('Rewards')
+    plt.xlabel("Number of Timesteps")
+    plt.ylabel("Rewards")
     plt.title(title + " Smoothed")
     plt.show()
 
@@ -122,10 +146,18 @@ def plot_results(log_folder, title='Learning Curve'):
 def get_args():
     parser = ArgumentParser()
     parser.add_argument("-t", "--train", help="training mode", action="store_true")
-    parser.add_argument("-lt", "--loop-train", help="loop training mode", action="store_true")
-    parser.add_argument("-l", "--loops", type=int, default=3, help="iteration of training to perform")
-    parser.add_argument("-pl", "--plot", help="show last learning progress plot", action="store_true")
-    parser.add_argument("-v", "--version", type=int, default=-1, help="version of the model to use")
+    parser.add_argument(
+        "-lt", "--loop-train", help="loop training mode", action="store_true"
+    )
+    parser.add_argument(
+        "-l", "--loops", type=int, default=3, help="iteration of training to perform"
+    )
+    parser.add_argument(
+        "-pl", "--plot", help="show last learning progress plot", action="store_true"
+    )
+    parser.add_argument(
+        "-v", "--version", type=int, default=-1, help="version of the model to use"
+    )
 
     return parser.parse_args()
 

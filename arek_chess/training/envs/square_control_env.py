@@ -1,6 +1,6 @@
 from itertools import cycle
 from time import sleep
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import gym
 import numpy
@@ -26,8 +26,8 @@ MEDIUM_ACTION: BaseEval.ActionType = (
     double(-0.05),  # king_mobility
     double(0.1),  # is_check
     double(1.0),  # material
-    double(0.1),  # occupied square control
-    double(0.1),  # occupied square control
+    double(0.1),  # own occupied square control
+    double(0.1),  # opp occupied square control
     double(0.0),  # empty square control
     double(0.0),  # king proximity square control primary
     double(0.0),  # king proximity square control secondary
@@ -37,8 +37,8 @@ WEAK_ACTION: BaseEval.ActionType = (
     double(0.0),  # king_mobility
     double(0.1),  # is_check
     double(1.0),  # material
-    double(0.0),  # occupied square control
-    double(0.0),  # occupied square control
+    double(0.0),  # own occupied square control
+    double(0.0),  # opp occupied square control
     double(0.0),  # empty square control
     double(0.0),  # king proximity square control primary
     double(0.0),  # king proximity square control secondary
@@ -61,7 +61,7 @@ class SquareControlEnv(gym.Env):
         "0-1": double(-1.0),
     }
 
-    def __init__(self):
+    def __init__(self, controller: Optional[Controller] = None):
         super().__init__()
 
         self.reward_range = (double(-1.0), double(1.0))
@@ -69,9 +69,12 @@ class SquareControlEnv(gym.Env):
         self.action_space = self._get_action_space()
         self.observation_space = self._get_observation_space()
 
-        self.controller = Controller(Print.NOTHING, search_limit=9)
-        # self.controller.boot_up(next(fens), self.action_space.sample())
-        self.controller.boot_up(action=self.action_space.sample())
+        if controller is None:
+            self.controller = Controller(Print.NOTHING, search_limit=9)
+            # self.controller.boot_up(next(fens), self.action_space.sample())
+            self.controller.boot_up(action=self.action_space.sample())
+        else:
+            self.controller = controller
 
         self.obs = self.observation()
         self.steps_done = 0
@@ -100,7 +103,10 @@ class SquareControlEnv(gym.Env):
     def step(self, action: BaseEval.ActionType):
         # artificially multiply material value for easier random discovery
         # artificially allow negative king-mobility value
-        action = tuple(action)
+        action = tuple(
+            2 * (v - 0.5) if i == 1 else v * 5 if i == 3 else v
+            for i, v in enumerate(action)
+        )
         self._run_action(action)
 
         result = self.controller.board.result()
@@ -109,7 +115,7 @@ class SquareControlEnv(gym.Env):
             # self.controller.make_move(self.action_space.sample())
 
             # playing against configured action
-            sleep(0.05)  # sleep is needed for the queues to clear, otherwise they crash...
+            sleep(0.02)  # sleep is needed for the queues to clear, otherwise they crash...
             self.controller.make_move(WEAK_ACTION)
 
             result = self.controller.board.result()

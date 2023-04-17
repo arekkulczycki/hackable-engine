@@ -9,7 +9,7 @@ from enum import IntEnum
 INF: double = double(1000000.0)
 DRAW: double = double(0.0)
 SLEEP: double = double(0.001)
-LOG_INTERVAL: double = double(1.0)
+LOG_INTERVAL: double = double(0.1)
 BREAK_INTERVAL: double = double(3.0)
 
 ROOT_NODE_NAME: str = "1"

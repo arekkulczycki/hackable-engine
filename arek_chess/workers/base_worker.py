@@ -5,19 +5,18 @@ Module_docstring.
 
 import sys
 from multiprocessing import Process
-from signal import signal, SIGTERM
 from typing import Tuple, Dict, Optional
 
 from chess import Move
-from pyinstrument import Profiler
 
 from arek_chess.board.board import Board, SQUARE_NAMES, PIECE_SYMBOLS
 from arek_chess.common.memory.shared_memory import remove_shm_from_resource_tracker
 from arek_chess.common.memory_manager import MemoryManager
+from arek_chess.common.profiler_mixin import ProfilerMixin
 from arek_chess.criteria.evaluation.base_eval import BaseEval
 
 
-class BaseWorker(Process):
+class BaseWorker(Process, ProfilerMixin):
     """
     Base for the worker process.
     """
@@ -70,29 +69,3 @@ class BaseWorker(Process):
         """"""
 
         return tuple(self.memory_manager.get_action(size))
-
-    def profile_code(self) -> None:
-        """"""
-
-        profiler = Profiler()
-        profiler.start()
-
-        # tracemalloc.start()
-
-        def before_exit(*_) -> None:
-            """"""
-
-            # print(f"call count: {self.call_count}")
-            profiler.stop()
-            profiler.print(show_all=True)
-
-            # snapshot = tracemalloc.take_snapshot()
-            # top_stats = snapshot.statistics('lineno')
-            # print("[ Top 10 ]")
-            # for stat in top_stats[:10]:
-            #     print(stat)
-            # tracemalloc.stop()
-
-            sys.exit(0)
-
-        signal(SIGTERM, before_exit)

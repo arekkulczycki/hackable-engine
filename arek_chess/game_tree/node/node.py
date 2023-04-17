@@ -27,6 +27,7 @@ class Node:
         captured: int,
         level: int,
         color: bool,
+        should_propagate: bool,
     ):
         self.parent: Optional[Node] = parent
         if parent:
@@ -34,6 +35,9 @@ class Node:
 
         self.name: str = name
         self.move: str = move
+        self.should_propagate: bool = should_propagate
+        """assign before score, means that first score assignment will not propagate the score to parent"""
+
         self.score: double = score
         self.init_score: double = score
         self.captured: int = captured
@@ -59,8 +63,11 @@ class Node:
         self._score = value
 
         parent: Optional[Node] = self.parent
-        if parent:
+        if parent and self.should_propagate:
             parent.propagate_score(value, old_value)
+        else:
+            # once the node has children it should always pass the score further
+            self.should_propagate = True
 
     def propagate_score(self, value: double, old_value: Optional[double]) -> None:
         """"""

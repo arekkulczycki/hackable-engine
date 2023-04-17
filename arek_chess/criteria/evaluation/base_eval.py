@@ -8,6 +8,10 @@ from typing import Tuple, Callable, Optional
 from numpy import double
 
 from arek_chess.board.board import Board
+from numpy import dot
+
+PENALIZER: double = double(0.99)
+REVERSE_PENALIZER: double = double(1.01)
 
 
 class BaseEval(ABC):
@@ -50,3 +54,16 @@ class BaseEval(ABC):
         """"""
 
         return tuple(a - b for a, b in zip(function(True), function(False)))
+
+    @staticmethod
+    def calculate_score(
+        action: ActionType, params: ActionType, side: bool = True, depth: Optional[int] = None
+    ) -> double:
+        score = dot(action, params)
+        if depth:
+            if score > 0 and side or score < 0 and not side:
+                score = score * (PENALIZER ** depth)
+            else:
+                score = score * (REVERSE_PENALIZER ** depth)
+
+        return score

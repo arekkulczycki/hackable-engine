@@ -12,7 +12,7 @@ from arek_chess.criteria.selection.linear_probability_selector import LinearProb
 from arek_chess.game_tree.node.node import Node
 
 CLUSTER_2_3_THRESHOLD: int = 9
-CLUSTER_3_4_THRESHOLD: int = 15
+CLUSTER_3_4_THRESHOLD: int = 16
 CLUSTER_4_5_THRESHOLD: int = 25
 
 
@@ -36,5 +36,6 @@ class Cluster1dSelector(BaseSelector):
             [node.score for node in nodes], k
         )
 
-        top_nodes = [node for node in nodes if node.score in clusters[0]]
+        best_cluster: int = len(centroids) - 1 if color else 0
+        top_nodes: List[Node] = [node for node, cluster in zip(nodes, clusters) if cluster == best_cluster]
         return LinearProbabilitySelector.select(top_nodes, color)

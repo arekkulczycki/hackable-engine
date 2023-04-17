@@ -18,7 +18,9 @@ Moreover in the requirements.txt there is a commented instruction how to install
 
 ### Before you run
 
-### Basic Usage (play)
+### Basic Usage (finding the best move)
+
+`PYTHONPATH=. python arek_chess -p=1 -l=9 -m -f="rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"`
 
 ### Advanced Usage (implement own criteria)
 

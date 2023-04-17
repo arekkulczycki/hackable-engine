@@ -15,8 +15,11 @@ from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.queue_manager import QueueManager
 from arek_chess.criteria.evaluation.base_eval import BaseEval
 from arek_chess.game_tree.search_manager import SearchManager
-from arek_chess.workers.dispatcher_worker import DispatcherWorker
+from arek_chess.workers.distributor_worker import DistributorWorker
 from arek_chess.workers.eval_worker import EvalWorker
+from stable_baselines3 import PPO
+
+from arek_chess.workers.search_worker import SearchWorker
 
 CPU_CORES = 8
 
@@ -26,7 +29,7 @@ class Controller:
     Controls all engine flows and communication to outside world.
     """
 
-    dispatcher_queue: QueueManager
+    distributor_queue: QueueManager
     eval_queue: QueueManager
     selector_queue: QueueManager
     control_queue: QueueManager
@@ -37,19 +40,22 @@ class Controller:
         printing: Union[Print, int],
         tree_params: str = "",
         search_limit: Optional[int] = None,
+        timeout: Optional[int] = None
     ):
         """"""
 
         self.printing = printing
         self.tree_params = tree_params
         self.search_limit = search_limit
+        self.timeout = timeout
 
-        self.queue_throttle = (CPU_CORES - 2) * search_limit * 2
+        self.queue_throttle = (CPU_CORES - 2) * (search_limit if search_limit < 12 else (search_limit * 3))
 
         self.create_queues()
 
         self.initial_fen: Optional[str] = None
         self.child_processes: List = []
+        self.model = None
 
     def boot_up(
         self, fen: Optional[str] = None, action: Optional[BaseEval.ActionType] = None
@@ -65,42 +71,73 @@ class Controller:
             self.board = Board()
             self.initial_fen = self.board.fen()
 
-        self.search_manager.set_root(self.board)
+        # self.search_manager.set_root(self.board)
+
+        # self.setup_model()
 
         self.start_child_processes(action)
+
+    def setup_model(self):
+        """"""
+
+        from arek_chess.training.envs.square_control_env import SquareControlEnv
+        self.env = SquareControlEnv(self)
+        self.model = PPO.load(
+            f"./chess.67",
+            env=self.env,
+        )
 
     def start_child_processes(
         self, action: Optional[BaseEval.ActionType] = None
     ) -> None:
         """"""
 
-        for _ in range(
-            CPU_CORES - 2
-        ):  # one process required for the tree search and one for the dispatcher worker
+        num_eval_workers = CPU_CORES - 2  # one process required for the tree search and one for the distributor worker
+
+        for _ in range(num_eval_workers):
             evaluator = EvalWorker(
                 self.eval_queue,
                 self.selector_queue,
-                (self.queue_throttle // CPU_CORES - 2),
-                action is None,
+                (self.queue_throttle // num_eval_workers),
+                action is None and self.model is None,
             )
             self.child_processes.append(evaluator)
 
-        dispatcher = DispatcherWorker(
-            self.dispatcher_queue,
+        distributor = DistributorWorker(
+            self.distributor_queue,
             self.eval_queue,
             self.selector_queue,
             self.control_queue,
             self.queue_throttle,
         )
-        self.child_processes.append(dispatcher)
+        self.child_processes.append(distributor)
 
         for process in self.child_processes:
             process.start()
 
+    def _start_search_worker(self):
+        self.search_worker = SearchWorker(
+            self.distributor_queue,
+            self.selector_queue,
+            self.control_queue,
+            self.queue_throttle,
+            self.printing,
+            self.tree_params,
+            self.search_limit,
+        )
+        self.search_worker.set_root(self.board)
+
     def make_move(self, action: Optional[BaseEval.ActionType] = None, evaluator_class: Optional[str] = None) -> None:
         """"""
 
-        if action is not None:
+        self._start_search_worker()
+
+        if self.model is not None:
+            obs = self.env.observation()
+            action = self.model.predict(obs)[0]
+            print(action)
+            MemoryManager().set_action(action, len(action))
+        elif action is not None:
             MemoryManager().set_action(action, len(action))
 
         # if not self.child_processes:
@@ -114,7 +151,8 @@ class Controller:
             elif fails > 4:
                 raise RuntimeError
             try:
-                move = self.search_manager.search()
+                # move = self.search_manager.search()
+                move = self.search()
                 break
             except SearchFailed as e:
                 if fails >= 2:
@@ -123,26 +161,26 @@ class Controller:
                     print(f"search failed: {e}\nstarting over...")
                 fails += 1
 
-                self.search_manager.set_root(Board(self.board.fen()))
+                # self.search_manager.set_root(Board(self.board.fen()))
+                self.search_worker.join(0.5)
                 sleep(0.5)
+                self._start_search_worker()
 
         self.release_memory()
 
-        if not move:
-            raise RuntimeError
-        chess_move = Move.from_uci(move)
-        self.board.push(chess_move)
+        self.board.push(move)
 
-        self.search_manager.set_root(Board(self.board.fen()))
+        # self.search_manager.set_root(Board(self.board.fen()))
 
     def search(self) -> Move:
-        move = self.search_manager.search()
+        # TODO: current thread vs new thread vs new process???
+        self.search_worker.start()
+        move = self.search_worker.join(self.timeout)
+        # move = self.search_worker._search()
         if not move:
-            raise RuntimeError
-        chess_move = Move.from_uci(move)
-        # self.board.push(chess_move)
-        self.release_memory()
-        return chess_move
+            raise SearchFailed
+
+        return Move.from_uci(move)
 
     def play(self) -> None:
         """"""
@@ -192,7 +230,7 @@ class Controller:
         self.restart_child_processes(action)
 
         self.board = Board(fen or self.initial_fen)
-        self.search_manager.set_root(self.board)
+        # self.search_manager.set_root(self.board)
 
         if action is not None:
             MemoryManager().set_action(action, len(action))
@@ -211,27 +249,27 @@ class Controller:
     def create_queues(self):
         """"""
 
-        self.dispatcher_queue: QueueManager = QueueManager("dispatcher")
+        self.distributor_queue: QueueManager = QueueManager("distributor")
         self.eval_queue: QueueManager = QueueManager("evaluator")
         self.selector_queue: QueueManager = QueueManager("selector")
         self.control_queue: QueueManager = QueueManager("control")
 
-        self.search_manager = SearchManager(
-            self.dispatcher_queue,
-            self.selector_queue,
-            self.control_queue,
-            self.queue_throttle,
-            self.printing,
-            self.tree_params,
-            self.search_limit,
-        )
+        # self.search_manager = SearchManager(
+        #     self.distributor_queue,
+        #     self.selector_queue,
+        #     self.control_queue,
+        #     self.queue_throttle,
+        #     self.printing,
+        #     self.tree_params,
+        #     self.search_limit,
+        # )
 
     def recreate_queues(self):
         """"""
 
         self.clear_queues()
-        del self.search_manager
-        del self.dispatcher_queue
+        # del self.search_manager
+        del self.distributor_queue
         del self.eval_queue
         del self.selector_queue
         del self.control_queue
@@ -241,7 +279,7 @@ class Controller:
     def clear_queues(self):
         """"""
 
-        for queue in [self.dispatcher_queue, self.eval_queue, self.selector_queue, self.control_queue]:
+        for queue in [self.distributor_queue, self.eval_queue, self.selector_queue, self.control_queue]:
             while not queue.empty():
                 queue.get_many()
 
@@ -259,7 +297,7 @@ class Controller:
 
         for process in self.child_processes:
             process.terminate()
-            process.join(3)
+            process.join(1)
 
         self.child_processes.clear()
 

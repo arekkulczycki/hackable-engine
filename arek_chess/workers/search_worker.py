@@ -1,11 +1,12 @@
 """
-Handling of the search tree including following features: depth control, branch pruning, printing output
+Handling of the in-memory game tree and controlling all tree expansion logic and progress logging.
 """
 
 import os
 from asyncio import sleep as asyncio_sleep
+from threading import Thread
 from time import time
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Any
 
 from numpy import double
 
@@ -19,22 +20,34 @@ from arek_chess.common.constants import (
 )
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory_manager import MemoryManager
+from arek_chess.common.profiler_mixin import ProfilerMixin
 from arek_chess.common.queue_manager import QueueManager as QM
 from arek_chess.game_tree.node.node import Node
 from arek_chess.game_tree.renderer import PrunedTreeRenderer
 from arek_chess.game_tree.traversal import Traversal
 
 
-class SearchManager:
+class ReturningThread(Thread):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._return = None
+
+    def join(self, timeout: float = None) -> Any:
+        Thread.join(self, timeout)
+
+        return self._return
+
+
+class SearchWorker(ReturningThread, ProfilerMixin):
     """
-    Class_docstring
+    Handles the in-memory game tree and controls all tree expansion logic and progress logging.
     """
 
     tree: Dict[str, Node]
 
     def __init__(
         self,
-        dispatcher_queue: QM,
+        distributor_queue: QM,
         selector_queue: QM,
         control_queue: QM,
         queue_throttle: int,
@@ -44,7 +57,7 @@ class SearchManager:
     ):
         super().__init__()
 
-        self.dispatcher_queue = dispatcher_queue
+        self.distributor_queue = distributor_queue
         self.selector_queue = selector_queue
         self.control_queue = control_queue
         self.queue_throttle = queue_throttle
@@ -54,13 +67,15 @@ class SearchManager:
 
         self.memory_manager = MemoryManager()
 
-        self.dispatched = 0
+        self.distributed = 0
         self.evaluated = 0
         self.selected = 0
         # self.selected_nodes = []
         self.explored = 0
 
         self.limit: int = 2 ** (search_limit or 14)  # 14 -> 16384, 15 -> 32768
+
+        self.should_profile = False
 
     def set_root(self, board: Optional[Board] = None) -> None:
         """"""
@@ -88,12 +103,26 @@ class SearchManager:
 
         self.traversal = Traversal(self.root)
 
-    def search(self) -> str:
+    def run(self):
+        """"""
+
+        if self.should_profile:
+            from pyinstrument import Profiler
+            self.profiler = Profiler()
+            self.profiler.start()
+
+        self._return = self._search()
+
+        if self.should_profile:
+            self.profiler.stop()
+            self.profiler.print(show_all=True)
+
+    def _search(self) -> str:
         """"""
 
         self.memory_manager.set_node_board(ROOT_NODE_NAME, self.board)
-        self.dispatcher_queue.put((ROOT_NODE_NAME, "", self.root.score))
-        self.dispatched = 1
+        self.distributor_queue.put((ROOT_NODE_NAME, "", self.root.score))
+        self.distributed = 1
 
         self.t_0: float = time()
         self.t_tmp: float = self.t_0
@@ -101,28 +130,28 @@ class SearchManager:
 
         limit = self.limit
         queue_throttle = self.queue_throttle
-        dispatcher_queue = self.dispatcher_queue
+        distributor_queue = self.distributor_queue
         selector_queue = self.selector_queue
         control_queue = self.control_queue
         gathering = self.gathering
         selecting = self.selecting
         monitoring = self.monitoring
         try:
-            while self.evaluated < self.dispatched or self.evaluated < self.limit:
+            while self.evaluated < self.distributed or self.evaluated < self.limit:
                 # TODO: refactor to use concurrency?
                 gathering(
-                    selector_queue, dispatcher_queue, control_queue, queue_throttle
+                    selector_queue, distributor_queue, control_queue, queue_throttle
                 )
                 if not (
-                    self.dispatched == 0
+                    self.distributed == 0
                     or self.evaluated > limit
-                    or self.evaluated / self.dispatched < 0.75
+                    or self.evaluated / self.distributed < 0.75
                     or (
-                        self.evaluated / self.dispatched < 0.9
+                        self.evaluated / self.distributed < 0.9
                         and self.evaluated < limit / 2
                     )
                 ):
-                    selecting(dispatcher_queue)
+                    selecting(distributor_queue, 1)
 
                 if monitoring():
                     # print("no change detected")
@@ -133,7 +162,7 @@ class SearchManager:
         else:
             return self.finish_up(time() - self.t_0)
         finally:
-            self.dispatcher_queue.put((FINISHED, "", 0.0))
+            self.distributor_queue.put((FINISHED, "", 0.0))
 
     def monitoring(self) -> bool:
         """"""
@@ -146,7 +175,7 @@ class SearchManager:
 
             if self.evaluated == self.last_evaluated:
                 print(
-                    f"dispatched: {self.dispatched}, evaluated: {self.evaluated}, "
+                    f"distributed: {self.distributed}, evaluated: {self.evaluated}, "
                     f"selected: {self.selected}"
                 )
                 return True
@@ -156,20 +185,22 @@ class SearchManager:
             if self.printing not in [Print.NOTHING, Print.MOVE]:
                 progress = round(
                     min(
-                        self.evaluated / self.dispatched,
+                        self.evaluated / self.distributed,
                         self.evaluated / self.limit,
                     )
                     * 100
                 )
 
                 print(
-                    f"dispatched: {self.dispatched}, evaluated: {self.evaluated}, "
+                    f"distributed: {self.distributed}, evaluated: {self.evaluated}, "
                     f"selected: {self.selected}, explored: {self.explored}, progress: {progress}%"
                 )
 
             if self.printing == Print.CANDIDATES:
                 sorted_children: List[Node] = sorted(
-                    self.root.children, key=lambda node: node.score, reverse=self.root.color
+                    self.root.children,
+                    key=lambda node: node.score,
+                    reverse=self.root.color,
                 )
 
                 for child in sorted_children[:10]:
@@ -190,7 +221,7 @@ class SearchManager:
     def gathering(
         self,
         selector_queue: QM,
-        dispatcher_queue: QM,
+        distributor_queue: QM,
         control_queue: QM,
         queue_throttle: int,
     ) -> None:
@@ -208,16 +239,16 @@ class SearchManager:
 
         self.evaluated += len(candidates)
 
-        self.handle_candidates(dispatcher_queue, candidates)
+        self.handle_candidates(distributor_queue, candidates)
 
         control_values = control_queue.get_many(queue_throttle)
         if control_values:
-            self.dispatched = control_values[-1]
+            self.distributed = control_values[-1]
 
     async def gathering_loop(
         self,
         selector_queue: QM,
-        dispatcher_queue: QM,
+        distributor_queue: QM,
         control_queue: QM,
         queue_throttle: int,
     ) -> None:
@@ -225,15 +256,15 @@ class SearchManager:
 
         gathering = self.gathering
         while True:
-            gathering(selector_queue, dispatcher_queue, control_queue, queue_throttle)
+            gathering(selector_queue, distributor_queue, control_queue, queue_throttle)
             await asyncio_sleep(0)
 
     def handle_candidates(
-        self, dispatcher_queue: QM, candidates: List[Tuple[str, str, int, int, double]]
+        self, distributor_queue: QM, candidates: List[Tuple[str, str, int, int, double]]
     ) -> None:
         """"""
 
-        nodes_to_dispatch: List[Node] = []
+        nodes_to_distribute: List[Node] = []
 
         # best_score = math.inf if color else -math.inf
         for candidate in candidates:
@@ -260,7 +291,7 @@ class SearchManager:
 
             node = self.create_node(parent, move_str, score, captured_piece_type, level)
 
-            to_dispatch = False
+            to_distribute = False
             # analyse "good" captures immediately
             if captured_piece_type > 0 and (  # if parent_name == ROOT_NODE_NAME:
                 (
@@ -269,26 +300,30 @@ class SearchManager:
                     and not (captured_piece_type == 3 and parent.captured == 2)
                 )
                 or (
-                    parent.parent is not None and score > parent.parent.score and score > parent.parent.init_score
+                    parent.parent is not None
+                    and score > parent.parent.score
+                    and score > parent.parent.init_score
                 )
             ):
-                nodes_to_dispatch.append(node)
+                nodes_to_distribute.append(node)
                 node.being_processed = True
                 self.explored += 1
-                to_dispatch = True
-            if not to_dispatch:
+                to_distribute = True
+            if not to_distribute:
                 parent.being_processed = False
             parent.being_processed = False
 
-        if nodes_to_dispatch:
-            self.queue_to_dispatch(dispatcher_queue, nodes_to_dispatch)
+        if nodes_to_distribute:
+            self.queue_for_distribution(distributor_queue, nodes_to_distribute)
 
-    def selecting(self, dispatcher_queue: QM) -> None:
+    def selecting(self, distributor_queue: QM, iterations: int = 1) -> None:
         """"""
 
         top_nodes = [
             node
-            for node in (self.traversal.get_next_node_to_look_at() for _ in range(1))
+            for node in (
+                self.traversal.get_next_node_to_look_at() for _ in range(iterations)
+            )
             if node is not None
         ]
         if not top_nodes:
@@ -300,20 +335,20 @@ class SearchManager:
         self.selected += n_nodes
         self.explored += n_nodes
 
-        self.queue_to_dispatch(dispatcher_queue, top_nodes)
+        self.queue_for_distribution(distributor_queue, top_nodes)
 
-    def queue_to_dispatch(self, dispatcher_queue: QM, nodes: List[Node]) -> None:
+    def queue_for_distribution(self, distributor_queue: QM, nodes: List[Node]) -> None:
         """"""
 
-        dispatcher_queue.put_many(
+        distributor_queue.put_many(
             [(node.name, node.move, node.score) for node in nodes]
         )
 
-    async def selecting_loop(self, dispatcher_queue: QM) -> None:
+    async def selecting_loop(self, distributor_queue: QM) -> None:
         """"""
 
         while True:
-            self.selecting(dispatcher_queue)
+            self.selecting(distributor_queue)
             await asyncio_sleep(0)
 
     def get_node(self, node_name: str) -> Node:
@@ -328,7 +363,7 @@ class SearchManager:
 
         parent_name = parent.name
         child_name = f"{parent_name}.{move}"
-        if captured == -1:  # node reversed from dispatcher when found checkmate
+        if captured == -1:  # node reversed from distributor when found checkmate
             try:
                 self.nodes_dict[child_name].score = score
                 self.nodes_dict[child_name].captured = -1
@@ -347,7 +382,7 @@ class SearchManager:
             captured=captured,
             level=level,
             color=color,
-            should_propagate=color == self.root.color
+            should_propagate=color == self.root.color,
         )
 
         self.nodes_dict[child_name] = node
@@ -371,7 +406,7 @@ class SearchManager:
         if self.printing not in [Print.NOTHING, Print.MOVE]:
             if self.printing != Print.MOVE:
                 print(
-                    f"evaluated: {self.evaluated}, dispatched: {self.dispatched}, "
+                    f"evaluated: {self.evaluated}, distributed: {self.distributed}, "
                     f"selected: {self.selected}, explored: {self.explored}"
                     # f"selected: {','.join([node[0].name for node in self.selected_nodes])}, explored: {self.explored}"
                 )
@@ -384,7 +419,7 @@ class SearchManager:
         elif self.printing == Print.MOVE:
             print(best_move)
 
-        self.dispatched = 0
+        self.distributed = 0
         self.evaluated = 0
         self.selected = 0
         self.explored = 0
@@ -421,4 +456,4 @@ class SearchManager:
                     self.root, depth=int(min_depth), maxlevel=int(max_depth), path=path
                 )
             )
-            print(f"evaluated: {self.evaluated}, dispatched: {self.dispatched}")
+            print(f"evaluated: {self.evaluated}, distributed: {self.distributed}")
