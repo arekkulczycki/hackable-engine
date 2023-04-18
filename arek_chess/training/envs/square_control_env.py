@@ -7,10 +7,10 @@ import numpy
 from numpy import double
 
 from arek_chess.common.constants import Print
-from arek_chess.criteria.evaluation.base_eval import BaseEval
+from arek_chess.criteria.evaluation.base_eval import ActionType
 from arek_chess.controller import Controller
 
-DEFAULT_ACTION: BaseEval.ActionType = (
+DEFAULT_ACTION: ActionType = (
     double(0.15),  # castling_rights
     double(-0.1),  # king_mobility
     double(0.1),  # is_check
@@ -21,7 +21,7 @@ DEFAULT_ACTION: BaseEval.ActionType = (
     double(0.01),  # king proximity square control primary
     double(1.0),  # king proximity square control secondary
 )
-MEDIUM_ACTION: BaseEval.ActionType = (
+MEDIUM_ACTION: ActionType = (
     double(0.075),  # castling_rights
     double(-0.05),  # king_mobility
     double(0.1),  # is_check
@@ -32,7 +32,7 @@ MEDIUM_ACTION: BaseEval.ActionType = (
     double(0.0),  # king proximity square control primary
     double(0.0),  # king proximity square control secondary
 )
-WEAK_ACTION: BaseEval.ActionType = (
+WEAK_ACTION: ActionType = (
     double(0.0),  # castling_rights
     double(0.0),  # king_mobility
     double(0.1),  # is_check
@@ -70,9 +70,11 @@ class SquareControlEnv(gym.Env):
         self.observation_space = self._get_observation_space()
 
         if controller is None:
-            self.controller = Controller(Print.NOTHING, search_limit=9)
+            self.controller = Controller(
+                Print.NOTHING, search_limit=9, memory_action=True, timeout=3
+            )
             # self.controller.boot_up(next(fens), self.action_space.sample())
-            self.controller.boot_up(action=self.action_space.sample())
+            self.controller.boot_up()
         else:
             self.controller = controller
 
@@ -81,7 +83,7 @@ class SquareControlEnv(gym.Env):
 
     def _get_action_space(self):
         return gym.spaces.Box(
-            numpy.array([0 for _ in range(ACTION_SIZE)], dtype=double),
+            numpy.array([0 for _ in range(ACTION_SIZE)], dtype=double),  # TODO: change to -1
             numpy.array([1 for _ in range(ACTION_SIZE)], dtype=double),
         )
 
@@ -93,6 +95,9 @@ class SquareControlEnv(gym.Env):
         [x] opponents king mobility (king safety)
         [x] material on board
         [x] pawns on board (how open is the position)
+        [ ] bishops on board (color)
+        [ ] space of each player
+        [ ] own king proximity
         """
 
         return gym.spaces.Box(
@@ -100,22 +105,13 @@ class SquareControlEnv(gym.Env):
             numpy.array([1 for _ in range(4)], dtype=numpy.double),
         )
 
-    def step(self, action: BaseEval.ActionType):
-        # artificially multiply material value for easier random discovery
-        # artificially allow negative king-mobility value
-        action = tuple(
-            2 * (v - 0.5) if i == 1 else v * 5 if i == 3 else v
-            for i, v in enumerate(action)
-        )
+    def step(self, action: ActionType):
+        action = self.action_upgrade(action)
         self._run_action(action)
 
         result = self.controller.board.result()
         if result == "*":
-            # playing against random action
-            # self.controller.make_move(self.action_space.sample())
-
             # playing against configured action
-            sleep(0.02)  # sleep is needed for the queues to clear, otherwise they crash...
             self.controller.make_move(WEAK_ACTION)
 
             result = self.controller.board.result()
@@ -129,7 +125,7 @@ class SquareControlEnv(gym.Env):
     def reset(self):
         self.render()
         # self.controller.restart(fen=next(fens), action=self.action_space.sample())
-        self.controller.restart(action=self.action_space.sample())
+        self.controller.restart()
 
         return self.observation()
 
@@ -150,7 +146,7 @@ class SquareControlEnv(gym.Env):
 
         return [own_king_mobility, opp_king_mobility, material, pawns]
 
-    def _run_action(self, action: BaseEval.ActionType) -> None:
+    def _run_action(self, action: ActionType) -> None:
         self.controller.make_move(action)
 
     def _get_reward(self, result):
@@ -158,3 +154,20 @@ class SquareControlEnv(gym.Env):
 
     def _get_intermediate_reward(self):
         return  # maybe some material-based score
+
+    def action_upgrade(self, action: ActionType) -> ActionType:
+        return action
+
+        # artificially multiply material value for easier random discovery
+        # artificially allow negative king-mobility value
+        # return tuple(
+        #     2 * (v - 0.5) if i == 1 else v * 5 if i == 3 else v
+        #     for i, v in enumerate(action)
+        # )
+
+    def action_downgrade(self, action: ActionType) -> ActionType:
+        return action
+        # return tuple(
+        #     (v / 2 + 0.5) if i == 1 else v / 5 if i == 3 else v
+        #     for i, v in enumerate(action)
+        # )

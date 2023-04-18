@@ -13,7 +13,7 @@ from arek_chess.board.board import Board, SQUARE_NAMES, PIECE_SYMBOLS
 from arek_chess.common.memory.shared_memory import remove_shm_from_resource_tracker
 from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.profiler_mixin import ProfilerMixin
-from arek_chess.criteria.evaluation.base_eval import BaseEval
+from arek_chess.criteria.evaluation.base_eval import ActionType
 
 
 class BaseWorker(Process, ProfilerMixin):
@@ -52,20 +52,20 @@ class BaseWorker(Process, ProfilerMixin):
 
         return recycled_move
 
-    def get_board_data(self, board: Board, move_str: str) -> Tuple[Board, int, int]:
+    def get_board_data(self, board: Board, move_str: str) -> Tuple[Board, int]:
         """"""
 
         move = self.get_move(move_str)
 
         captured_piece_type = board.get_captured_piece_type(move)
-        moved_piece_type = board.get_moving_piece_type(move)
+        # moved_piece_type = board.get_moving_piece_type(move)
 
         # board.light_push(move, state_required=True)
         self.prev_state = board.lighter_push(move)
 
-        return board, captured_piece_type, moved_piece_type
+        return board, captured_piece_type
 
-    def get_action(self, size: int) -> BaseEval.ActionType:
+    def get_memory_action(self, size: int) -> ActionType:
         """"""
 
         return tuple(self.memory_manager.get_action(size))

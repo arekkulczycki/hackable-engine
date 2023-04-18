@@ -52,7 +52,7 @@ from chess import (
     BB_RANK_MASKS,
     BB_FILE_MASKS,
     PieceType,
-    square_distance,
+    square_distance, scan_reversed, BB_ALL, BB_RANK_3, BB_RANK_4, BB_RANK_5, BB_RANK_6,
 )
 from nptyping import NDArray, Shape, Int, Double
 from numpy import double, empty
@@ -993,6 +993,80 @@ class Board(ChessBoard):
         self.occupied_co[True] = board_state.occupied_w
         self.occupied_co[False] = board_state.occupied_b
         self.occupied = board_state.occupied
+
+    def generate_pseudo_legal_moves(self, from_mask: Bitboard = BB_ALL, to_mask: Bitboard = BB_ALL) -> Iterator[Move]:
+        """
+        Override from original changing the order to start generating from pawn captures, then other captures.
+        """
+
+        our_pieces = self.occupied_co[self.turn]
+        opp_pieces = self.occupied_co[not self.turn]
+
+        pawns = self.pawns & self.occupied_co[self.turn] & from_mask
+        if pawns:
+            # Generate pawn captures.
+            for from_square in scan_reversed(pawns):
+                targets = (
+                    BB_PAWN_ATTACKS[self.turn][from_square] &
+                    self.occupied_co[not self.turn] & to_mask)
+
+                for to_square in scan_reversed(targets):
+                    if square_rank(to_square) in [0, 7]:
+                        yield Move(from_square, to_square, QUEEN)
+                        yield Move(from_square, to_square, ROOK)
+                        yield Move(from_square, to_square, BISHOP)
+                        yield Move(from_square, to_square, KNIGHT)
+                    else:
+                        yield Move(from_square, to_square)
+
+        # Generate en passant captures.
+        if self.ep_square:
+            yield from self.generate_pseudo_legal_ep(from_mask, to_mask)
+
+        # Generate piece moves.
+        non_pawns = our_pieces & ~self.pawns & from_mask
+        for from_square in scan_reversed(non_pawns):
+            attacks = self.attacks_mask(from_square) & to_mask
+            captures = attacks & opp_pieces
+            moves = attacks & ~opp_pieces & ~our_pieces
+
+            for to_square in scan_reversed(captures):
+                yield Move(from_square, to_square)
+
+            for to_square in scan_reversed(moves):
+                yield Move(from_square, to_square)
+
+        # Generate castling moves.
+        if from_mask & self.kings:
+            yield from self.generate_castling_moves(from_mask, to_mask)
+
+        # Prepare pawn advance generation.
+        if self.turn:
+            single_moves = pawns << 8 & ~self.occupied
+            double_moves = single_moves << 8 & ~self.occupied & (BB_RANK_3 | BB_RANK_4)
+        else:
+            single_moves = pawns >> 8 & ~self.occupied
+            double_moves = single_moves >> 8 & ~self.occupied & (BB_RANK_6 | BB_RANK_5)
+
+        single_moves &= to_mask
+        double_moves &= to_mask
+
+        # Generate single pawn moves.
+        for to_square in scan_reversed(single_moves):
+            from_square = to_square + (8 if not self.turn else -8)
+
+            if square_rank(to_square) in [0, 7]:
+                yield Move(from_square, to_square, QUEEN)
+                yield Move(from_square, to_square, ROOK)
+                yield Move(from_square, to_square, BISHOP)
+                yield Move(from_square, to_square, KNIGHT)
+            else:
+                yield Move(from_square, to_square)
+
+        # Generate double pawn moves.
+        for to_square in scan_reversed(double_moves):
+            from_square = to_square + (16 if not self.turn else -16)
+            yield Move(from_square, to_square)
 
 
 KING_PROXIMITY_MAPS_NORMALIZED: Dict[Bitboard, NDArray[Shape["64"], Double]] = {

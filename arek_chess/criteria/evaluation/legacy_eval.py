@@ -6,15 +6,15 @@ Uncorrelated to any training observation method. Can be trained vs full board en
 
 from numpy import double
 
-from arek_chess.board.legacy_board import Board
-from arek_chess.criteria.evaluation.base_eval import BaseEval
+from arek_chess.board.board import Board
+from arek_chess.criteria.evaluation.base_eval import ActionType, BaseEval
 
 
 class LegacyEval(BaseEval):
     """"""
 
     # material, safety, under_attack, mobility, king_mobility, king_threats, is_check
-    DEFAULT_ACTION: BaseEval.ActionType = (
+    DEFAULT_ACTION: ActionType = (
         double(100.0),
         double(1.0),
         double(-1.0),
@@ -30,7 +30,7 @@ class LegacyEval(BaseEval):
         board: Board,
         move_str: str,
         captured_piece_type: int,
-        action: BaseEval.ActionType = None,
+        action: ActionType = None,
     ) -> double:
         """
 

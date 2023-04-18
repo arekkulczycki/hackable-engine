@@ -5,22 +5,22 @@ to balance risk/reward of pushing forward.
 
 from numpy import double
 
-from arek_chess.board.legacy_board import Board
-from arek_chess.criteria.evaluation.base_eval import BaseEval
+from arek_chess.board.board import Board
+from arek_chess.criteria.evaluation.base_eval import ActionType, BaseEval
 
 
 class FastEval(BaseEval):
     """"""
 
     # material, space, is_check
-    DEFAULT_ACTION: BaseEval.ActionType = (double(100.0), double(1.0), double(10.0))
+    DEFAULT_ACTION: ActionType = (double(100.0), double(1.0), double(10.0))
 
     def get_score(
         self,
         board: Board,
         move_str: str,
         captured_piece_type: int,
-        action: BaseEval.ActionType = None
+        action: ActionType = None
     ) -> double:
         """"""
 

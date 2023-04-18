@@ -9,7 +9,7 @@ import kmeans1d
 
 from arek_chess.criteria.selection.base_selector import BaseSelector
 from arek_chess.criteria.selection.linear_probability_selector import LinearProbabilitySelector
-from arek_chess.game_tree.node.node import Node
+from arek_chess.game_tree.node import Node
 
 CLUSTER_2_3_THRESHOLD: int = 9
 CLUSTER_3_4_THRESHOLD: int = 16

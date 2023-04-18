@@ -41,7 +41,7 @@ from typing import Tuple, Optional
 from numpy import double, dot
 
 from arek_chess.board.board import Board
-from arek_chess.criteria.evaluation.base_eval import BaseEval
+from arek_chess.criteria.evaluation.base_eval import ActionType, BaseEval
 
 ACTION_TYPE = Tuple[
     double,
@@ -63,7 +63,7 @@ ACTION_TYPE = Tuple[
 class MultiIdeaEval(BaseEval):
     """"""
 
-    DEFAULT_ACTION: BaseEval.ActionType = (
+    DEFAULT_ACTION: ActionType = (
         double(10.0),  # is_check
         double(100.0),  # material
         double(5.0),  # mobility
@@ -89,7 +89,7 @@ class MultiIdeaEval(BaseEval):
         move_str: str,
         captured_piece_type: int,
         is_check: bool,
-        action: Optional[BaseEval.ActionType] = None,
+        action: Optional[ActionType] = None,
     ) -> double:
         """"""
 
@@ -147,6 +147,6 @@ class MultiIdeaEval(BaseEval):
 
     @staticmethod
     def calculate_score(
-        action: BaseEval.ActionType, params: BaseEval.ActionType
+        action: ActionType, params: ActionType
     ) -> double:
         return dot(action, params)

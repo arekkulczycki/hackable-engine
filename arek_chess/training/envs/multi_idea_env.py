@@ -7,10 +7,10 @@ import numpy
 from numpy import double
 
 from arek_chess.common.constants import Print
-from arek_chess.criteria.evaluation.base_eval import BaseEval
-from arek_chess.main.controller import Controller
+from arek_chess.controller import Controller
+from arek_chess.criteria.evaluation.base_eval import ActionType
 
-DEFAULT_ACTION: BaseEval.ActionType = (
+DEFAULT_ACTION: ActionType = (
     double(10.0),  # is_check
     double(100.0),  # material
     double(5.0),  # mobility
@@ -28,7 +28,7 @@ DEFAULT_ACTION: BaseEval.ActionType = (
     double(0.0),
     double(0.0),
 )
-MEDIUM_ACTION: BaseEval.ActionType = (
+MEDIUM_ACTION: ActionType = (
     double(10.0),  # is_check
     double(25.0),  # material
     double(3.0),  # mobility
@@ -46,7 +46,7 @@ MEDIUM_ACTION: BaseEval.ActionType = (
     double(0.0),
     double(0.0),
 )
-WEAK_ACTION: BaseEval.ActionType = (
+WEAK_ACTION: ActionType = (
     double(10.0),  # is_check
     double(5.0),  # material
     double(0.0),  # mobility
@@ -129,7 +129,7 @@ class MultiIdeaEnv(gym.Env):
 
         return gym.spaces.Dict(spaces)
 
-    def step(self, action: BaseEval.ActionType):
+    def step(self, action: ActionType):
         # artificially multiply material value for easier random discovery
         # artificially allow negative king-mobility value
         action = tuple(
@@ -193,7 +193,7 @@ class MultiIdeaEnv(gym.Env):
             "opp_dark_bishop": opp_dark_bishop,
         }
 
-    def _run_action(self, action: BaseEval.ActionType) -> None:
+    def _run_action(self, action: ActionType) -> None:
         self.controller.make_move(action)
 
     def _get_reward(self, result):

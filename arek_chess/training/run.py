@@ -19,7 +19,7 @@ register(
 LOG_PATH = "./arek_chess/training/logs/"
 
 
-def train(version=-1):
+def train(version=-1, gpu: bool = False):
     t0 = perf_counter()
 
     print("loading env...")
@@ -38,7 +38,8 @@ def train(version=-1):
             f"./chess.v{version}",
             env=env,
             verbose=2,
-            custom_objecs={"clip_range": 0.3, "learning_rate": 3e-3, "n_steps": 128},
+            custom_objecs={"clip_range": 0.1, "learning_rate": 3e-3, "n_steps": 128},
+            device="cuda" if gpu else "auto",
         )
     else:
         print("setting up model...")
@@ -46,8 +47,9 @@ def train(version=-1):
             "MlpPolicy",
             env=env,
             verbose=2,
-            clip_range=0.3,
+            clip_range=0.1,
             learning_rate=3e-3,
+            device="cuda" if gpu else "auto"
         )
         # model = PPO("MultiInputPolicy", env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
 
@@ -60,7 +62,7 @@ def train(version=-1):
     print(f"training finished in: {perf_counter() - t0}")
 
 
-def loop_train(version=-1, loops=5):
+def loop_train(version=-1, loops=5, gpu: bool = False):
     print("loading env...")
     env: DummyVecEnv = get_env(version)
 
@@ -73,6 +75,7 @@ def loop_train(version=-1, loops=5):
                 env=env,
                 verbose=2,
                 custom_objecs={"clip_range": 0.3, "learning_rate": 3e-3, "n_steps": 128},
+                device="cuda" if gpu else "cpu"
             )
         else:
             print("setting up model...")
@@ -82,13 +85,14 @@ def loop_train(version=-1, loops=5):
                 verbose=2,
                 clip_range=0.3,
                 learning_rate=3e-3,
+                device="cuda" if gpu else "cpu"
             )
             # model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
 
         print("training started...")
 
         try:
-            model.learn(total_timesteps=int(2**13))
+            model.learn(total_timesteps=int(2**14))
         except:
             # start over with new env
             env.envs[0].controller.tear_down()
@@ -158,6 +162,9 @@ def get_args():
     parser.add_argument(
         "-v", "--version", type=int, default=-1, help="version of the model to use"
     )
+    parser.add_argument(
+        "-g", "--gpu", help="run on gpu or fail", action="store_true"
+    )
 
     return parser.parse_args()
 
@@ -169,9 +176,9 @@ def find_move():
 if __name__ == "__main__":
     args = get_args()
     if args.train:
-        train(args.version)
+        train(args.version, args.gpu)
     elif args.loop_train:
-        loop_train(args.version, args.loops)
+        loop_train(args.version, args.loops, args.gpu)
     elif args.plot:
         plot_results(LOG_PATH)
     else:

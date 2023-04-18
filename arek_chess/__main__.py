@@ -15,6 +15,7 @@ from arek_chess.controller import Controller
 
 def validate_tree_params(tree_params: str) -> None:
     params = tree_params.split(",")
+    assert len(params) == 3
     int(params[0])
     int(params[1])
 
@@ -53,7 +54,7 @@ if __name__ == "__main__":
         help="0 - nothing, 1 - top candidates, 2 - entire searched tree (look at --tree-params)",
     )
     arg_parser.add_argument(
-        "-t",
+        "-tp",
         "--tree-params",
         default="3,5,",
         help="3 values split by comma: min_depth, max_depth, candidate. Example: --tree-params=3,7,f3e5",
@@ -66,6 +67,17 @@ if __name__ == "__main__":
              "14-15 is suggested for quick results. "
              "16-18 for a thorough examination.",
     )
+    arg_parser.add_argument(
+        "-mv",
+        "--model-version",
+        help="Name of the trained model file in root directory to be used for evalueation."
+    )
+    arg_parser.add_argument(
+        "-t",
+        "--timeout",
+        type=float,
+        help="Timeout"
+    )
 
     args = arg_parser.parse_args()
 
@@ -74,7 +86,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     validate_tree_params(args.tree_params)
-    controller = Controller(args.printing, args.tree_params, args.search_limit)
+    controller = Controller(args.printing, args.tree_params, args.search_limit, args.model_version, args.timeout)
     controller.boot_up(args.fen)
 
     if args.move:

@@ -13,12 +13,10 @@ from arek_chess.common.constants import Print
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.queue_manager import QueueManager
-from arek_chess.criteria.evaluation.base_eval import BaseEval
-from arek_chess.game_tree.search_manager import SearchManager
+from arek_chess.criteria.evaluation.base_eval import ActionType
+from arek_chess.game_tree.node import Node
 from arek_chess.workers.distributor_worker import DistributorWorker
 from arek_chess.workers.eval_worker import EvalWorker
-from stable_baselines3 import PPO
-
 from arek_chess.workers.search_worker import SearchWorker
 
 CPU_CORES = 8
@@ -40,7 +38,10 @@ class Controller:
         printing: Union[Print, int],
         tree_params: str = "",
         search_limit: Optional[int] = None,
-        timeout: Optional[int] = None
+        model_version: Optional[str] = None,
+        timeout: Optional[float] = None,
+        memory_action: bool = False,
+        in_thread: bool = False,
     ):
         """"""
 
@@ -48,18 +49,22 @@ class Controller:
         self.tree_params = tree_params
         self.search_limit = search_limit
         self.timeout = timeout
+        self.original_timeout = timeout
+        self.in_thread = in_thread
 
-        self.queue_throttle = (CPU_CORES - 2) * (search_limit if search_limit < 12 else (search_limit * 3))
+        self.queue_throttle = (CPU_CORES - 2) * (
+            search_limit if search_limit < 12 else (search_limit * 3)
+        )
 
         self.create_queues()
 
         self.initial_fen: Optional[str] = None
         self.child_processes: List = []
-        self.model = None
 
-    def boot_up(
-        self, fen: Optional[str] = None, action: Optional[BaseEval.ActionType] = None
-    ) -> None:
+        self.model_version = model_version
+        self.memory_action = memory_action
+
+    def boot_up(self, fen: Optional[str] = None) -> None:
         """"""
 
         if fen:
@@ -71,35 +76,26 @@ class Controller:
             self.board = Board()
             self.initial_fen = self.board.fen()
 
-        # self.search_manager.set_root(self.board)
+        self.start_child_processes()
+        self._setup_search_worker()
 
-        # self.setup_model()
-
-        self.start_child_processes(action)
-
-    def setup_model(self):
+    def start_child_processes(self) -> None:
         """"""
+
+        num_eval_workers = max(
+            1, CPU_CORES - 2
+        )  # one process required for the tree search and one for the distributor worker
 
         from arek_chess.training.envs.square_control_env import SquareControlEnv
-        self.env = SquareControlEnv(self)
-        self.model = PPO.load(
-            f"./chess.67",
-            env=self.env,
-        )
-
-    def start_child_processes(
-        self, action: Optional[BaseEval.ActionType] = None
-    ) -> None:
-        """"""
-
-        num_eval_workers = CPU_CORES - 2  # one process required for the tree search and one for the distributor worker
 
         for _ in range(num_eval_workers):
             evaluator = EvalWorker(
                 self.eval_queue,
                 self.selector_queue,
                 (self.queue_throttle // num_eval_workers),
-                action is None and self.model is None,
+                memory_action=self.memory_action,
+                env=self.model_version and SquareControlEnv(self),
+                model_version=self.model_version,
             )
             self.child_processes.append(evaluator)
 
@@ -115,7 +111,15 @@ class Controller:
         for process in self.child_processes:
             process.start()
 
-    def _start_search_worker(self):
+    def _restart_search_worker(self):
+        self.search_worker.stop()  # sends a signal for the thread to finish
+        if self.search_worker._started.is_set():
+            self.search_worker.join(0.5)
+        sleep(0.5)
+        self.clear_queues()
+        self._setup_search_worker()
+
+    def _setup_search_worker(self):
         self.search_worker = SearchWorker(
             self.distributor_queue,
             self.selector_queue,
@@ -125,58 +129,58 @@ class Controller:
             self.tree_params,
             self.search_limit,
         )
-        self.search_worker.set_root(self.board)
+        self.search_worker.set_root(self.board)  # TODO: set previously calculated tree as new root
 
-    def make_move(self, action: Optional[BaseEval.ActionType] = None, evaluator_class: Optional[str] = None) -> None:
+    def make_move(
+        self,
+        memory_action: Optional[ActionType] = None,
+    ) -> None:
         """"""
 
-        self._start_search_worker()
+        if memory_action is not None:
+            MemoryManager().set_action(memory_action, len(memory_action))
 
-        if self.model is not None:
-            obs = self.env.observation()
-            action = self.model.predict(obs)[0]
-            print(action)
-            MemoryManager().set_action(action, len(action))
-        elif action is not None:
-            MemoryManager().set_action(action, len(action))
-
-        # if not self.child_processes:
-        #     self.start_child_processes(action)
+        self._setup_search_worker()
 
         fails = 0
         while True:
-            if fails == 3:
-                self.restart(fen=self.board.fen())
-                sleep(0.5)
-            elif fails > 4:
+            if fails > 5:
                 raise RuntimeError
+            elif fails >= 3:
+                print("restarting all workers...")
+                self.restart(fen=self.board.fen())
+                sleep(3)
+            elif fails > 0:
+                print("restarting search worker...")
+                self._restart_search_worker()
             try:
-                # move = self.search_manager.search()
-                move = self.search()
+                move = self._search()
+                # self.timeout = self.original_timeout
                 break
             except SearchFailed as e:
+                # self.timeout += 1
                 if fails >= 2:
                     traceback.print_exc()
                 else:
                     print(f"search failed: {e}\nstarting over...")
                 fails += 1
 
-                # self.search_manager.set_root(Board(self.board.fen()))
-                self.search_worker.join(0.5)
-                sleep(0.5)
-                self._start_search_worker()
-
         self.release_memory()
+        self.clear_queues()
 
         self.board.push(move)
 
-        # self.search_manager.set_root(Board(self.board.fen()))
+    def make_move_and_get_root_node(self) -> Node:
+        self.make_move()
+        return self.search_worker.root
 
-    def search(self) -> Move:
+    def _search(self) -> Move:
         # TODO: current thread vs new thread vs new process???
-        self.search_worker.start()
-        move = self.search_worker.join(self.timeout)
-        # move = self.search_worker._search()
+        if self.in_thread:
+            self.search_worker.start()
+            move = self.search_worker.join(self.timeout)
+        else:
+            move = self.search_worker._search()
         if not move:
             raise SearchFailed
 
@@ -199,9 +203,7 @@ class Controller:
             if value == outcome.termination:
                 termination = key
 
-        print(
-            f"game over, result: {self.board.result()}, {termination}"
-        )
+        print(f"game over, result: {self.board.result()}, {termination}")
 
     def get_pgn(self) -> str:
         """"""
@@ -221,28 +223,25 @@ class Controller:
 
         return f'[FEN "{fen}"]\n\n{pgn}'
 
-    def restart(self, fen: Optional[str] = None, action: Optional[BaseEval.ActionType] = None) -> None:
+    def restart(self, fen: Optional[str] = None) -> None:
         """"""
 
-        print("restarting engine")
-
         self.release_memory()
-        self.restart_child_processes(action)
+        self.restart_child_processes()
 
         self.board = Board(fen or self.initial_fen)
         # self.search_manager.set_root(self.board)
 
-        if action is not None:
-            MemoryManager().set_action(action, len(action))
+        # TODO: restart the action to default
+        # MemoryManager().set_action(self.evaluator_class.DEFAULT_ACTION, self.evaluator_class.DEFAULT_ACTION)
 
-    def restart_child_processes(
-        self, action: Optional[BaseEval.ActionType] = None
-    ) -> None:
+    def restart_child_processes(self) -> None:
         """"""
 
         self.stop_child_processes()
         self.recreate_queues()
-        self.start_child_processes(action)
+        self.start_child_processes()
+        self._restart_search_worker()
 
         # print("processes restarted...")
 
@@ -254,34 +253,29 @@ class Controller:
         self.selector_queue: QueueManager = QueueManager("selector")
         self.control_queue: QueueManager = QueueManager("control")
 
-        # self.search_manager = SearchManager(
-        #     self.distributor_queue,
-        #     self.selector_queue,
-        #     self.control_queue,
-        #     self.queue_throttle,
-        #     self.printing,
-        #     self.tree_params,
-        #     self.search_limit,
-        # )
-
     def recreate_queues(self):
         """"""
 
         self.clear_queues()
-        # del self.search_manager
-        del self.distributor_queue
-        del self.eval_queue
-        del self.selector_queue
-        del self.control_queue
+
+        self.distributor_queue.close()
+        self.eval_queue.close()
+        self.selector_queue.close()
+        self.control_queue.close()
 
         self.create_queues()
 
     def clear_queues(self):
         """"""
 
-        for queue in [self.distributor_queue, self.eval_queue, self.selector_queue, self.control_queue]:
-            while not queue.empty():
-                queue.get_many()
+        for queue in [
+            self.eval_queue,
+            self.control_queue,
+            self.selector_queue,
+        ]:
+            items = queue.get_many_blocking(0.01, 10)
+            while items:
+                items = queue.get_many_blocking(0.01, 10)
 
     def tear_down(self) -> None:
         """"""

@@ -10,7 +10,7 @@ from larch.pickle.pickle import dumps, loads
 from arek_chess.board.board import Board
 from arek_chess.common.memory.base_memory import BaseMemory
 from arek_chess.common.memory.shared_memory import SharedMemory
-from arek_chess.criteria.evaluation.base_eval import BaseEval
+from arek_chess.criteria.evaluation.base_eval import ActionType
 
 
 class MemoryManager:
@@ -25,7 +25,7 @@ class MemoryManager:
     def __init__(self):
         self.memory: BaseMemory = SharedMemory()
 
-    def get_action(self, size: int) -> BaseEval.ActionType:
+    def get_action(self, size: int) -> ActionType:
         action_bytes = self.memory.get("action")
 
         action = numpy.ndarray(
@@ -34,7 +34,7 @@ class MemoryManager:
 
         return action
 
-    def set_action(self, action: BaseEval.ActionType, size: int) -> None:
+    def set_action(self, action: ActionType, size: int) -> None:
         data = numpy.ndarray(shape=(size,), dtype=numpy.double)
         data[:] = (*action,)
 

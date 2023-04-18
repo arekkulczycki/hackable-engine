@@ -7,22 +7,26 @@ Desired:
 [x] occupied square control (with advanced pawn bonus)
 [x] empty square control
 [x] king proximity square control + discount factors
+[ ] turn - bonus equalizer for whose turn to move it is
 [ ] threats (x ray)
 
 Observation:
 [x] king mobility (king safety)
 [x] material on board
 [x] pawns on board (how open is the position)
+[ ] bishops on board (color)
+[ ] space of each player
+[ ] own king proximity
 [ ] better openness of the position (many pawns locked > ... > many pawns gone)
 """
 
 from typing import Tuple, Optional
 
 from nptyping import NDArray, Shape, Int, Double
-from numpy import double, dot, ones, minimum as np_min, maximum as np_max, matmul
+from numpy import double, ones, minimum as np_min, maximum as np_max, matmul
 
 from arek_chess.board.board import Board
-from arek_chess.criteria.evaluation.base_eval import BaseEval
+from arek_chess.criteria.evaluation.base_eval import ActionType, BaseEval
 
 ACTION_TYPE = Tuple[
     double,
@@ -41,13 +45,15 @@ ACTION_TYPE = Tuple[
 ]
 ONES_DOUBLE: NDArray[Shape["64"], Double] = ones((64,), dtype=double)
 HALFS_DOUBLE: NDArray[Shape["64"], Double] = ones((64,), dtype=double) / 2
-ONES_INT: NDArray[Shape["64"], Int] = ones((64,), dtype=int)
+ONES_INT: NDArray[Shape["64"], Double] = ones((64,), dtype=double)
+TURN_BONUS: double = double(0.15)
+TURN_PENALTY: double = double(-0.15)
 
 
 class SquareControlEval(BaseEval):
     """"""
 
-    DEFAULT_ACTION: BaseEval.ActionType = (
+    DEFAULT_ACTION: ActionType = (
         double(0.15),  # castling_rights
         double(-0.1),  # king_mobility
         double(0.1),  # is_check
@@ -66,9 +72,13 @@ class SquareControlEval(BaseEval):
         move_str: str,
         captured_piece_type: int,
         is_check: bool,
-        action: Optional[BaseEval.ActionType] = None,
+        action: Optional[ActionType] = None,
     ) -> double:
-        """"""
+        """
+        Get the score evaluation of the given node.
+
+        :param board: board after the move
+        """
 
         if action is None:
             action = self.DEFAULT_ACTION
@@ -76,7 +86,11 @@ class SquareControlEval(BaseEval):
         castling_rights_int: int = int(board.has_castling_rights(True)) - int(
             board.has_castling_rights(False)
         )
-        king_mobility = board.get_king_mobility(True) - board.get_king_mobility(False)
+        try:  # TODO: find the bug that's causing it to raise, seems like king is captured in checkmate position
+            king_mobility = board.get_king_mobility(True) - board.get_king_mobility(False)
+        except KeyError:
+            # white king was captured therefore black win...
+            return double(-1000) if board.turn else double(1000)
         is_check_int: int = (
             -int(is_check) if board.turn else int(is_check)
         )  # color is the one who gave the check
@@ -92,28 +106,12 @@ class SquareControlEval(BaseEval):
             Shape["64"], Int
         ] = board.get_square_control_map_for_both()
 
-        try:
-            white_king_proximity_map: NDArray[
-                Shape["64"], Double
-            ] = board.get_king_proximity_map_normalized(True)
-        except Exception as e:
-            print("no king position analysed")
-            print(board.fen())
-            print(move_str, "white")
-            print(bin(board.kings))
-            print(bin(board.occupied_co[True]))
-            raise ValueError from e
-        try:
-            black_king_proximity_map: NDArray[
-                Shape["64"], Int
-            ] = board.get_king_proximity_map_normalized(False)
-        except Exception as e:
-            print("no king position analysed")
-            print(board.fen())
-            print(move_str, "black")
-            print(bin(board.kings))
-            print(bin(board.occupied_co[False]))
-            raise ValueError from e
+        white_king_proximity_map: NDArray[
+            Shape["64"], Double
+        ] = board.get_king_proximity_map_normalized(True)
+        black_king_proximity_map: NDArray[
+            Shape["64"], Double
+        ] = board.get_king_proximity_map_normalized(False)
 
         white_piece_value_map: NDArray[
             Shape["64"], Double
@@ -173,7 +171,8 @@ class SquareControlEval(BaseEval):
             double(king_proximity_square_control),
         )
 
-        return self.calculate_score(action[:-1], params)
+        turn_bonus: double = TURN_BONUS if board.turn else TURN_PENALTY  # TODO: change to param
+        return self.calculate_score(action[:-1], params, turn_bonus)
 
         # n = len(board.move_stack)
         # return self.calculate_score(action[:-1], params, board.turn, n)

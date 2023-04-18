@@ -2,31 +2,20 @@
 Custom utility thread classes.
 """
 
-from threading import Thread
+from threading import Thread, Event
 from typing import Any
-
-
-class StoppableThread(Thread):
-    """
-    Class_docstring
-    """
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.running = True
-
-    def stop(self) -> None:
-        self.running = False
 
 
 class ReturningThread(Thread):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._return = None
+        self._stop_event = Event()
 
-    def run(self) -> None:
-        self._return = self._target(*self._args, **self._kwargs)
+    def stop(self):
+        self._stop_event.set()
 
-    def join(self, *args) -> Any:
-        Thread.join(self, *args)
+    def join(self, timeout: float = None) -> Any:
+        Thread.join(self, timeout)
+
         return self._return

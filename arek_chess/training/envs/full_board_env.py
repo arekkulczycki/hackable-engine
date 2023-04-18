@@ -2,10 +2,10 @@ import gym
 import numpy
 
 from arek_chess.common.constants import Print
-from arek_chess.criteria.evaluation.base_eval import BaseEval
+from arek_chess.criteria.evaluation.base_eval import ActionType
 from arek_chess.controller import Controller
 
-DEFAULT_ACTION: BaseEval.ActionType = (
+DEFAULT_ACTION: ActionType = (
     numpy.double(100.0),
     numpy.double(1.0),
     numpy.double(-1.0),
@@ -49,7 +49,7 @@ class FullBoardEnv(gym.Env):
     def _get_observation_space(self):
         return gym.spaces.MultiDiscrete([13 for _ in range(64)])
 
-    def step(self, action: BaseEval.ActionType):
+    def step(self, action: ActionType):
         self._run_action(tuple(action))
 
         result = self.controller.board.result()
@@ -88,7 +88,7 @@ class FullBoardEnv(gym.Env):
                 observation.append(0)
         return observation
 
-    def _run_action(self, action: BaseEval.ActionType) -> None:
+    def _run_action(self, action: ActionType) -> None:
         self.controller.make_move(action)
 
     def _get_reward(self, result):

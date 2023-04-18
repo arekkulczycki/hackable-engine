@@ -5,7 +5,7 @@ BaseSelector.
 from abc import ABC
 from typing import List
 
-from arek_chess.game_tree.node.node import Node
+from arek_chess.game_tree.node import Node
 
 
 class BaseSelector(ABC):

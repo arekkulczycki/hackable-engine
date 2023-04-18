@@ -20,6 +20,7 @@ class PrunedTreeRenderer(RenderTree):
 
         self.depth: int = depth
         self.path: str = path
+        self.path_length: int = path.count(".") + 1
         self.to_file: bool = to_file
 
     def __iter__(self) -> Generator:
@@ -35,7 +36,7 @@ class PrunedTreeRenderer(RenderTree):
         new_children = ()
         for i in range(len(children)):
             child = children[i]
-            if self.path and (level > 0) and (self.path not in node.name):
+            if self.path and (level > 0) and (".".join(self.path.split(".")[:level]) not in node.name):
                 continue
             if self.has_deep_family(child):  # and self.path in node.name:
                 new_children += (child,)

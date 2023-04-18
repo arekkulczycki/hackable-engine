@@ -9,7 +9,7 @@ from typing import List
 
 from arek_chess.common.constants import INF
 from arek_chess.criteria.selection.base_selector import BaseSelector
-from arek_chess.game_tree.node.node import Node
+from arek_chess.game_tree.node import Node
 
 
 class FastSelector(BaseSelector):

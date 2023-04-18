@@ -29,8 +29,8 @@ class SharedMemory(BaseMemory):
 
     @staticmethod
     def parse_key(key: str) -> str:
-        if len(key) > 254:
-            return key[-254:].partition(".")[2]
+        if len(key) > 253:
+            return key[-253:].partition(".")[2]
         return key
 
     def get(self, key: str, default: Optional[bytes] = None) -> Optional[bytes]:
@@ -68,8 +68,19 @@ class SharedMemory(BaseMemory):
             self.remove(key)
             self.set(key, value)
         except:
-            # traceback.print_exc()
             print(f"Error! Cannot set: {key}")
+            try:
+                shm = DangerousSharedMemory(
+                    name=key,
+                    create=True,
+                    size=size,
+                    write=True,
+                )
+                shm.buf[:] = value
+                print("second time worked...")
+            except:
+                traceback.print_exc()
+                print(f"Error! Cannot set: {key}")
 
     def set_many(self, many: List[Tuple[str, bytes]]):
         for key, value in many:
@@ -220,15 +231,26 @@ class SharedMemory(BaseMemory):
     def clean(self) -> None:
         """"""
 
-        for filename in os.listdir("/dev/shm"):
-            path = os.path.join("/dev/shm", filename)
-            if os.path.isfile(path) and filename.startswith(f"{ROOT_NODE_NAME}."):
-                os.unlink(path)
-        try:
-            os.unlink(os.path.join("/dev/shm", ROOT_NODE_NAME))
-            os.unlink(os.path.join("/dev/shm", "action"))
-        except:
-            pass
+        # for filename in os.listdir("/dev/shm"):
+        #     path = os.path.join("/dev/shm", filename)
+        #     if os.path.isfile(path) and filename.startswith(f"{ROOT_NODE_NAME}."):  # FIXME: incorrect
+        #         try:
+        #             os.unlink(path)
+        #         except FileNotFoundError:
+        #             print(f"File {path} not found")
+        # try:
+        #     os.unlink(os.path.join("/dev/shm", ROOT_NODE_NAME))
+        #     os.unlink(os.path.join("/dev/shm", "action"))
+        # except:
+        #     pass
+
+        # TODO: make this right...
+        os.system(f"rm /dev/shm/1.*")
+        os.system(f"rm /dev/shm/*")
+
+        # for c in "abcdefgh":
+        #     for d in "12345678":
+        #         os.system(f"rm /dev/shm/{c}{d}*")
 
         print("OK")  # just to align with what Redis does :)
 

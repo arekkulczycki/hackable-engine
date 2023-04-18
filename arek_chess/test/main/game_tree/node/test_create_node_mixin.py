@@ -9,7 +9,7 @@ from unittest import TestCase
 
 from parameterized import parameterized
 
-from arek_chess.game_tree.node.node import Node
+from arek_chess.game_tree.node import Node
 from arek_chess.game_tree.node.create_node_mixin import CreateNodeMixin
 
 

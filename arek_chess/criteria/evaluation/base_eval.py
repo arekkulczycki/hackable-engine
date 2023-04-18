@@ -13,6 +13,8 @@ from numpy import dot
 PENALIZER: double = double(0.99)
 REVERSE_PENALIZER: double = double(1.01)
 
+ActionType = Tuple[double, ...]
+
 
 class BaseEval(ABC):
     """
@@ -26,8 +28,6 @@ class BaseEval(ABC):
 
     Any eval model should be designed for a specific training observation method.
     """
-
-    ActionType = Tuple[double, ...]
 
     def get_score(
         self,
@@ -53,17 +53,12 @@ class BaseEval(ABC):
     def get_for_both_players(function: Callable[[bool], ActionType]) -> Tuple[double, ...]:
         """"""
 
-        return tuple(a - b for a, b in zip(function(True), function(False)))
+        return tuple(double(a - b) for a, b in zip(function(True), function(False)))
 
     @staticmethod
     def calculate_score(
-        action: ActionType, params: ActionType, side: bool = True, depth: Optional[int] = None
+        action: ActionType, params: ActionType, bonus: double
     ) -> double:
-        score = dot(action, params)
-        if depth:
-            if score > 0 and side or score < 0 and not side:
-                score = score * (PENALIZER ** depth)
-            else:
-                score = score * (REVERSE_PENALIZER ** depth)
+        score = dot(action, params) + bonus
 
         return score

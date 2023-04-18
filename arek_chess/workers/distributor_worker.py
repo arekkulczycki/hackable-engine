@@ -5,7 +5,7 @@ Distributes to the queue nodes to be calculated by EvalWorkers.
 from time import sleep
 from typing import List, Tuple, Optional
 
-from chess import Move
+from chess import Move, KNIGHT, BISHOP
 from numpy import double
 
 from arek_chess.board.board import Board
@@ -42,7 +42,7 @@ class DistributorWorker(BaseWorker):
 
         self.distributed = 0
 
-        # self.profile_code()
+        # self._profile_code()
 
     def _run(self):
         """"""
@@ -53,24 +53,23 @@ class DistributorWorker(BaseWorker):
         get_items = self.get_items
         distribute = self.distribute
         while True:
-            items: List[Tuple[str, str, double]] = get_items(queue_throttle)
+            items: List[Tuple[str, str, double, int]] = get_items(queue_throttle)
             if items:
                 distribute(items)
             else:
                 sleep(SLEEP)
 
-    def get_items(self, queue_throttle: int) -> List[Tuple[str, str, double]]:
+    def get_items(self, queue_throttle: int) -> List[Tuple[str, str, double, int]]:
         """"""
 
-        # the timeout value set for optimal first iteration start
-        return self.distributor_queue.get_many_blocking(0.015, queue_throttle)
+        return self.distributor_queue.get_many_blocking(0.005, queue_throttle)
 
-    def distribute(self, items: List[Tuple[str, str, double]]) -> None:
+    def distribute(self, items: List[Tuple[str, str, double, int]]) -> None:
         """"""
 
         queue_items = []
 
-        for node_name, move_str, score in items:  # TODO: get_many_boards ?
+        for node_name, move_str, score, captured in items:  # TODO: get_many_boards ?
             # not a real node, just a signal for finishing processing iteration
             if node_name == FINISHED:
                 self.distributed = 0
@@ -90,7 +89,14 @@ class DistributorWorker(BaseWorker):
                     # print(f"failed creating board for {node_name}: {e}")
                     continue
 
-            new_queue_items = [(node_name, move.uci()) for move in board.legal_moves]
+            new_queue_items = []
+            for move in board.legal_moves:
+                if captured:
+                    recaptured = board.get_captured_piece_type(move)
+                    if recaptured >= captured or (recaptured == KNIGHT and captured == BISHOP):
+                        new_queue_items.append((node_name, move.uci()))
+                else:
+                    new_queue_items.append((node_name, move.uci()))
 
             # TODO: if it could be done very efficiently, would be beneficial to check game over here
             # new_queue_items = []
@@ -117,10 +123,12 @@ class DistributorWorker(BaseWorker):
 
             if new_queue_items:
                 queue_items += new_queue_items
+            else:
+                self.control_queue.put(node_name)
 
         if queue_items:
             self.distributed += len(queue_items)
-            self.control_queue.put(self.distributed)
+            self.control_queue.put(str(self.distributed))
             self.eval_queue.put_many(queue_items)
 
     def create_node_board(

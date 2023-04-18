@@ -4,9 +4,8 @@ Handling of the in-memory game tree and controlling all tree expansion logic and
 
 import os
 from asyncio import sleep as asyncio_sleep
-from threading import Thread
 from time import time
-from typing import Optional, Dict, List, Tuple, Any
+from typing import Optional, Dict, List, Tuple
 
 from numpy import double
 
@@ -18,24 +17,16 @@ from arek_chess.common.constants import (
     LOG_INTERVAL,
     FINISHED,
 )
+from arek_chess.common.custom_threads import ReturningThread
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.profiler_mixin import ProfilerMixin
 from arek_chess.common.queue_manager import QueueManager as QM
-from arek_chess.game_tree.node.node import Node
+from arek_chess.game_tree.node import Node
 from arek_chess.game_tree.renderer import PrunedTreeRenderer
-from arek_chess.game_tree.traversal import Traversal
+from arek_chess.game_tree.traverser import Traverser
 
-
-class ReturningThread(Thread):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._return = None
-
-    def join(self, timeout: float = None) -> Any:
-        Thread.join(self, timeout)
-
-        return self._return
+N_CANDIDATES = 10
 
 
 class SearchWorker(ReturningThread, ProfilerMixin):
@@ -43,7 +34,18 @@ class SearchWorker(ReturningThread, ProfilerMixin):
     Handles the in-memory game tree and controls all tree expansion logic and progress logging.
     """
 
+    board: Board
+    root: Node
+
     tree: Dict[str, Node]
+    distributor_queue: QM
+    selector_queue: QM
+    control_queue: QM
+    queue_throttle: int
+    printing: Print
+    tree_params: str
+    limit: int
+    should_profile: bool
 
     def __init__(
         self,
@@ -65,19 +67,20 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         self.printing = printing
         self.tree_params = tree_params  # TODO: create a constant class like Print
 
+        self.root: Optional[Node] = None
         self.memory_manager = MemoryManager()
 
-        self.distributed = 0
-        self.evaluated = 0
-        self.selected = 0
+        self.distributed: int = 0
+        self.evaluated: int = 0
+        self.selected: int = 0
         # self.selected_nodes = []
-        self.explored = 0
+        self.explored: int = 0
 
         self.limit: int = 2 ** (search_limit or 14)  # 14 -> 16384, 15 -> 32768
 
-        self.should_profile = False
+        self.should_profile: bool = False
 
-    def set_root(self, board: Optional[Board] = None) -> None:
+    def set_root(self, board: Optional[Board] = None, restart: bool = False) -> None:
         """"""
 
         if board:
@@ -87,27 +90,42 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         score = -INF if self.board.turn else INF
 
-        self.root = Node(
-            parent=None,
-            name=ROOT_NODE_NAME,
-            move="",
-            score=score,
-            captured=0,
-            level=0,
-            color=self.board.turn,
-            should_propagate=False,
-        )
+        if restart or self.root is None:
+            self.root = Node(
+                parent=None,
+                name=ROOT_NODE_NAME,
+                move="",
+                score=double(score / 2),  # divided by 2 to differentiate from checkmate
+                captured=0,
+                level=0,
+                color=self.board.turn,
+                being_processed=True,
+            )
+            self.memory_manager.set_node_board(ROOT_NODE_NAME, self.board)
+        else:
+            last_move = self.board.move_stack[-1].uci()
+            chosen_child: Optional[Node] = None
+            for child in self.root.children:
+                if child.move == last_move:
+                    chosen_child = child
+                    break
+
+            if chosen_child is None:
+                raise ValueError("Could not recognize move played")
+            self.root = chosen_child
+            self.distributed = 1
+            self.evaluated = 1  # TODO: make this more pretty, now it's pretending the search was started as usual
+
         self.root.looked_at = True
 
-        self.nodes_dict = {ROOT_NODE_NAME: self.root}
-
-        self.traversal = Traversal(self.root)
+        self.traversal: Traverser = Traverser(self.root)
 
     def run(self):
         """"""
 
         if self.should_profile:
             from pyinstrument import Profiler
+
             self.profiler = Profiler()
             self.profiler.start()
 
@@ -120,8 +138,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
     def _search(self) -> str:
         """"""
 
-        self.memory_manager.set_node_board(ROOT_NODE_NAME, self.board)
-        self.distributor_queue.put((ROOT_NODE_NAME, "", self.root.score))
+        self.distributor_queue.put((ROOT_NODE_NAME, "", self.root.score, 0))
         self.distributed = 1
 
         self.t_0: float = time()
@@ -137,35 +154,53 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         selecting = self.selecting
         monitoring = self.monitoring
         try:
-            while self.evaluated < self.distributed or self.evaluated < self.limit:
+            while self.evaluated < self.distributed or self.distributed < self.limit:
                 # TODO: refactor to use concurrency?
                 gathering(
                     selector_queue, distributor_queue, control_queue, queue_throttle
                 )
-                if not (
-                    self.distributed == 0
-                    or self.evaluated > limit
-                    or self.evaluated / self.distributed < 0.75
-                    or (
-                        self.evaluated / self.distributed < 0.9
-                        and self.evaluated < limit / 2
-                    )
-                ):
-                    selecting(distributor_queue, 1)
+                if self.distributed != 0:
+                    gap = self.distributed - self.evaluated
+                    ratio = gap / self.distributed
+                    if (
+                        self.distributed < limit
+                        and gap < 25000
+                        and not (ratio > 0.25 and gap > 10000)
+                        and not (
+                            ratio > 0.1
+                            and gap > 10000
+                            and self.distributed
+                            < limit / 2  # slow down in the first half of the search
+                        )
+                    ):
+                        selecting(  # TODO: the param should depend on both gap and speed
+                            distributor_queue,
+                            1
+                            if gap > 10000
+                            else 2
+                            if gap > 3000
+                            else 3
+                            if self.distributed > 10000
+                            else 1,
+                        )
 
                 if monitoring():
-                    # print("no change detected")
-                    raise SearchFailed("nodes not delivered on queues")
+                    break
 
         except KeyboardInterrupt:
             self.before_exit()
         else:
             return self.finish_up(time() - self.t_0)
         finally:
-            self.distributor_queue.put((FINISHED, "", 0.0))
+            # msg to distributor so that it resets counters
+            self.distributor_queue.put((FINISHED, "", 0.0, 0))
 
     def monitoring(self) -> bool:
-        """"""
+        """
+        Monitor search progress and log events.
+
+        :return: if the process hang and should be finished
+        """
 
         t = time()
 
@@ -173,42 +208,51 @@ class SearchWorker(ReturningThread, ProfilerMixin):
             if self.printing not in [Print.NOTHING, Print.MOVE]:
                 os.system("clear")
 
+            progress = round(
+                min(
+                    self.evaluated / self.distributed,
+                    self.evaluated / self.limit,
+                )
+                * 100
+            )
+
             if self.evaluated == self.last_evaluated:
                 print(
-                    f"distributed: {self.distributed}, evaluated: {self.evaluated}, "
-                    f"selected: {self.selected}"
+                    f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}"
                 )
+                if progress < 99 and self.root.score not in [-INF, INF]:
+                    raise SearchFailed("nodes not delivered on queues")
+
+                # print(
+                #     f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}",
+                #     "Checkmate, finishing early...",
+                # )
+                # print(self.board.move_stack)
+
                 return True
 
             self.t_tmp = t
 
-            if self.printing not in [Print.NOTHING, Print.MOVE]:
-                progress = round(
-                    min(
-                        self.evaluated / self.distributed,
-                        self.evaluated / self.limit,
-                    )
-                    * 100
-                )
-
+            if self.printing not in [Print.MOVE, Print.NOTHING]:
                 print(
                     f"distributed: {self.distributed}, evaluated: {self.evaluated}, "
+                    f"gap: {self.distributed - self.evaluated}, "
                     f"selected: {self.selected}, explored: {self.explored}, progress: {progress}%"
                 )
 
-            if self.printing == Print.CANDIDATES:
+            if self.printing in [Print.CANDIDATES, Print.TREE]:
                 sorted_children: List[Node] = sorted(
                     self.root.children,
                     key=lambda node: node.score,
                     reverse=self.root.color,
                 )
 
-                for child in sorted_children[:10]:
+                for child in sorted_children[:N_CANDIDATES]:
                     print(child.move, child.score)
 
             self.last_evaluated = self.evaluated
 
-        return False
+        return self._stop_event.is_set()
 
     async def monitoring_loop(self):
         """"""
@@ -228,11 +272,11 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         """"""
 
         candidates: List[
-            Tuple[str, str, int, int, double]
+            Tuple[str, str, int, double]
         ] = selector_queue.get_many_blocking(
-            0.015,
-            queue_throttle,  # the timeout value set for optimal first iteration start
-        )  # self.max_items_at_once)
+            0.005,  # TODO: what about this timeout?
+            queue_throttle,
+        )
         if not candidates:
             # print(f"no items")
             return
@@ -243,7 +287,28 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         control_values = control_queue.get_many(queue_throttle)
         if control_values:
-            self.distributed = control_values[-1]
+            number_found = False
+            for control_value in reversed(control_values):
+                try:
+                    parsed_value = int(control_value)
+                except ValueError:
+                    try:
+                        # no children to look at, so nothing sent to evaluation
+                        node = self.traversal.get_node(control_value)
+                    except KeyError:
+                        # leftover from previous move somehow got here TODO: is this really needed?
+                        continue
+                    else:
+                        node.being_processed = False
+                        node.parent.propagate_score(node.score, None, node.color)
+                else:
+                    if number_found:
+                        continue
+                    else:
+                        number_found = True
+                        self.distributed = parsed_value
+
+            # self.distributed = control_values[-1]  old clean way :(
 
     async def gathering_loop(
         self,
@@ -260,88 +325,46 @@ class SearchWorker(ReturningThread, ProfilerMixin):
             await asyncio_sleep(0)
 
     def handle_candidates(
-        self, distributor_queue: QM, candidates: List[Tuple[str, str, int, int, double]]
+        self, distributor_queue: QM, candidates: List[Tuple[str, str, int, double]]
     ) -> None:
         """"""
 
-        nodes_to_distribute: List[Node] = []
-
-        # best_score = math.inf if color else -math.inf
-        for candidate in candidates:
-            (
-                parent_name,
-                move_str,
-                moved_piece_type,
-                captured_piece_type,
-                score,
-            ) = candidate
-            try:
-                parent = self.get_node(parent_name)
-                parent_score = parent.score
-            except KeyError:
-                # print("node not found in items: ", parent_name, self.nodes_dict.keys())
-                if len(self.nodes_dict.keys()) == 1:
-                    # was never meant to be here, but somehow queue delivers phantom items
-                    continue
-                else:
-                    raise SearchFailed(
-                        f"node not found in items: {parent_name}, {self.nodes_dict.keys()}"
-                    )
-            level = len(parent_name.split("."))
-
-            node = self.create_node(parent, move_str, score, captured_piece_type, level)
-
-            to_distribute = False
-            # analyse "good" captures immediately
-            if captured_piece_type > 0 and (  # if parent_name == ROOT_NODE_NAME:
-                (
-                    parent.parent is None
-                    and captured_piece_type > parent.captured
-                    and not (captured_piece_type == 3 and parent.captured == 2)
-                )
-                or (
-                    parent.parent is not None
-                    and score > parent.parent.score
-                    and score > parent.parent.init_score
-                )
-            ):
-                nodes_to_distribute.append(node)
-                node.being_processed = True
-                self.explored += 1
-                to_distribute = True
-            if not to_distribute:
-                parent.being_processed = False
-            parent.being_processed = False
+        nodes_to_distribute: List[Node] = self.traversal.get_nodes_to_distrubute(
+            candidates
+        )
 
         if nodes_to_distribute:
-            self.queue_for_distribution(distributor_queue, nodes_to_distribute)
+            self.explored += len(nodes_to_distribute)
+            self.queue_for_distribution(
+                distributor_queue, nodes_to_distribute, recaptures=True
+            )
 
     def selecting(self, distributor_queue: QM, iterations: int = 1) -> None:
-        """"""
+        """
+        Select next nodes to explore and queue for distribution.
+        """
 
-        top_nodes = [
-            node
-            for node in (
-                self.traversal.get_next_node_to_look_at() for _ in range(iterations)
-            )
-            if node is not None
-        ]
+        top_nodes = self.traversal.get_nodes_to_look_at(iterations)
+
         if not top_nodes:
-            # print("no nodes")
             return
 
-        # print("selecting")
         n_nodes: int = len(top_nodes)
         self.selected += n_nodes
         self.explored += n_nodes
 
-        self.queue_for_distribution(distributor_queue, top_nodes)
+        self.queue_for_distribution(distributor_queue, top_nodes, recaptures=False)
 
-    def queue_for_distribution(self, distributor_queue: QM, nodes: List[Node]) -> None:
+    def queue_for_distribution(
+        self, distributor_queue: QM, nodes: List[Node], *, recaptures: bool
+    ) -> None:
         """"""
 
         distributor_queue.put_many(
-            [(node.name, node.move, node.score) for node in nodes]
+            [
+                (node.name, node.move, node.score, node.captured if recaptures else 0)
+                for node in nodes
+            ]
         )
 
     async def selecting_loop(self, distributor_queue: QM) -> None:
@@ -350,44 +373,6 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         while True:
             self.selecting(distributor_queue)
             await asyncio_sleep(0)
-
-    def get_node(self, node_name: str) -> Node:
-        """"""
-
-        return self.nodes_dict[node_name]
-
-    def create_node(
-        self, parent: Node, move: str, score: double, captured: int, level: int
-    ) -> Optional[Node]:
-        """"""
-
-        parent_name = parent.name
-        child_name = f"{parent_name}.{move}"
-        if captured == -1:  # node reversed from distributor when found checkmate
-            try:
-                self.nodes_dict[child_name].score = score
-                self.nodes_dict[child_name].captured = -1
-                return None
-            except KeyError:
-                # was never meant to be here, but somehow queue delivers phantom items
-                pass
-
-        color = self.root.color if level % 2 == 0 else not self.root.color
-
-        node = Node(
-            parent=parent,
-            name=child_name,
-            move=move,
-            score=score,
-            captured=captured,
-            level=level,
-            color=color,
-            should_propagate=color == self.root.color,
-        )
-
-        self.nodes_dict[child_name] = node
-
-        return node
 
     def finish_up(self, total_time: float) -> str:
         """"""
@@ -415,6 +400,8 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                     f"time: {total_time}, nodes/s: {round(self.evaluated / total_time)}"
                 )
 
+                # print(sorted([(node.name, score) for node, score in self.traversal.selections.items()], key=lambda x: x[1], reverse=True))
+
             print("chosen move -->", round(best_score, 3), best_move)
         elif self.printing == Print.MOVE:
             print(best_move)
@@ -423,6 +410,9 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         self.evaluated = 0
         self.selected = 0
         self.explored = 0
+
+        # print(sorted([(node.name, score) for node, score in self.traversal.selections.items()], key=lambda x: x[1],
+        #              reverse=True))
 
         return best_move
 
@@ -440,7 +430,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         if self.printing == Print.CANDIDATES:
             os.system("clear")
-            for child in sorted_children[:8]:
+            for child in sorted_children[:]:
                 print(child.move, child.score)
 
         best = sorted_children[0]

@@ -7,14 +7,15 @@ from collections import deque
 from time import sleep
 from typing import Tuple, Optional, List, Deque
 
+import gym
 from numpy import double
+from stable_baselines3 import PPO
 
 from arek_chess.board.board import Board
 from arek_chess.common.constants import INF, SLEEP, DRAW
 from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.queue_manager import QueueManager
-from arek_chess.criteria.evaluation.base_eval import BaseEval
-from arek_chess.criteria.evaluation.multi_idea_eval import MultiIdeaEval
+from arek_chess.criteria.evaluation.base_eval import ActionType
 from arek_chess.criteria.evaluation.square_control_eval import SquareControlEval
 from arek_chess.workers.base_worker import BaseWorker
 
@@ -26,25 +27,34 @@ class EvalWorker(BaseWorker):
 
     def __init__(
         self,
-        input_queue: QueueManager,
-        output_queue: QueueManager,
+        eval_queue: QueueManager,
+        selector_queue: QueueManager,
         queue_throttle: int,
-        constant_action: bool = False,
+        *,
         evaluator_name: Optional[str] = None,
+        memory_action: bool = False,
+        env: Optional[gym.Env] = None,
+        model_version: Optional[str] = None,
     ) -> None:
         super().__init__()
 
-        self.input_queue: QueueManager = input_queue
-        self.output_queue: QueueManager = output_queue
+        self.eval_queue: QueueManager = eval_queue
+        self.selector_queue: QueueManager = selector_queue
         self.queue_throttle: int = queue_throttle
 
-        self.constant_action = constant_action
         self.evaluator_name = evaluator_name
+
+        self.memory_action: bool = memory_action
+        self.env: gym.Env = env
+        self.model = env and PPO.load(
+            model_version,
+            env=self.env,
+        )
 
     def setup(self) -> None:
         """"""
 
-        # self.profile_code()
+        # self._profile_code()
         # self.call_count = 0
 
         # evaluators = {
@@ -66,31 +76,23 @@ class EvalWorker(BaseWorker):
         self.setup()
 
         memory_manager = self.memory_manager
-        input_queue = self.input_queue
-        output_queue = self.output_queue
+        eval_queue = self.eval_queue
+        selector_queue = self.selector_queue
         queue_throttle = self.queue_throttle
         eval_items = self.eval_items
-        # items_to_send: List[Tuple[str, str, int, int, double]] = []
 
         # switch = True
         while True:
-            items_to_eval: List[Tuple[str, str]] = input_queue.get_many(queue_throttle)
+            # items_to_eval: List[Tuple[str, str]] = input_queue.get_many_blocking(0.005, queue_throttle)
+            items_to_eval: List[Tuple[str, str]] = eval_queue.get_many(queue_throttle)
             if items_to_eval:
-                # put items on queue every second time
-                # if switch:
-                #     print(switch)
-                #     output_queue.put_many([*items_to_send, *eval_items(items_to_eval, memory_manager)])
-                #     items_to_send.clear()
-                # else:
-                #     print(switch)
-                #     items_to_send = eval_items(items_to_eval, memory_manager)
-                # switch = not switch
-
-                output_queue.put_many(eval_items(items_to_eval, memory_manager))
+                selector_queue.put_many(eval_items(items_to_eval, memory_manager))
             else:
                 sleep(SLEEP)
 
-    def run_with_buffer(self, input_queue: QueueManager, output_queue: QueueManager, queue_throttle: int):
+    def run_with_buffer(
+        self, input_queue: QueueManager, output_queue: QueueManager, queue_throttle: int
+    ):
         """
         Buffering items from queue in order to perform evaluation while waiting for new queue items.
 
@@ -112,11 +114,15 @@ class EvalWorker(BaseWorker):
                 pass
 
             if items_to_eval:
-                output_queue.put_many(self.eval_items(items_to_eval, self.memory_manager))
+                output_queue.put_many(
+                    self.eval_items(items_to_eval, self.memory_manager)
+                )
                 items_to_eval.clear()
 
     @staticmethod
-    def get_items(buffer: Deque, input_queue: QueueManager, queue_throttle: int) -> bool:
+    def get_items(
+        buffer: Deque, input_queue: QueueManager, queue_throttle: int
+    ) -> bool:
         items_to_eval: List[Tuple[str, str]] = input_queue.get_many(queue_throttle)
         if items_to_eval:
             buffer.extend(items_to_eval)
@@ -125,7 +131,7 @@ class EvalWorker(BaseWorker):
 
     def eval_items(
         self, eval_items: List[Tuple[str, str]], memory_manager: MemoryManager
-    ) -> List[Tuple[str, str, int, int, double]]:
+    ) -> List[Tuple[str, str, int, double]]:
         """"""
 
         # names = [item[0] for item in eval_items]  # generators are slower in this case :|
@@ -152,11 +158,10 @@ class EvalWorker(BaseWorker):
         ]
 
         return queue_items
-        # self.output_queue.put_many(queue_items)
 
     def eval_item(
         self, board: Board, node_name: str, move_str: str
-    ) -> Tuple[str, str, int, int, double]:
+    ) -> Tuple[str, str, int, double]:
         """"""
 
         # self.call_count += 1
@@ -166,8 +171,7 @@ class EvalWorker(BaseWorker):
             board.lighter_pop(self.prev_state)
 
         captured_piece_type: int
-        moved_piece_type: int
-        board, captured_piece_type, moved_piece_type = self.get_board_data(
+        board, captured_piece_type = self.get_board_data(
             board, move_str
         )  # board after the move
         self.prev_board = board
@@ -175,13 +179,15 @@ class EvalWorker(BaseWorker):
         result, is_check = self.get_quick_result(board, node_name, move_str)
         if result is not None:
             # sending -1 as signal game over in this node
-            return node_name, move_str, moved_piece_type, -1, result
+            return node_name, move_str, -1, result
 
         score: double = self.evaluate(board, move_str, captured_piece_type, is_check)
 
-        return node_name, move_str, moved_piece_type, captured_piece_type, score
+        return node_name, move_str, captured_piece_type, score
 
-    def get_quick_result(self, board: Board, node_name: str, move_str: str) -> Tuple[Optional[double], bool]:
+    def get_quick_result(
+        self, board: Board, node_name: str, move_str: str
+    ) -> Tuple[Optional[double], bool]:
         """"""
 
         # if board.simple_can_claim_threefold_repetition():
@@ -215,11 +221,17 @@ class EvalWorker(BaseWorker):
     ) -> double:
         """"""
 
-        action: Optional[BaseEval.ActionType] = (
-            None
-            if self.constant_action
-            else self.get_action(self.evaluator.ACTION_SIZE)
+        action = (
+            self.get_memory_action(self.evaluator.ACTION_SIZE)
+            if self.memory_action
+            else self.env and self.get_action()
         )
+
         return self.evaluator.get_score(
             board, move_str, captured_piece_type, is_check, action=action
         )
+
+    def get_action(self) -> ActionType:
+        obs = self.env.observation()
+        # return self.env.action_downgrade(self.model.predict(obs, deterministic=True)[0])
+        return self.model.predict(obs, deterministic=True)[0]

@@ -32,10 +32,7 @@ class QueueManager:
         )
 
     def put(self, item):
-        """
-
-        :param item:
-        """
+        """"""
 
         try:
             self.queue.put(item)
@@ -43,10 +40,7 @@ class QueueManager:
             raise
 
     def put_many(self, items):
-        """
-
-        :param items:
-        """
+        """"""
 
         try:
             self.queue.put_many_nowait(items)
@@ -54,10 +48,7 @@ class QueueManager:
             raise
 
     def get(self):
-        """
-
-        :return:
-        """
+        """"""
 
         try:
             return self.queue.get_nowait(timeout=0)
@@ -65,10 +56,7 @@ class QueueManager:
             return None
 
     def get_many(self, max_messages_to_get: int = 10):
-        """
-
-        :return:
-        """
+        """"""
 
         try:
             return self.queue.get_many_nowait(max_messages_to_get=max_messages_to_get)
@@ -76,10 +64,7 @@ class QueueManager:
             return None
 
     def get_many_blocking(self, timeout: float, max_messages_to_get: int = 10):
-        """
-
-        :return:
-        """
+        """"""
 
         try:
             return self.queue.get_many(max_messages_to_get=max_messages_to_get, block=True, timeout=timeout)
@@ -87,17 +72,16 @@ class QueueManager:
             return None
 
     def empty(self) -> bool:
-        """
-
-        :return:
-        """
+        """"""
 
         return self.queue.empty()
 
     def size(self) -> int:
-        """
-
-        :return:
-        """
+        """"""
 
         return self.queue.qsize()
+
+    def close(self) -> int:
+        """"""
+
+        return self.queue.close()
