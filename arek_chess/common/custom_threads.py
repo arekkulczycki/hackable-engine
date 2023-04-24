@@ -16,6 +16,6 @@ class ReturningThread(Thread):
         self._stop_event.set()
 
     def join(self, timeout: float = None) -> Any:
-        Thread.join(self, timeout)
+        super().join(timeout)
 
         return self._return

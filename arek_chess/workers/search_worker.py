@@ -68,19 +68,24 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         self.tree_params = tree_params  # TODO: create a constant class like Print
 
         self.root: Optional[Node] = None
+        self.nodes_dict: Dict[str, Node] = {}
         self.memory_manager = MemoryManager()
 
         self.distributed: int = 0
         self.evaluated: int = 0
         self.selected: int = 0
-        # self.selected_nodes = []
         self.explored: int = 0
 
         self.limit: int = 2 ** (search_limit or 14)  # 14 -> 16384, 15 -> 32768
 
         self.should_profile: bool = False
 
-    def set_root(self, board: Optional[Board] = None, restart: bool = False) -> None:
+    def set_root(
+        self,
+        board: Optional[Board] = None,
+        root: Optional[Node] = None,
+        nodes_dict: Optional[Dict[str, Node]] = None,
+    ) -> None:
         """"""
 
         if board:
@@ -90,7 +95,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         score = -INF if self.board.turn else INF
 
-        if restart or self.root is None:
+        if root is None:
             self.root = Node(
                 parent=None,
                 name=ROOT_NODE_NAME,
@@ -101,24 +106,25 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 color=self.board.turn,
                 being_processed=True,
             )
-            self.memory_manager.set_node_board(ROOT_NODE_NAME, self.board)
+            self.nodes_dict = {ROOT_NODE_NAME: self.root}
+            self.root.looked_at = True
+
         else:
-            last_move = self.board.move_stack[-1].uci()
-            chosen_child: Optional[Node] = None
-            for child in self.root.children:
-                if child.move == last_move:
-                    chosen_child = child
-                    break
+            self.root = root
+            self.nodes_dict = nodes_dict
 
-            if chosen_child is None:
-                raise ValueError("Could not recognize move played")
-            self.root = chosen_child
-            self.distributed = 1
-            self.evaluated = 1  # TODO: make this more pretty, now it's pretending the search was started as usual
+            # clean hashmap of discarded moves
+            for key in list(self.nodes_dict.keys()):
+                if not key.startswith(self.root.name):
+                    del self.nodes_dict[key]
 
-        self.root.looked_at = True
+        self.memory_manager.set_node_board(self.root.name, self.board)
 
-        self.traversal: Traverser = Traverser(self.root)
+        self.distributed = 1
+        if not self.root.children:
+            self.distributor_queue.put((self.root.name, "", self.root.score, 0))
+
+        self.traverser: Traverser = Traverser(self.root, self.nodes_dict)
 
     def run(self):
         """"""
@@ -137,9 +143,6 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
     def _search(self) -> str:
         """"""
-
-        self.distributor_queue.put((ROOT_NODE_NAME, "", self.root.score, 0))
-        self.distributed = 1
 
         self.t_0: float = time()
         self.t_tmp: float = self.t_0
@@ -217,17 +220,11 @@ class SearchWorker(ReturningThread, ProfilerMixin):
             )
 
             if self.evaluated == self.last_evaluated:
-                print(
-                    f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}"
-                )
                 if progress < 99 and self.root.score not in [-INF, INF]:
+                    print(
+                        f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}"
+                    )
                     raise SearchFailed("nodes not delivered on queues")
-
-                # print(
-                #     f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}",
-                #     "Checkmate, finishing early...",
-                # )
-                # print(self.board.move_stack)
 
                 return True
 
@@ -292,9 +289,12 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 try:
                     parsed_value = int(control_value)
                 except ValueError:
+                    if control_value == "ERROR":
+                        raise SearchFailed("Dispatcher error")
+
                     try:
                         # no children to look at, so nothing sent to evaluation
-                        node = self.traversal.get_node(control_value)
+                        node = self.traverser.get_node(control_value)
                     except KeyError:
                         # leftover from previous move somehow got here TODO: is this really needed?
                         continue
@@ -329,7 +329,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
     ) -> None:
         """"""
 
-        nodes_to_distribute: List[Node] = self.traversal.get_nodes_to_distrubute(
+        nodes_to_distribute: List[Node] = self.traverser.get_nodes_to_distrubute(
             candidates
         )
 
@@ -344,7 +344,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         Select next nodes to explore and queue for distribution.
         """
 
-        top_nodes = self.traversal.get_nodes_to_look_at(iterations)
+        top_nodes = self.traverser.get_nodes_to_look_at(iterations)
 
         if not top_nodes:
             return
@@ -400,7 +400,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                     f"time: {total_time}, nodes/s: {round(self.evaluated / total_time)}"
                 )
 
-                # print(sorted([(node.name, score) for node, score in self.traversal.selections.items()], key=lambda x: x[1], reverse=True))
+                # print(sorted([(node.name, score) for node, score in self.traverser.selections.items()], key=lambda x: x[1], reverse=True))
 
             print("chosen move -->", round(best_score, 3), best_move)
         elif self.printing == Print.MOVE:
@@ -411,7 +411,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         self.selected = 0
         self.explored = 0
 
-        # print(sorted([(node.name, score) for node, score in self.traversal.selections.items()], key=lambda x: x[1],
+        # print(sorted([(node.name, score) for node, score in self.traverser.selections.items()], key=lambda x: x[1],
         #              reverse=True))
 
         return best_move

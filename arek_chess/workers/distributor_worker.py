@@ -65,7 +65,11 @@ class DistributorWorker(BaseWorker):
         return self.distributor_queue.get_many_blocking(0.005, queue_throttle)
 
     def distribute(self, items: List[Tuple[str, str, double, int]]) -> None:
-        """"""
+        """
+        Queue all legal moves for evaluation.
+
+        :raises ValueError: when node memory was not found
+        """
 
         queue_items = []
 
@@ -78,15 +82,20 @@ class DistributorWorker(BaseWorker):
             # root board is already created at the very start in the search_manager
             if node_name == ROOT_NODE_NAME:
                 board = self.memory_manager.get_node_board(node_name)
+                if board is None:
+                    raise ValueError(f"node memory not found: {node_name}")
             else:
                 parent_node_name = ".".join(node_name.split(".")[:-1])
+
+                # storing the shared memory for node_name board
                 try:
-                    # storing the shared memory for node_name board
                     board = self.create_node_board(
                         parent_node_name, node_name, move_str
                     )
-                except Exception as e:
-                    # print(f"failed creating board for {node_name}: {e}")
+                except ValueError as e:
+                    # FIXME: still getting items from previous run...
+                    print(f"ERROR: {e}")
+                    self.control_queue.put("ERROR")
                     continue
 
             new_queue_items = []
@@ -138,7 +147,7 @@ class DistributorWorker(BaseWorker):
 
         board: Optional[Board] = self.memory_manager.get_node_board(parent_node_name)
         if board is None:
-            raise Exception(f"board not found for parent: {parent_node_name}")
+            raise ValueError(f"board not found for parent of: {node_name}")
 
         if node_move:
             board.push(Move.from_uci(node_move))

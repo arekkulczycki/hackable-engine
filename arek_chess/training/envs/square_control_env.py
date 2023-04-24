@@ -71,7 +71,7 @@ class SquareControlEnv(gym.Env):
 
         if controller is None:
             self.controller = Controller(
-                Print.NOTHING, search_limit=9, memory_action=True, timeout=3
+                Print.NOTHING, search_limit=9, memory_action=True, timeout=3, in_thread=False
             )
             # self.controller.boot_up(next(fens), self.action_space.sample())
             self.controller.boot_up()
@@ -111,8 +111,8 @@ class SquareControlEnv(gym.Env):
 
         result = self.controller.board.result()
         if result == "*":
-            # playing against configured action
-            self.controller.make_move(WEAK_ACTION)
+            # playing against a configured action
+            self._run_action(WEAK_ACTION)
 
             result = self.controller.board.result()
 

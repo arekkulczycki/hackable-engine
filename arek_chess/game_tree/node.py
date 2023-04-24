@@ -85,9 +85,7 @@ class Node:
             # parent.being_processed = any(child.being_processed for child in parent.children)
             parent.being_processed = False
 
-            if (
-                not self.being_processed
-            ):  # and not (old_value is None and odd_level):  # odd level leafs don't propagate
+            if not self.being_processed:  # don't propagate until capture-fest finished
                 parent.propagate_score(value, old_value, self.leaf_color)
 
     def propagate_score(

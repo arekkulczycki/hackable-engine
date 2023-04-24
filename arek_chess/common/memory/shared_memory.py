@@ -20,6 +20,7 @@ from arek_chess.common.constants import ROOT_NODE_NAME
 from arek_chess.common.memory.base_memory import BaseMemory
 
 PARAM_MEMORY_SIZE = 5  # TODO: this should be custom for each criteria/evaluator
+MAX_LENGTH = 253
 
 
 class SharedMemory(BaseMemory):
@@ -29,8 +30,8 @@ class SharedMemory(BaseMemory):
 
     @staticmethod
     def parse_key(key: str) -> str:
-        if len(key) > 253:
-            return key[-253:].partition(".")[2]
+        if len(key) > MAX_LENGTH:
+            return key[-MAX_LENGTH:].partition(".")[2]
         return key
 
     def get(self, key: str, default: Optional[bytes] = None) -> Optional[bytes]:
@@ -228,30 +229,38 @@ class SharedMemory(BaseMemory):
             shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
         ).tolist()
 
-    def clean(self) -> None:
+    def clean(self, except_prefix: str = "") -> None:
         """"""
 
-        # for filename in os.listdir("/dev/shm"):
-        #     path = os.path.join("/dev/shm", filename)
-        #     if os.path.isfile(path) and filename.startswith(f"{ROOT_NODE_NAME}."):  # FIXME: incorrect
-        #         try:
-        #             os.unlink(path)
-        #         except FileNotFoundError:
-        #             print(f"File {path} not found")
-        # try:
-        #     os.unlink(os.path.join("/dev/shm", ROOT_NODE_NAME))
-        #     os.unlink(os.path.join("/dev/shm", "action"))
-        # except:
-        #     pass
+        if len(except_prefix) > MAX_LENGTH:
+            print("OK")
+            return  # FIXME: change node identification method
 
-        # TODO: make this right...
-        os.system(f"rm /dev/shm/1.*")
-        os.system(f"rm /dev/shm/*")
+        for filename in os.listdir(
+            "/dev/shm"
+        ):  # FIXME: dangerous, may remove files not owned by us
+            path = os.path.join("/dev/shm", filename)
+            parent_name = ".".join(except_prefix.split(".")[:-1])
+            if (
+                os.path.isfile(path)
+                and not filename == parent_name
+                and not (except_prefix and filename.startswith(except_prefix))
+            ):
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    print(f"File {path} not found")
+        try:
+            os.unlink(os.path.join("/dev/shm", "action"))
+        except:
+            pass
 
         # for c in "abcdefgh":
         #     for d in "12345678":
         #         os.system(f"rm /dev/shm/{c}{d}*")
 
+        if except_prefix:
+            print(f"OK (skipped {except_prefix}*)")
         print("OK")  # just to align with what Redis does :)
 
 
@@ -271,7 +280,9 @@ class DangerousSharedMemory:
     _mode = 0o600
     _prepend_leading_slash = True
 
-    def __init__(self, name: str = None, create: bool = False, size: int = 0, write: bool = False):
+    def __init__(
+        self, name: str = None, create: bool = False, size: int = 0, write: bool = False
+    ):
         if not size >= 0:
             raise ValueError("'size' must be a positive integer")
 

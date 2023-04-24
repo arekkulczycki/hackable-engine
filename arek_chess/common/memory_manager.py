@@ -114,5 +114,5 @@ class MemoryManager:
         self.memory.remove(f"{node_name}.params")
         self.memory.remove(f"{node_name}")
 
-    def clean(self):
-        self.memory.clean()
+    def clean(self, except_prefix: str = ""):
+        self.memory.clean(except_prefix)

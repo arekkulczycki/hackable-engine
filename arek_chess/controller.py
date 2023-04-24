@@ -4,12 +4,12 @@ Controls all engine flows and communication to outside world.
 
 import traceback
 from time import sleep
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict
 
 from chess import Move, Termination
 
 from arek_chess.board.board import Board
-from arek_chess.common.constants import Print
+from arek_chess.common.constants import Print, ROOT_NODE_NAME
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.queue_manager import QueueManager
@@ -32,6 +32,7 @@ class Controller:
     selector_queue: QueueManager
     control_queue: QueueManager
     board: Board
+    search_worker: Optional[SearchWorker]
 
     def __init__(
         self,
@@ -63,6 +64,7 @@ class Controller:
 
         self.model_version = model_version
         self.memory_action = memory_action
+        self.search_worker = None
 
     def boot_up(self, fen: Optional[str] = None) -> None:
         """"""
@@ -77,7 +79,6 @@ class Controller:
             self.initial_fen = self.board.fen()
 
         self.start_child_processes()
-        self._setup_search_worker()
 
     def start_child_processes(self) -> None:
         """"""
@@ -112,14 +113,26 @@ class Controller:
             process.start()
 
     def _restart_search_worker(self):
-        self.search_worker.stop()  # sends a signal for the thread to finish
-        if self.search_worker._started.is_set():
-            self.search_worker.join(0.5)
+        if self.search_worker and self.in_thread:
+            self.search_worker.stop()  # sends a signal for the thread to finish
+            if self.search_worker._started.is_set():
+                self.search_worker.join(0.5)
         sleep(0.5)
         self.clear_queues()
-        self._setup_search_worker()
+        self._setup_search_worker(restart=True)
 
-    def _setup_search_worker(self):
+    def _setup_search_worker(self, restart: bool = False):
+        next_root: Optional[Node] = None
+        nodes_dict: Optional[Dict[str, Node]] = None
+        if not restart:
+            next_root = (
+                self._get_next_root()
+                if self.search_worker and self.board.move_stack
+                else None
+            )
+            nodes_dict = self.search_worker.nodes_dict if self.search_worker else None
+        # TODO: in training this is wrong, it should re-use old tree every full move, not sharing tree with the opponent
+
         self.search_worker = SearchWorker(
             self.distributor_queue,
             self.selector_queue,
@@ -129,7 +142,15 @@ class Controller:
             self.tree_params,
             self.search_limit,
         )
-        self.search_worker.set_root(self.board)  # TODO: set previously calculated tree as new root
+
+        if next_root:
+            self.release_memory(except_prefix=next_root.name)
+        else:
+            self.release_memory()
+
+        self.search_worker.set_root(
+            self.board, next_root, nodes_dict
+        )  # TODO: set previously calculated tree as new root
 
     def make_move(
         self,
@@ -140,7 +161,7 @@ class Controller:
         if memory_action is not None:
             MemoryManager().set_action(memory_action, len(memory_action))
 
-        self._setup_search_worker()
+        self._setup_search_worker(restart=True)  # TODO: set False when branch reusing works
 
         fails = 0
         while True:
@@ -149,6 +170,7 @@ class Controller:
             elif fails >= 3:
                 print("restarting all workers...")
                 self.restart(fen=self.board.fen())
+                self._restart_search_worker()
                 sleep(3)
             elif fails > 0:
                 print("restarting search worker...")
@@ -158,23 +180,37 @@ class Controller:
                 # self.timeout = self.original_timeout
                 break
             except SearchFailed as e:
-                # self.timeout += 1
                 if fails >= 2:
                     traceback.print_exc()
                 else:
                     print(f"search failed: {e}\nstarting over...")
                 fails += 1
 
-        self.release_memory()
+                sleep(0.5)
+                self.clear_queues()
+
+        self.board.push(Move.from_uci(move))
+
         self.clear_queues()
 
-        self.board.push(move)
+    def _get_next_root(self) -> Optional[Node]:
+        last_move = self.board.move_stack[-1].uci()
+        chosen_child: Optional[Node] = None
+        for child in self.search_worker.root.children:
+            if child.move == last_move:
+                chosen_child = child
+                break
+
+        if chosen_child is None:
+            raise ValueError(f"Could not recognize move played: {last_move}")
+
+        return chosen_child
 
     def make_move_and_get_root_node(self) -> Node:
         self.make_move()
         return self.search_worker.root
 
-    def _search(self) -> Move:
+    def _search(self) -> str:
         # TODO: current thread vs new thread vs new process???
         if self.in_thread:
             self.search_worker.start()
@@ -184,7 +220,7 @@ class Controller:
         if not move:
             raise SearchFailed
 
-        return Move.from_uci(move)
+        return move
 
     def play(self) -> None:
         """"""
@@ -230,7 +266,6 @@ class Controller:
         self.restart_child_processes()
 
         self.board = Board(fen or self.initial_fen)
-        # self.search_manager.set_root(self.board)
 
         # TODO: restart the action to default
         # MemoryManager().set_action(self.evaluator_class.DEFAULT_ACTION, self.evaluator_class.DEFAULT_ACTION)
@@ -241,7 +276,7 @@ class Controller:
         self.stop_child_processes()
         self.recreate_queues()
         self.start_child_processes()
-        self._restart_search_worker()
+        # self._restart_search_worker()
 
         # print("processes restarted...")
 
@@ -296,7 +331,7 @@ class Controller:
         self.child_processes.clear()
 
     @staticmethod
-    def release_memory() -> None:
+    def release_memory(except_prefix: str = "") -> None:
         """"""
 
-        MemoryManager().clean()
+        MemoryManager().clean(except_prefix)

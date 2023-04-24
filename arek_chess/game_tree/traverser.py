@@ -4,12 +4,12 @@ Tree traversal model.
 """
 
 from itertools import cycle
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Generator
 
 from chess import BISHOP, KNIGHT
 from numpy import double
 
-from arek_chess.common.constants import ROOT_NODE_NAME
+from arek_chess.common.constants import INF
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.criteria.selection.fast_selector import FastSelector
 from arek_chess.game_tree.node import Node
@@ -22,11 +22,11 @@ class Traverser:
 
     root: Node
 
-    def __init__(self, root: Node) -> None:
+    def __init__(self, root: Node, nodes_dict: Dict[str, Node]) -> None:
         super().__init__()
 
         self.root = root
-        self.nodes_dict: Dict[str, Node] = {ROOT_NODE_NAME: self.root}
+        self.nodes_dict: Dict[str, Node] = nodes_dict
 
         # self.selector: LinearProbabilitySelector = LinearProbabilitySelector()
         # self.selector: ExpProbabilitySelector = ExpProbabilitySelector()
@@ -47,20 +47,20 @@ class Traverser:
         Get N nodes, taking each from a different node, but focusing around the best nodes.
         """
 
-        level_to_block: cycle = cycle([3, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0, 0][-iterations:])
-        nodes: List[Node] = [
-            node
-            for node in (
-                self._get_next_node_to_look_at_and_block(
-                    bool(i % 2 == 1) is self.root.color, next(level_to_block)
-                )
-                for i in range(iterations * 2)
+        iterations = 2 * iterations
+        level_to_block: cycle = cycle(
+            [3, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0, 0][-iterations:]
+        )
+        maybe_nodes: Generator[Optional[Node], None, None] = (
+            self._get_next_node_to_look_at_and_block(
+                (i % 2 == 1) == self.root.color, next(level_to_block)
             )
-            if node is not None
-        ]
+            for i in range(iterations)
+        )
+        nodes: List[Node] = [node for node in maybe_nodes if node is not None]
         """should challenge the best branch by first picking up odd-level leaf, i.e. leaf opposite to root color"""
 
-        # unblock first level nodes
+        # unblock temporarily blocked nodes
         for child in self.blocked_nodes:
             child.being_processed = False
         self.blocked_nodes.clear()
@@ -71,9 +71,12 @@ class Traverser:
         self, leaf_color: bool, level_to_block: int = 0
     ) -> Optional[Node]:
         node: Optional[Node] = self.get_next_node_to_look_at(leaf_color, level_to_block)
-        if self.node_to_block is not None:
+
+        if self.node_to_block is not None and not self.node_to_block.being_processed:
             self.node_to_block.being_processed = True  # temporarily blocking
             self.blocked_nodes.append(self.node_to_block)
+            self.node_to_block = None
+
         return node
 
     def get_next_node_to_look_at(
@@ -92,25 +95,22 @@ class Traverser:
                     # haven't received child nodes evaluations yet
                     return None
 
-                if best_node.looked_at:
-                    # was looked at and no children, the best path leads to checkmate then don't select anything more
+                if best_node.score in [INF, -INF]:
+                    # the best path leads to checkmate then don't select anything more
                     return None
 
                 # is a leaf that hasn't yet been looked at
-                best_node.looked_at = True
                 best_node.being_processed = True
                 return best_node
 
-            # children except ones being processed or checkmate
-            unprocessed_children: List[Node] = [
+            # children of right leaf color, except ones being processed or checkmate
+            free_children: List[Node] = [
                 node
                 for node in children
                 if not node.being_processed and node.leaf_color == leaf_color
             ]
-            if unprocessed_children:
-                best_node = self.select_promising_node(
-                    unprocessed_children, best_node.color
-                )
+            if free_children:
+                best_node = self.select_promising_node(free_children, best_node.color)
             else:
                 return None
 
@@ -153,13 +153,9 @@ class Traverser:
             try:
                 parent = self.get_node(parent_name)
                 # parent_score = parent.score
-            except KeyError:
-                # print("node not found in items: ", parent_name, self.nodes_dict.keys())
-                if len(self.nodes_dict.keys()) == 1:
-                    # was never meant to be here, but somehow queue delivers phantom items
-                    continue
-                else:
-                    raise SearchFailed(f"node not found in items: {parent_name}")
+            except KeyError as e:
+                raise SearchFailed(f"node not found in items: {parent_name}")
+
             level = parent_name.count(".") + 1
             color: bool = self.root.color if level % 2 == 0 else not self.root.color
 

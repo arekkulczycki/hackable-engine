@@ -26,7 +26,7 @@ class BaseMemory:
     def remove(self, key: str):
         raise NotImplementedError
 
-    def clean(self):
+    def clean(self, except_prefix: str = ""):
         raise NotImplementedError
 
     async def get_async(self, key: str) -> bytes:
