@@ -8,7 +8,7 @@ from typing import Type
 from unittest import TestCase
 from unittest.mock import patch
 
-from numpy import double
+from numpy import float32
 
 from arek_chess.board.board import Board
 from arek_chess.common.constants import Print

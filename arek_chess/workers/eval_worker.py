@@ -1,18 +1,14 @@
 # -*- coding: utf-8 -*-
-"""
-Worker that performs evaluation on nodes picked up from queue.
-"""
 
 from collections import deque
-from time import sleep
 from typing import Tuple, Optional, List, Deque
 
 import gym
-from numpy import double
+from numpy import float32
 from stable_baselines3 import PPO
 
 from arek_chess.board.board import Board
-from arek_chess.common.constants import INF, SLEEP, DRAW
+from arek_chess.common.constants import INF, DRAW, SLEEP
 from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.queue_manager import QueueManager
 from arek_chess.criteria.evaluation.base_eval import ActionType
@@ -84,54 +80,13 @@ class EvalWorker(BaseWorker):
         # switch = True
         while True:
             # items_to_eval: List[Tuple[str, str]] = input_queue.get_many_blocking(0.005, queue_throttle)
-            items_to_eval: List[Tuple[str, str]] = eval_queue.get_many(queue_throttle)
+            items_to_eval: List[Tuple[str, str]] = eval_queue.get_many(queue_throttle, SLEEP)
             if items_to_eval:
                 selector_queue.put_many(eval_items(items_to_eval, memory_manager))
-            else:
-                sleep(SLEEP)
-
-    def run_with_buffer(
-        self, input_queue: QueueManager, output_queue: QueueManager, queue_throttle: int
-    ):
-        """
-        Buffering items from queue in order to perform evaluation while waiting for new queue items.
-
-        Offers no improvement at this moment.
-        """
-
-        get_items = self.get_items
-        items_buffer = deque()
-        items_to_eval: List[Tuple[str, str]] = []
-
-        while True:
-            if get_items(items_buffer, input_queue, queue_throttle):
-                continue
-
-            try:
-                for _ in range(queue_throttle):
-                    items_to_eval.append(items_buffer.popleft())
-            except IndexError:
-                pass
-
-            if items_to_eval:
-                output_queue.put_many(
-                    self.eval_items(items_to_eval, self.memory_manager)
-                )
-                items_to_eval.clear()
-
-    @staticmethod
-    def get_items(
-        buffer: Deque, input_queue: QueueManager, queue_throttle: int
-    ) -> bool:
-        items_to_eval: List[Tuple[str, str]] = input_queue.get_many(queue_throttle)
-        if items_to_eval:
-            buffer.extend(items_to_eval)
-            return True
-        return False
 
     def eval_items(
         self, eval_items: List[Tuple[str, str]], memory_manager: MemoryManager
-    ) -> List[Tuple[str, str, int, double]]:
+    ) -> List[Tuple[str, str, float32, int]]:
         """"""
 
         # names = [item[0] for item in eval_items]  # generators are slower in this case :|
@@ -161,7 +116,7 @@ class EvalWorker(BaseWorker):
 
     def eval_item(
         self, board: Board, node_name: str, move_str: str
-    ) -> Tuple[str, str, int, double]:
+    ) -> Tuple[str, str, float32, int]:
         """"""
 
         # self.call_count += 1
@@ -179,15 +134,15 @@ class EvalWorker(BaseWorker):
         result, is_check = self.get_quick_result(board, node_name, move_str)
         if result is not None:
             # sending -1 as signal game over in this node
-            return node_name, move_str, -1, result
+            return node_name, move_str, result, -1
 
-        score: double = self.evaluate(board, move_str, captured_piece_type, is_check)
+        score: float32 = self.evaluate(board, move_str, captured_piece_type, is_check)
 
-        return node_name, move_str, captured_piece_type, score
+        return node_name, move_str, score, captured_piece_type
 
     def get_quick_result(
         self, board: Board, node_name: str, move_str: str
-    ) -> Tuple[Optional[double], bool]:
+    ) -> Tuple[Optional[float32], bool]:
         """"""
 
         # if board.simple_can_claim_threefold_repetition():
@@ -218,7 +173,7 @@ class EvalWorker(BaseWorker):
 
     def evaluate(
         self, board: Board, move_str: str, captured_piece_type: int, is_check: bool
-    ) -> double:
+    ) -> float32:
         """"""
 
         action = (

@@ -4,44 +4,44 @@ from typing import Dict, List, Optional
 
 import gym
 import numpy
-from numpy import double
+from numpy import float32
 
 from arek_chess.common.constants import Print
 from arek_chess.criteria.evaluation.base_eval import ActionType
 from arek_chess.controller import Controller
 
 DEFAULT_ACTION: ActionType = (
-    double(0.15),  # castling_rights
-    double(-0.1),  # king_mobility
-    double(0.1),  # is_check
-    double(1.0),  # material
-    double(0.015),  # own occupied square control
-    double(0.015),  # opp occupied square control
-    double(0.01),  # empty square control
-    double(0.01),  # king proximity square control primary
-    double(1.0),  # king proximity square control secondary
+    float32(0.15),  # castling_rights
+    float32(-0.1),  # king_mobility
+    float32(0.1),  # is_check
+    float32(1.0),  # material
+    float32(0.015),  # own occupied square control
+    float32(0.015),  # opp occupied square control
+    float32(0.01),  # empty square control
+    float32(0.01),  # king proximity square control primary
+    float32(1.0),  # king proximity square control secondary
 )
 MEDIUM_ACTION: ActionType = (
-    double(0.075),  # castling_rights
-    double(-0.05),  # king_mobility
-    double(0.1),  # is_check
-    double(1.0),  # material
-    double(0.1),  # own occupied square control
-    double(0.1),  # opp occupied square control
-    double(0.0),  # empty square control
-    double(0.0),  # king proximity square control primary
-    double(0.0),  # king proximity square control secondary
+    float32(0.075),  # castling_rights
+    float32(-0.05),  # king_mobility
+    float32(0.1),  # is_check
+    float32(1.0),  # material
+    float32(0.1),  # own occupied square control
+    float32(0.1),  # opp occupied square control
+    float32(0.0),  # empty square control
+    float32(0.0),  # king proximity square control primary
+    float32(0.0),  # king proximity square control secondary
 )
 WEAK_ACTION: ActionType = (
-    double(0.0),  # castling_rights
-    double(0.0),  # king_mobility
-    double(0.1),  # is_check
-    double(1.0),  # material
-    double(0.0),  # own occupied square control
-    double(0.0),  # opp occupied square control
-    double(0.0),  # empty square control
-    double(0.0),  # king proximity square control primary
-    double(0.0),  # king proximity square control secondary
+    float32(0.0),  # castling_rights
+    float32(0.0),  # king_mobility
+    float32(0.1),  # is_check
+    float32(1.0),  # material
+    float32(0.0),  # own occupied square control
+    float32(0.0),  # opp occupied square control
+    float32(0.0),  # empty square control
+    float32(0.0),  # king proximity square control primary
+    float32(0.0),  # king proximity square control secondary
 )
 ACTION_SIZE: int = 9
 # EQUAL_MIDDLEGAME_FEN = "r3k2r/1ppbqpp1/pb1p1n1p/n3p3/2B1P2B/2PP1N1P/PPQN1PP1/R3K2R w KQkq - 0 12"
@@ -54,24 +54,24 @@ ACTION_SIZE: int = 9
 class SquareControlEnv(gym.Env):
     # metadata = {}
 
-    REWARDS: Dict[str, double] = {
-        "*": double(0.0),
-        "1/2-1/2": double(0.0),
-        "1-0": double(1.0),
-        "0-1": double(-1.0),
+    REWARDS: Dict[str, float32] = {
+        "*": float32(0.0),
+        "1/2-1/2": float32(0.0),
+        "1-0": float32(1.0),
+        "0-1": float32(-1.0),
     }
 
     def __init__(self, controller: Optional[Controller] = None):
         super().__init__()
 
-        self.reward_range = (double(-1.0), double(1.0))
+        self.reward_range = (float32(-1.0), float32(1.0))
 
         self.action_space = self._get_action_space()
         self.observation_space = self._get_observation_space()
 
         if controller is None:
             self.controller = Controller(
-                Print.NOTHING, search_limit=9, memory_action=True, timeout=3, in_thread=False
+                Print.NOTHING, search_limit=9, memory_action=True, timeout=3, in_thread=True
             )
             # self.controller.boot_up(next(fens), self.action_space.sample())
             self.controller.boot_up()
@@ -83,8 +83,8 @@ class SquareControlEnv(gym.Env):
 
     def _get_action_space(self):
         return gym.spaces.Box(
-            numpy.array([0 for _ in range(ACTION_SIZE)], dtype=double),  # TODO: change to -1
-            numpy.array([1 for _ in range(ACTION_SIZE)], dtype=double),
+            numpy.array([0 for _ in range(ACTION_SIZE)], dtype=float32),  # TODO: change to -1
+            numpy.array([1 for _ in range(ACTION_SIZE)], dtype=float32),
         )
 
     def _get_observation_space(self):
@@ -101,8 +101,8 @@ class SquareControlEnv(gym.Env):
         """
 
         return gym.spaces.Box(
-            numpy.array([0 for _ in range(4)], dtype=numpy.double),
-            numpy.array([1 for _ in range(4)], dtype=numpy.double),
+            numpy.array([0 for _ in range(4)], dtype=numpy.float32),
+            numpy.array([1 for _ in range(4)], dtype=numpy.float32),
         )
 
     def step(self, action: ActionType):
@@ -137,12 +137,12 @@ class SquareControlEnv(gym.Env):
     def observation(self):
         return self._board_to_obs()
 
-    def _board_to_obs(self) -> List[double]:
+    def _board_to_obs(self) -> List[float32]:
         board = self.controller.board
-        own_king_mobility = double(board.get_king_mobility(board.turn) / 8.0)
-        opp_king_mobility = double(board.get_king_mobility(not board.turn) / 8.0)
-        material = double(board.get_material_simple_both() / 40.0)
-        pawns = double(board.get_pawns_simple_both() / 16.0)
+        own_king_mobility = float32(board.get_king_mobility(board.turn) / 8.0)
+        opp_king_mobility = float32(board.get_king_mobility(not board.turn) / 8.0)
+        material = float32(board.get_material_simple_both() / 40.0)
+        pawns = float32(board.get_pawns_simple_both() / 16.0)
 
         return [own_king_mobility, opp_king_mobility, material, pawns]
 

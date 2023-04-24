@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Handling the chessboard and calculating features of a position for RL training observation.
-"""
 
 from __future__ import annotations
 
@@ -19,8 +16,8 @@ from typing import (
     Union,
     Dict,
     Tuple,
-    Iterable,
 )
+from nptyping import Single
 
 from chess import (
     Board as ChessBoard,
@@ -54,8 +51,8 @@ from chess import (
     PieceType,
     square_distance, scan_reversed, BB_ALL, BB_RANK_3, BB_RANK_4, BB_RANK_5, BB_RANK_6,
 )
-from nptyping import NDArray, Shape, Int, Double
-from numpy import double, empty
+from nptyping import NDArray, Shape, Int
+from numpy import float32, empty
 
 SQUARES = [
     A1,
@@ -296,17 +293,17 @@ class Board(ChessBoard):
     def get_pawns_simple_both(self) -> int:
         return get_bit_count(self.pawns)
 
-    def get_material_pawns(self, color: bool) -> double:
+    def get_material_pawns(self, color: bool) -> float32:
         pawn_bb: Bitboard = self.pawns & self.occupied_co[color]
 
-        value: double = double(0.0)
+        value: float32 = float32(0.0)
         for bb in scan_forward(pawn_bb):
             value += self.get_pawn_value(square_rank(bb), color)
 
         return value
 
     @staticmethod
-    def get_pawn_value(rank: int, color: bool) -> double:
+    def get_pawn_value(rank: int, color: bool) -> float32:
         if not color:
             rank = 7 - rank
 
@@ -314,18 +311,18 @@ class Board(ChessBoard):
 
     def get_piece_value(
         self, color: Color, piece_type: Optional[PieceType], rank: int = 0
-    ) -> double:
+    ) -> float32:
         if piece_type is None or piece_type == 6:
-            return double(0)
+            return float32(0)
         elif piece_type == 1:
-            return self.get_pawn_value(rank, color) if rank else double(1)
+            return self.get_pawn_value(rank, color) if rank else float32(1)
         elif piece_type in [2, 3]:
-            return double(3)
+            return float32(3)
         elif piece_type == 4:
-            return double(5)
+            return float32(5)
         elif piece_type == 5:
-            return double(9)
-        return double(0)
+            return float32(9)
+        return float32(0)
 
     def get_material_no_pawns(self, color: bool) -> int:
         oc_co: Bitboard = self.occupied_co[color]
@@ -542,7 +539,7 @@ class Board(ChessBoard):
 
     def get_occupied_square_value_map(
         self, color: Color
-    ) -> NDArray[Shape["64"], Double]:
+    ) -> NDArray[Shape["64"], Single]:
         """
         Returns list of 64 values, value of a piece on each square.
 
@@ -560,7 +557,7 @@ class Board(ChessBoard):
         fast_piece_type_at = self.fast_piece_type_at
         oc_co = self.occupied_co[color]
 
-        arr = empty(shape=(64,), dtype=double)
+        arr = empty(shape=(64,), dtype=float32)
         for square, mask in SQUARE_MASK_ITERATOR:
             arr[square] = (
                 0
@@ -605,7 +602,7 @@ class Board(ChessBoard):
     @staticmethod
     def generate_king_proximity_map_normalized(
         king: Square,
-    ) -> NDArray[Shape["64"], Double]:
+    ) -> NDArray[Shape["64"], Single]:
         """
         Returns list of 64 values, each distance from king.
         Normalized so that:
@@ -615,20 +612,20 @@ class Board(ChessBoard):
         :param king: square where the king is
         """
 
-        seven: double = double(7.0)  # pff
+        seven: float32 = float32(7.0)  # pff
 
-        arr = empty(shape=(64,), dtype=double)
+        arr = empty(shape=(64,), dtype=float32)
         for square in SQUARES:
-            arr[square] = double(square_distance(square, king))
+            arr[square] = float32(square_distance(square, king))
         return (seven - arr) / seven
 
     def get_king_proximity_map_normalized(
         self, color: Color
-    ) -> NDArray[Shape["64"], Double]:
+    ) -> NDArray[Shape["64"], Single]:
         king: Bitboard = self.kings & self.occupied_co[color]
         return KING_PROXIMITY_MAPS_NORMALIZED[king]
 
-    def get_normalized_threats_map(self, color: Color) -> List[double]:
+    def get_normalized_threats_map(self, color: Color) -> List[float32]:
         """
         Returns list of 64 values, accumulated threats on each square.
 
@@ -640,7 +637,7 @@ class Board(ChessBoard):
         """
 
         return [
-            double(min(1.0, get_bit_count(self.threats_mask(color, square)) / 8))
+            float32(min(1.0, get_bit_count(self.threats_mask(color, square)) / 8))
             for square in SQUARES
         ]
 
@@ -1069,7 +1066,7 @@ class Board(ChessBoard):
             yield Move(from_square, to_square)
 
 
-KING_PROXIMITY_MAPS_NORMALIZED: Dict[Bitboard, NDArray[Shape["64"], Double]] = {
+KING_PROXIMITY_MAPS_NORMALIZED: Dict[Bitboard, NDArray[Shape["64"], Single]] = {
     mask: Board.generate_king_proximity_map_normalized(square) for mask, square in zip(BB_SQUARES, SQUARES)
 }
 pawn_attacks_white: List[Bitboard] = BB_PAWN_ATTACKS[False]
@@ -1121,8 +1118,8 @@ SQUARE_CONTROL_FOR_BOTH_ITERATOR: List[
         )
     ),
 )
-PAWN_VALUES: Dict[int, double] = {
-    rank: double(1.0177) ** (max(0, rank - 2) ** 3) for rank in range(7)
+PAWN_VALUES: Dict[int, float32] = {
+    rank: float32(1.0177 ** (max(0, rank - 2) ** 3)) for rank in range(7)
 }
 KING_ATTACKS: Dict[Bitboard, Bitboard] = {
     mask: BB_KING_ATTACKS[square] for square, mask in zip(SQUARES, BB_SQUARES)

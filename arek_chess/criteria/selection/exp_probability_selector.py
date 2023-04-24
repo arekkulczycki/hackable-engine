@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-Selecting randomly with higher probability the higher the score.
-"""
 
 from random import choices
 from typing import List
+from numpy import float32
 
 from arek_chess.criteria.selection.base_selector import BaseSelector
 from arek_chess.game_tree.node import Node
@@ -18,8 +16,8 @@ class ExpProbabilitySelector(BaseSelector):
     @staticmethod
     def select(nodes: List[Node], color: bool) -> Node:
         best_node: Node
-        normalized_weights: List[float] = ExpProbabilitySelector._normalized_weights(
-            [float(node.score) for node in nodes], color
+        normalized_weights: List[float32] = ExpProbabilitySelector._normalized_weights(
+            [node.score for node in nodes], color
         )
 
         try:
@@ -28,7 +26,7 @@ class ExpProbabilitySelector(BaseSelector):
             return nodes[0]
 
     @staticmethod
-    def _normalized_weights(scores: List[float], color: bool) -> List[float]:
+    def _normalized_weights(scores: List[float32], color: bool) -> List[float32]:
         """
         Normalize scores so that are all between 0 and 1.
         """

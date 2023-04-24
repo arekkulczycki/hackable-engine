@@ -1,15 +1,12 @@
-"""
-Distributes to the queue nodes to be calculated by EvalWorkers.
-"""
+# -*- coding: utf-8 -*-
 
-from time import sleep
 from typing import List, Tuple, Optional
 
 from chess import Move, KNIGHT, BISHOP
-from numpy import double
+from numpy import float32
 
 from arek_chess.board.board import Board
-from arek_chess.common.constants import SLEEP, FINISHED, ROOT_NODE_NAME
+from arek_chess.common.constants import FINISHED, ROOT_NODE_NAME, ERROR, SLEEP
 from arek_chess.common.queue_manager import QueueManager as QM
 from arek_chess.workers.base_worker import BaseWorker
 
@@ -37,6 +34,9 @@ class DistributorWorker(BaseWorker):
         self.control_queue = control_queue
         self.queue_throttle = throttle
 
+        self.node_name_cache: Optional[str] = None
+        self.board_cache: Optional[Board] = None
+
     def setup(self):
         """"""
 
@@ -53,18 +53,16 @@ class DistributorWorker(BaseWorker):
         get_items = self.get_items
         distribute = self.distribute
         while True:
-            items: List[Tuple[str, str, double, int]] = get_items(queue_throttle)
+            items: List[Tuple[str, str, float32, int]] = get_items(queue_throttle)
             if items:
                 distribute(items)
-            else:
-                sleep(SLEEP)
 
-    def get_items(self, queue_throttle: int) -> List[Tuple[str, str, double, int]]:
+    def get_items(self, queue_throttle: int) -> List[Tuple[str, str, float32, int]]:
         """"""
 
-        return self.distributor_queue.get_many_blocking(0.005, queue_throttle)
+        return self.distributor_queue.get_many(queue_throttle, SLEEP)
 
-    def distribute(self, items: List[Tuple[str, str, double, int]]) -> None:
+    def distribute(self, items: List[Tuple[str, str, float32, int]]) -> None:
         """
         Queue all legal moves for evaluation.
 
@@ -76,6 +74,8 @@ class DistributorWorker(BaseWorker):
         for node_name, move_str, score, captured in items:  # TODO: get_many_boards ?
             # not a real node, just a signal for finishing processing iteration
             if node_name == FINISHED:
+                self.control_queue.put(str(self.distributed))
+                self.control_queue.put(FINISHED)
                 self.distributed = 0
                 return None
 
@@ -94,9 +94,8 @@ class DistributorWorker(BaseWorker):
                     )
                 except ValueError as e:
                     # FIXME: still getting items from previous run...
-                    print(f"ERROR: {e}")
-                    self.control_queue.put("ERROR")
-                    continue
+                    self.control_queue.put(ERROR)
+                    break
 
             new_queue_items = []
             for move in board.legal_moves:
@@ -107,7 +106,7 @@ class DistributorWorker(BaseWorker):
                 else:
                     new_queue_items.append((node_name, move.uci()))
 
-            # TODO: if it could be done very efficiently, would be beneficial to check game over here
+            # TODO: if it could be done efficiently, would be beneficial to check game over here
             # new_queue_items = []
             # move: Move
             # for move in board.legal_moves:
@@ -145,13 +144,19 @@ class DistributorWorker(BaseWorker):
     ) -> Board:
         """"""
 
-        board: Optional[Board] = self.memory_manager.get_node_board(parent_node_name)
+        if parent_node_name == self.node_name_cache:
+            board = self.board_cache
+            board.pop()
+        else:
+            board: Optional[Board] = self.memory_manager.get_node_board(parent_node_name)
+
         if board is None:
             raise ValueError(f"board not found for parent of: {node_name}")
 
-        if node_move:
-            board.push(Move.from_uci(node_move))
+        self.node_name_cache = parent_node_name
+        self.board_cache = board
 
+        board.push(Move.from_uci(node_move))
         self.memory_manager.set_node_board(node_name, board)
 
         return board

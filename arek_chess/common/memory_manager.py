@@ -4,7 +4,7 @@ Manages the shared memory between multiple processes.
 
 from typing import List, Dict, Tuple, Optional
 
-import numpy
+from numpy import float32, ndarray
 from larch.pickle.pickle import dumps, loads
 
 from arek_chess.board.board import Board
@@ -28,14 +28,14 @@ class MemoryManager:
     def get_action(self, size: int) -> ActionType:
         action_bytes = self.memory.get("action")
 
-        action = numpy.ndarray(
-            shape=(size,), dtype=numpy.double, buffer=action_bytes
+        action = ndarray(
+            shape=(size,), dtype=float32, buffer=action_bytes
         ).tolist()
 
         return action
 
     def set_action(self, action: ActionType, size: int) -> None:
-        data = numpy.ndarray(shape=(size,), dtype=numpy.double)
+        data = ndarray(shape=(size,), dtype=float32)
         data[:] = (*action,)
 
         self.memory.set("action", data.tobytes())
@@ -53,12 +53,12 @@ class MemoryManager:
         if not params_bytes:
             raise ValueError(f"Not found: {node_name}")
 
-        return numpy.ndarray(
-            shape=(size,), dtype=numpy.float16, buffer=params_bytes
+        return ndarray(
+            shape=(size,), dtype=float32, buffer=params_bytes
         ).tolist()
 
     def get_node_board(self, node_name: str) -> Optional[Board]:
-        board_bytes: Optional[bytes] = self.memory.get(f"{node_name}")
+        board_bytes: Optional[bytes] = self.memory.get(node_name)
         # print(len(board_bytes))
 
         return loads(board_bytes) if board_bytes is not None else None
@@ -71,7 +71,7 @@ class MemoryManager:
         return loads(board_bytes)
 
     def set_node_params(self, node_name: str, params: List[float]) -> None:
-        data = numpy.ndarray(shape=(len(params),), dtype=numpy.float16)
+        data = ndarray(shape=(len(params),), dtype=float32)
         data[:] = (*params,)
 
         self.memory.set(f"{node_name}.params", data.tobytes())
@@ -114,5 +114,5 @@ class MemoryManager:
         self.memory.remove(f"{node_name}.params")
         self.memory.remove(f"{node_name}")
 
-    def clean(self, except_prefix: str = ""):
-        self.memory.clean(except_prefix)
+    def clean(self, except_prefix: str = "", silent: bool = False):
+        self.memory.clean(except_prefix, silent)

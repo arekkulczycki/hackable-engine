@@ -38,7 +38,7 @@ Observation:
 
 from typing import Tuple, Optional
 
-from numpy import double, dot
+from numpy import float32, dot
 
 from arek_chess.board.board import Board
 from arek_chess.criteria.evaluation.base_eval import ActionType, BaseEval

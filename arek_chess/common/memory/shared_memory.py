@@ -229,11 +229,12 @@ class SharedMemory(BaseMemory):
             shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
         ).tolist()
 
-    def clean(self, except_prefix: str = "") -> None:
+    def clean(self, except_prefix: str = "", silent: bool = False) -> None:
         """"""
 
         if len(except_prefix) > MAX_LENGTH:
-            print("OK")
+            if not silent:
+                print("OK")
             return  # FIXME: change node identification method
 
         for filename in os.listdir(
@@ -248,8 +249,9 @@ class SharedMemory(BaseMemory):
             ):
                 try:
                     os.unlink(path)
-                except FileNotFoundError:
-                    print(f"File {path} not found")
+                except (FileNotFoundError, PermissionError):
+                    # print(f"File {path} not found")
+                    pass
         try:
             os.unlink(os.path.join("/dev/shm", "action"))
         except:
@@ -259,9 +261,10 @@ class SharedMemory(BaseMemory):
         #     for d in "12345678":
         #         os.system(f"rm /dev/shm/{c}{d}*")
 
-        if except_prefix:
-            print(f"OK (skipped {except_prefix}*)")
-        print("OK")  # just to align with what Redis does :)
+        if not silent:
+            if except_prefix:
+                print(f"OK (skipped {except_prefix}*)")
+            print("OK")  # just to align with what Redis does :)
 
 
 class DangerousSharedMemory:

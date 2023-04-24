@@ -1,14 +1,9 @@
-"""
-Module_docstring.
-"""
+# -*- coding: utf-8 -*-
 
-from functools import partial
-from queue import Empty, Full
-from typing import Optional
+from typing import List, Optional
 
-from faster_fifo import Queue
-
-from larch.pickle.pickle import dumps, loads
+from arek_chess.common.queue.faster_fifo_queue import FasterFifoQueue
+from arek_chess.common.queue.items.base_item import BaseItem
 
 
 class QueueManager:
@@ -16,72 +11,52 @@ class QueueManager:
     Class_docstring
     """
 
-    def __init__(self, name):
+    def __init__(self, name: str):
         """
         Initialize a queue of a chosen queuing class.
         """
 
-        self.name = name
+        self.queue = FasterFifoQueue(name)
+        # self.queue = RedisQueue(name)
+        # self.queue = RabbitmqQueue(name)
 
-        queue_loads = lambda _bytes: loads(_bytes.tobytes())
-        queue_dumps = partial(dumps, protocol=5, with_refs=False)
-        self.queue = Queue(
-            max_size_bytes=1000 * 1000 * 100,
-            loads=queue_loads,
-            dumps=queue_dumps,
-        )
+    @property
+    def name(self) -> str:
+        return self.queue.name
 
-    def put(self, item):
+    def put(self, item: BaseItem) -> None:
         """"""
 
-        try:
-            self.queue.put(item)
-        except Full:
-            raise
+        self.queue.put(item)
 
-    def put_many(self, items):
+    def put_many(self, items: List[BaseItem]) -> None:
         """"""
 
-        try:
-            self.queue.put_many_nowait(items)
-        except Full:
-            raise
+        self.queue.put_many(items)
 
-    def get(self):
+    def get(self) -> Optional[BaseItem]:
         """"""
 
-        try:
-            return self.queue.get_nowait(timeout=0)
-        except Empty:
-            return None
+        return self.queue.get()
 
-    def get_many(self, max_messages_to_get: int = 10):
+    def get_many(
+        self, max_messages_to_get: int = 10, timeout: int = 0
+    ) -> List[BaseItem]:
         """"""
 
-        try:
-            return self.queue.get_many_nowait(max_messages_to_get=max_messages_to_get)
-        except Empty:
-            return None
+        return self.queue.get_many(max_messages_to_get, timeout)
 
-    def get_many_blocking(self, timeout: float, max_messages_to_get: int = 10):
+    def is_empty(self) -> bool:
         """"""
 
-        try:
-            return self.queue.get_many(max_messages_to_get=max_messages_to_get, block=True, timeout=timeout)
-        except Empty:
-            return None
-
-    def empty(self) -> bool:
-        """"""
-
-        return self.queue.empty()
+        return self.queue.is_empty()
 
     def size(self) -> int:
         """"""
 
-        return self.queue.qsize()
+        return self.queue.size()
 
-    def close(self) -> int:
+    def close(self) -> None:
         """"""
 
-        return self.queue.close()
+        self.queue.close()

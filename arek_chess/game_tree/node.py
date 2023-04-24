@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import reduce
 from typing import Optional, List
 
-from numpy import double
+from numpy import float32
 
 
 class Node:
@@ -16,8 +16,8 @@ class Node:
     Node that propagates fast through its tree.
     """
 
-    _score: double
-    init_score: double
+    _score: float32
+    init_score: float32
 
     parent: Optional[Node]
     name: str
@@ -36,7 +36,7 @@ class Node:
         parent: Optional[Node],
         name: str,
         move: str,
-        score: double,
+        score: float32,
         captured: int,
         level: int,
         color: bool,
@@ -66,12 +66,12 @@ class Node:
         return f"Node({self.level}, {self.name}, {round(self._score, 3)}, initial: {round(self.init_score, 3)}, {self.being_processed})"
 
     @property
-    def score(self) -> double:
+    def score(self) -> float32:
         return self._score
 
     @score.setter
-    def score(self, value: double) -> None:
-        old_value: Optional[double] = getattr(
+    def score(self, value: float32) -> None:
+        old_value: Optional[float32] = getattr(
             self, "_score", None
         )  # None means is a leaf
         self._score = value
@@ -89,7 +89,7 @@ class Node:
                 parent.propagate_score(value, old_value, self.leaf_color)
 
     def propagate_score(
-        self, value: double, old_value: Optional[double], leaf_color: bool
+        self, value: float32, old_value: Optional[float32], leaf_color: bool
     ) -> None:
         """"""
 
@@ -101,7 +101,7 @@ class Node:
             self.set_score(value, leaf_color)
 
         else:
-            parent_score: double = self._score
+            parent_score: float32 = self._score
             if self.color:
                 if value > parent_score:
                     # score increased, propagate immediately
@@ -121,7 +121,7 @@ class Node:
                 else:
                     self.set_score(reduce(self.minimal, children)._score, leaf_color)
 
-    def set_score(self, value: double, leaf_color: bool) -> None:
+    def set_score(self, value: float32, leaf_color: bool) -> None:
         self.score = value
         self.leaf_color = leaf_color
 

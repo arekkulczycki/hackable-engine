@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
-"""
-Selecting one best node fast.
-"""
 
-from numpy import double
+from numpy import float32
 
 from typing import List
 
@@ -19,7 +16,7 @@ class FastSelector(BaseSelector):
 
     def select(self, nodes: List[Node], color: bool) -> Node:
         best_node: Node
-        best_score: double = -INF if color else INF
+        best_score: float32 = -INF if color else INF
 
         for node in nodes:
             # node white-to-move then best child is one with the highest score

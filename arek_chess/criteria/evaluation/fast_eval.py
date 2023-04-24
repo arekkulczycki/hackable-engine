@@ -3,7 +3,7 @@ Evaluation in the simplest manner, caring for just material and space in order
 to balance risk/reward of pushing forward.
 """
 
-from numpy import double
+from numpy import float32
 
 from arek_chess.board.board import Board
 from arek_chess.criteria.evaluation.base_eval import ActionType, BaseEval

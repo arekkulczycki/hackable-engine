@@ -1,6 +1,4 @@
-"""
-Controls all engine flows and communication to outside world.
-"""
+# -*- coding: utf-8 -*-
 
 import traceback
 from time import sleep
@@ -9,7 +7,7 @@ from typing import Optional, List, Union, Dict
 from chess import Move, Termination
 
 from arek_chess.board.board import Board
-from arek_chess.common.constants import Print, ROOT_NODE_NAME
+from arek_chess.common.constants import Print, SLEEP
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory_manager import MemoryManager
 from arek_chess.common.queue_manager import QueueManager
@@ -144,9 +142,9 @@ class Controller:
         )
 
         if next_root:
-            self.release_memory(except_prefix=next_root.name)
+            self.release_memory(except_prefix=next_root.name, silent=self.printing in [Print.MOVE, Print.MOVE])
         else:
-            self.release_memory()
+            self.release_memory(silent=self.printing in [Print.MOVE, Print.MOVE])
 
         self.search_worker.set_root(
             self.board, next_root, nodes_dict
@@ -158,10 +156,10 @@ class Controller:
     ) -> None:
         """"""
 
+        self._setup_search_worker(restart=True)  # TODO: set False when branch reusing works
+
         if memory_action is not None:
             MemoryManager().set_action(memory_action, len(memory_action))
-
-        self._setup_search_worker(restart=True)  # TODO: set False when branch reusing works
 
         fails = 0
         while True:
@@ -171,7 +169,7 @@ class Controller:
                 print("restarting all workers...")
                 self.restart(fen=self.board.fen())
                 self._restart_search_worker()
-                sleep(3)
+                sleep(5)
             elif fails > 0:
                 print("restarting search worker...")
                 self._restart_search_worker()
@@ -186,12 +184,16 @@ class Controller:
                     print(f"search failed: {e}\nstarting over...")
                 fails += 1
 
-                sleep(0.5)
+                sleep(3)
                 self.clear_queues()
 
         self.board.push(Move.from_uci(move))
 
         self.clear_queues()
+
+    def get_move(self) -> str:
+        self._setup_search_worker(restart=True)
+        return self._search()
 
     def _get_next_root(self) -> Optional[Node]:
         last_move = self.board.move_stack[-1].uci()
@@ -205,10 +207,6 @@ class Controller:
             raise ValueError(f"Could not recognize move played: {last_move}")
 
         return chosen_child
-
-    def make_move_and_get_root_node(self) -> Node:
-        self.make_move()
-        return self.search_worker.root
 
     def _search(self) -> str:
         # TODO: current thread vs new thread vs new process???
@@ -308,9 +306,10 @@ class Controller:
             self.control_queue,
             self.selector_queue,
         ]:
-            items = queue.get_many_blocking(0.01, 10)
+            items = queue.get_many(10, SLEEP)
             while items:
-                items = queue.get_many_blocking(0.01, 10)
+                # print(f"cleaned leftover items from {queue.name}")
+                items = queue.get_many(10, SLEEP)
 
     def tear_down(self) -> None:
         """"""
@@ -331,7 +330,7 @@ class Controller:
         self.child_processes.clear()
 
     @staticmethod
-    def release_memory(except_prefix: str = "") -> None:
+    def release_memory(except_prefix: str = "", *, silent: bool = False) -> None:
         """"""
 
-        MemoryManager().clean(except_prefix)
+        MemoryManager().clean(except_prefix, silent)

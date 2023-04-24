@@ -5,15 +5,15 @@ Base class for node evaluation.
 from abc import ABC
 from typing import Tuple, Callable, Optional
 
-from numpy import double
+from numpy import float32
 
 from arek_chess.board.board import Board
 from numpy import dot
 
-PENALIZER: double = double(0.99)
-REVERSE_PENALIZER: double = double(1.01)
+PENALIZER: float32 = float32(0.99)
+REVERSE_PENALIZER: float32 = float32(1.01)
 
-ActionType = Tuple[double, ...]
+ActionType = Tuple[float32, ...]
 
 
 class BaseEval(ABC):
@@ -36,7 +36,7 @@ class BaseEval(ABC):
         captured_piece_type: int,
         is_check: bool,
         action: Optional[ActionType] = None,
-    ) -> double:
+    ) -> float32:
         """
         :param board
         :param move_str:
@@ -50,15 +50,15 @@ class BaseEval(ABC):
         raise NotImplementedError
 
     @staticmethod
-    def get_for_both_players(function: Callable[[bool], ActionType]) -> Tuple[double, ...]:
+    def get_for_both_players(function: Callable[[bool], ActionType]) -> Tuple[float32, ...]:
         """"""
 
-        return tuple(double(a - b) for a, b in zip(function(True), function(False)))
+        return tuple(float32(a - b) for a, b in zip(function(True), function(False)))
 
     @staticmethod
     def calculate_score(
-        action: ActionType, params: ActionType, bonus: double
-    ) -> double:
+        action: ActionType, params: ActionType, bonus: float32
+    ) -> float32:
         score = dot(action, params) + bonus
 
         return score

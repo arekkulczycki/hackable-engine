@@ -8,7 +8,7 @@ from time import sleep
 import requests
 
 from arek_chess.common.constants import Print
-from arek_chess.main.controller import Controller
+from arek_chess.controller import Controller
 
 token = "lip_o2ZT2O8UxRCT4HRUFLNm"
 headers = {"Authorization": f"Bearer {token}"}
@@ -37,7 +37,7 @@ def play(game_data):
 
         controller = Controller(Print.CANDIDATES, search_limit=15)
         controller.boot_up(fen)
-        my_move = controller.search().uci()
+        my_move = controller.get_move()
 
         print(my_move)
 

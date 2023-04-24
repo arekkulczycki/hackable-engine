@@ -1,19 +1,18 @@
-"""
-Constants.
-"""
+# -*- coding: utf-8 -*-
 
-from numpy import double
+from numpy import float32
 
 from enum import IntEnum
 
-INF: double = double(1000000.0)
-DRAW: double = double(0.0)
-SLEEP: double = double(0.001)
-LOG_INTERVAL: double = double(0.2)
-BREAK_INTERVAL: double = double(3.0)
+INF: float32 = float32(1000000.0)
+DRAW: float32 = float32(0.0)
+SLEEP: float32 = float32(0.01)
+LOG_INTERVAL: float32 = float32(0.2)
+BREAK_INTERVAL: float32 = float32(3.0)
 
 ROOT_NODE_NAME: str = "1"
-FINISHED = "finished"
+FINISHED: str = "finished"
+ERROR: str = "error"
 
 
 class Print(IntEnum):

@@ -4,7 +4,7 @@ from typing import Dict
 
 import gym
 import numpy
-from numpy import double
+from numpy import float32
 
 from arek_chess.common.constants import Print
 from arek_chess.controller import Controller

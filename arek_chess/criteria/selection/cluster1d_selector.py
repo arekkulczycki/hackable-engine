@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Selecting one best node fast.
-"""
 
 from typing import List
 

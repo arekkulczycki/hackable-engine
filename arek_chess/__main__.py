@@ -78,6 +78,12 @@ if __name__ == "__main__":
         type=float,
         help="Timeout"
     )
+    arg_parser.add_argument(
+        "-th",
+        "--thread",
+        help="Runs in a new thread.",
+        action="store_true",
+    )
 
     args = arg_parser.parse_args()
 

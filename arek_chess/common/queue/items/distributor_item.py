@@ -9,9 +9,9 @@ from arek_chess.common.queue.items.base_item import BaseItem
 
 
 @dataclass
-class SelectorItem(BaseItem):
+class DistributorItem(BaseItem):
     """
-    Item passed through SelectorQueue.
+    Item passed through DistributorQueue.
     """
 
     __slots__ = ("run_id", "node_name", "move_str", "score", "captured")

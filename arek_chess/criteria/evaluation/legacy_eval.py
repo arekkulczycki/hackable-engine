@@ -4,7 +4,7 @@ Evaluation by attributes that were initially drafted to be significant.
 Uncorrelated to any training observation method. Can be trained vs full board environment.
 """
 
-from numpy import double
+from numpy import float32
 
 from arek_chess.board.board import Board
 from arek_chess.criteria.evaluation.base_eval import ActionType, BaseEval
