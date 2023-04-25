@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Manages the shared memory between multiple processes.
-"""
 
 import os
 import traceback
@@ -19,8 +16,36 @@ from arek_chess.board.board import Board
 from arek_chess.common.constants import ROOT_NODE_NAME
 from arek_chess.common.memory.base_memory import BaseMemory
 
+import string
+
 PARAM_MEMORY_SIZE = 5  # TODO: this should be custom for each criteria/evaluator
 MAX_LENGTH = 253
+
+uci_chars = "12345678abcdefghnrqk."
+"""All characters used in the game notation, used for node identification."""
+
+all_chars = string.digits + string.ascii_lowercase + string.ascii_uppercase + "-_."
+"""All characters safe to use as file name."""
+
+
+def _convert(filename, from_chars, to_chars):
+    x = 0
+    for digit in str(filename):
+        try:
+            x = x * len(from_chars) + from_chars.index(digit)
+        except ValueError:
+            raise ValueError('invalid digit "%s"' % digit)
+
+    # create the result in base 'len(to_digits)'
+    if x == 0:
+        res = to_chars[0]
+    else:
+        res = ''
+        while x > 0:
+            digit = x % len(to_chars)
+            res = to_chars[digit] + res
+            x = int(x // len(to_chars))
+    return res
 
 
 class SharedMemory(BaseMemory):
@@ -30,6 +55,10 @@ class SharedMemory(BaseMemory):
 
     @staticmethod
     def parse_key(key: str) -> str:
+        # FIXME: distributor will raise on not finding parent, this is temporary solution
+        #  or is it? it should allow for depth up to ~35 moves!
+        if len(key) > MAX_LENGTH:
+            key = _convert(key, uci_chars, all_chars)
         if len(key) > MAX_LENGTH:
             return key[-MAX_LENGTH:].partition(".")[2]
         return key
@@ -52,6 +81,7 @@ class SharedMemory(BaseMemory):
 
     def set(self, key: str, value: bytes) -> None:
         key = self.parse_key(key)
+        # print(key)
 
         size = len(value)
         if size == 0:

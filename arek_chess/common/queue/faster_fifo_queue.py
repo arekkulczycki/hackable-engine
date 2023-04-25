@@ -2,7 +2,7 @@
 
 from functools import partial
 from queue import Empty, Full
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from faster_fifo import Queue
 from larch.pickle.pickle import dumps, loads
@@ -16,7 +16,7 @@ class FasterFifoQueue(BaseQueue):
     Queue provided by external FasterFifo library.
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, loader: Optional[Callable] = None, dumper: Optional[Callable] = None):
         """
         Initialize a queue of a chosen queuing class.
         """
@@ -24,8 +24,8 @@ class FasterFifoQueue(BaseQueue):
         super().__init__(name)
         self.queue = Queue(
             max_size_bytes=1024 * 1024 * 100,
-            loads=lambda _bytes: loads(_bytes.tobytes()),
-            dumps=partial(dumps, protocol=5, with_refs=False),
+            loads=loader or (lambda _bytes: loads(_bytes.tobytes())),
+            dumps=dumper or partial(dumps, protocol=5, with_refs=False),
         )
 
     def put(self, item: BaseItem) -> None:

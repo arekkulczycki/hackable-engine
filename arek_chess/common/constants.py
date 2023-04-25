@@ -6,7 +6,7 @@ from enum import IntEnum
 
 INF: float32 = float32(1000000.0)
 DRAW: float32 = float32(0.0)
-SLEEP: float32 = float32(0.01)
+SLEEP: float32 = float32(0.001)
 LOG_INTERVAL: float32 = float32(0.2)
 BREAK_INTERVAL: float32 = float32(3.0)
 

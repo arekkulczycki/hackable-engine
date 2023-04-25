@@ -20,10 +20,8 @@ class Node:
     init_score: float32
 
     parent: Optional[Node]
-    name: str
     move: str
     captured: int
-    level: int
     color: bool
     being_processed: bool
 
@@ -34,11 +32,9 @@ class Node:
     def __init__(
         self,
         parent: Optional[Node],
-        name: str,
         move: str,
         score: float32,
         captured: int,
-        level: int,
         color: bool,
         being_processed: bool,
     ):
@@ -46,12 +42,10 @@ class Node:
         if parent:
             parent.children.append(self)
 
-        self.name = name
         self.move = move
 
         self.init_score = score
         self.captured = captured
-        self.level = level
         self.color = color
         self.being_processed = being_processed
 
@@ -63,7 +57,29 @@ class Node:
         """assign last because requires other attributes initiated"""
 
     def __repr__(self):
-        return f"Node({self.level}, {self.name}, {round(self._score, 3)}, initial: {round(self.init_score, 3)}, {self.being_processed})"
+        return f"Node({self.level}, {self.move}, {round(self._score, 3)}, initial: {round(self.init_score, 3)}, {self.being_processed})"
+
+    @property
+    def name(self) -> str:
+        name = self.move
+
+        parent = self.parent
+        while parent:
+            name = f"{parent.move}.{name}"
+            parent = parent.parent
+
+        return name
+
+    @property
+    def level(self) -> int:
+        level = 1
+
+        parent = self.parent
+        while parent:
+            level += 1
+            parent = parent.parent
+
+        return level
 
     @property
     def score(self) -> float32:

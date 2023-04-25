@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from arek_chess.common.queue.faster_fifo_queue import FasterFifoQueue
 from arek_chess.common.queue.items.base_item import BaseItem
@@ -11,12 +11,12 @@ class QueueManager:
     Class_docstring
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, loader: Optional[Callable] = None, dumper: Optional[Callable] = None):
         """
         Initialize a queue of a chosen queuing class.
         """
 
-        self.queue = FasterFifoQueue(name)
+        self.queue = FasterFifoQueue(name, loader, dumper)
         # self.queue = RedisQueue(name)
         # self.queue = RabbitmqQueue(name)
 

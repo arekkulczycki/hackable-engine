@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-
-from typing import List, Tuple, Optional
+from typing import List, Optional
 
 from chess import Move, KNIGHT, BISHOP
-from numpy import float32
 
 from arek_chess.board.board import Board
 from arek_chess.common.constants import FINISHED, ROOT_NODE_NAME, ERROR, SLEEP
+from arek_chess.common.queue.items.control_item import ControlItem
+from arek_chess.common.queue.items.distributor_item import DistributorItem
+from arek_chess.common.queue.items.eval_item import EvalItem
 from arek_chess.common.queue_manager import QueueManager as QM
 from arek_chess.workers.base_worker import BaseWorker
 
@@ -53,16 +54,16 @@ class DistributorWorker(BaseWorker):
         get_items = self.get_items
         distribute = self.distribute
         while True:
-            items: List[Tuple[str, str, float32, int]] = get_items(queue_throttle)
+            items: List[DistributorItem] = get_items(queue_throttle)
             if items:
                 distribute(items)
 
-    def get_items(self, queue_throttle: int) -> List[Tuple[str, str, float32, int]]:
+    def get_items(self, queue_throttle: int) -> List[DistributorItem]:
         """"""
 
         return self.distributor_queue.get_many(queue_throttle, SLEEP)
 
-    def distribute(self, items: List[Tuple[str, str, float32, int]]) -> None:
+    def distribute(self, items: List[DistributorItem]) -> None:
         """
         Queue all legal moves for evaluation.
 
@@ -71,40 +72,44 @@ class DistributorWorker(BaseWorker):
 
         queue_items = []
 
-        for node_name, move_str, score, captured in items:  # TODO: get_many_boards ?
+        # for node_name, move_str, score, captured in (item.as_tuple() for item in items):  # TODO: get_many_boards ?
+        for item in items:  # TODO: get_many_boards ?
             # not a real node, just a signal for finishing processing iteration
-            if node_name == FINISHED:
-                self.control_queue.put(str(self.distributed))
-                self.control_queue.put(FINISHED)
+            if item.node_name == FINISHED:
+                # in order to make sure nothing gets delivered on the subsequent run
+                self.control_queue.put(ControlItem(FINISHED))
                 self.distributed = 0
                 return None
 
             # root board is already created at the very start in the search_manager
-            if node_name == ROOT_NODE_NAME:
-                board = self.memory_manager.get_node_board(node_name)
+            if item.node_name == ROOT_NODE_NAME:
+                board = self.memory_manager.get_node_board(item.node_name)
                 if board is None:
-                    raise ValueError(f"node memory not found: {node_name}")
+                    raise ValueError(f"node memory not found: {item.node_name}")
             else:
-                parent_node_name = ".".join(node_name.split(".")[:-1])
+                parent_node_name = ".".join(item.node_name.split(".")[:-1])
 
                 # storing the shared memory for node_name board
                 try:
                     board = self.create_node_board(
-                        parent_node_name, node_name, move_str
+                        parent_node_name, item.node_name, item.move_str
                     )
                 except ValueError as e:
-                    # FIXME: still getting items from previous run...
-                    self.control_queue.put(ERROR)
+                    # FIXME: getting items from previous run???
+                    # print(e)
+                    self.control_queue.put(ControlItem(ERROR))
                     break
 
             new_queue_items = []
             for move in board.legal_moves:
-                if captured:
+                if item.captured:
                     recaptured = board.get_captured_piece_type(move)
-                    if recaptured >= captured or (recaptured == KNIGHT and captured == BISHOP):
-                        new_queue_items.append((node_name, move.uci()))
+                    if recaptured >= item.captured or (
+                        recaptured == KNIGHT and item.captured == BISHOP
+                    ):
+                        new_queue_items.append(EvalItem(item.node_name, move.uci()))
                 else:
-                    new_queue_items.append((node_name, move.uci()))
+                    new_queue_items.append(EvalItem(item.node_name, move.uci()))
 
             # TODO: if it could be done efficiently, would be beneficial to check game over here
             # new_queue_items = []
@@ -132,12 +137,14 @@ class DistributorWorker(BaseWorker):
             if new_queue_items:
                 queue_items += new_queue_items
             else:
-                self.control_queue.put(node_name)
+                self.control_queue.put(ControlItem(item.node_name))
 
         if queue_items:
             self.distributed += len(queue_items)
-            self.control_queue.put(str(self.distributed))
             self.eval_queue.put_many(queue_items)
+
+        if items:
+            self.control_queue.put(ControlItem(str(self.distributed)))
 
     def create_node_board(
         self, parent_node_name: str, node_name: str, node_move: str
@@ -148,7 +155,9 @@ class DistributorWorker(BaseWorker):
             board = self.board_cache
             board.pop()
         else:
-            board: Optional[Board] = self.memory_manager.get_node_board(parent_node_name)
+            board: Optional[Board] = self.memory_manager.get_node_board(
+                parent_node_name
+            )
 
         if board is None:
             raise ValueError(f"board not found for parent of: {node_name}")

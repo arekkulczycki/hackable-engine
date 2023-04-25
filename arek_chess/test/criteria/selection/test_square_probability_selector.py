@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Test SquareProbabilitySelector class.
-"""
 
 from random import random
 from unittest import TestCase

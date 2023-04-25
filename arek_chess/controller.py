@@ -10,6 +10,10 @@ from arek_chess.board.board import Board
 from arek_chess.common.constants import Print, SLEEP
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory_manager import MemoryManager
+from arek_chess.common.queue.items.control_item import ControlItem
+from arek_chess.common.queue.items.distributor_item import DistributorItem
+from arek_chess.common.queue.items.eval_item import EvalItem
+from arek_chess.common.queue.items.selector_item import SelectorItem
 from arek_chess.common.queue_manager import QueueManager
 from arek_chess.criteria.evaluation.base_eval import ActionType
 from arek_chess.game_tree.node import Node
@@ -142,7 +146,10 @@ class Controller:
         )
 
         if next_root:
-            self.release_memory(except_prefix=next_root.name, silent=self.printing in [Print.MOVE, Print.MOVE])
+            self.release_memory(
+                except_prefix=next_root.name,
+                silent=self.printing in [Print.MOVE, Print.MOVE],
+            )
         else:
             self.release_memory(silent=self.printing in [Print.MOVE, Print.MOVE])
 
@@ -183,9 +190,6 @@ class Controller:
                 else:
                     print(f"search failed: {e}\nstarting over...")
                 fails += 1
-
-                sleep(3)
-                self.clear_queues()
 
         self.board.push(Move.from_uci(move))
 
@@ -281,10 +285,18 @@ class Controller:
     def create_queues(self):
         """"""
 
-        self.distributor_queue: QueueManager = QueueManager("distributor")
-        self.eval_queue: QueueManager = QueueManager("evaluator")
-        self.selector_queue: QueueManager = QueueManager("selector")
-        self.control_queue: QueueManager = QueueManager("control")
+        self.distributor_queue: QueueManager = QueueManager(
+            "distributor", loader=DistributorItem.loads, dumper=DistributorItem.dumps
+        )
+        self.eval_queue: QueueManager = QueueManager(
+            "evaluator", loader=EvalItem.loads, dumper=EvalItem.dumps
+        )
+        self.selector_queue: QueueManager = QueueManager(
+            "selector", loader=SelectorItem.loads, dumper=SelectorItem.dumps
+        )
+        self.control_queue: QueueManager = QueueManager(
+            "control", loader=ControlItem.loads, dumper=ControlItem.dumps
+        )
 
     def recreate_queues(self):
         """"""

@@ -21,7 +21,7 @@ evaluated = 0
 class MockEvalWorker(EvalWorker):
     def evaluate(
         self, board: Board, move_str: str, captured_piece_type: int, is_check: bool
-    ) -> double:
+    ) -> float32:
         """"""
 
         moves = list(move.uci() for move in board.move_stack) + [move_str]
@@ -31,19 +31,19 @@ class MockEvalWorker(EvalWorker):
         if moves[0] == "e2e4":
             if nm == 2:
                 if moves[1] == "e7e6":
-                    return double(0.1)
-                return double(0.15)
+                    return float32(0.1)
+                return float32(0.15)
             if nm > 2 and moves[2] == "b1c3":
-                return double(0.9 * (0.97) ** nm * sign)
+                return float32(0.9 * (0.97) ** nm * sign)
             if nm > 2:
                 if "c1g5" in moves:
-                    return double(1.1)
+                    return float32(1.1)
 
-                return double(0.8 * (0.99) ** nm * sign)
+                return float32(0.8 * (0.99) ** nm * sign)
 
-            return double(1)
+            return float32(1)
 
-        return double(0.0)
+        return float32(0.0)
 
 
 def set_constants(target):
@@ -58,11 +58,11 @@ def set_constants(target):
 @set_constants
 class EvalWorkerFixedOverLevel(EvalWorker):
     level = 7
-    eval = double(1.5)
+    eval = float32(1.5)
 
     def evaluate(
         self, board: Board, move_str: str, captured_piece_type: int, is_check: bool
-    ) -> double:
+    ) -> float32:
         """"""
 
         moves = list(move.uci() for move in board.move_stack) + [move_str]
@@ -71,9 +71,9 @@ class EvalWorkerFixedOverLevel(EvalWorker):
             return self.eval
 
         if nm % 2 == 1:
-            return double(random() + 2)  # between 2 and 3
+            return float32(random() + 2)  # between 2 and 3
         else:
-            return double(random() - 3)  # between -3 and -2
+            return float32(random() - 3)  # between -3 and -2
 
 
 class EvalWorkerSpecificPath(EvalWorker):
@@ -84,22 +84,23 @@ class EvalWorkerSpecificPath(EvalWorker):
        "a2a4": (2, 1), "a7a5": (2, 1), "h2h4": (2, 1), "h7h5": (2, 1)
     }
     # fmt: on
+    eval = float32(1.5)
 
     def evaluate(
         self, board: Board, move_str: str, captured_piece_type: int, is_check: bool
-    ) -> double:
+    ) -> float32:
         """"""
 
         moves = list(move.uci() for move in board.move_stack) + [move_str]
         nm = len(moves)
-        if reversed(moves) == self.PATH[:nm]:
+        if all([a == b for a, b in zip(reversed(moves), list(self.PATH.keys())[:nm])]):
             # self.RETURNED_ONCE = True
             if nm % 2 == 1:
-                return self.EVAL
+                return self.eval
             else:
-                return - self.EVAL
+                return - self.eval
 
-        return double(random() * 2 - 1)
+        return float32(random() * 2 - 1)
 
 
 class RunWithMockEval(TestCase):
@@ -113,12 +114,14 @@ class RunWithMockEval(TestCase):
         with patch("arek_chess.controller.EvalWorker", mock_worker_class):
             controller.boot_up()
 
-        root_node = controller.make_move_and_get_root_node()
+        controller.make_move()
+        root_node = controller.search_worker.root
+
         controller.stop_child_processes()
         return root_node
 
     def test_propagation(self):
-        eval = double(1.5)
+        eval = float32(1.5)
 
         # for i in range(3, 4):
         mock_worker = EvalWorkerFixedOverLevel(
@@ -127,3 +130,6 @@ class RunWithMockEval(TestCase):
         root_node = self.search(mock_worker)
         print(root_node.score)
         assert root_node.score == eval
+
+
+RunWithMockEval.search(EvalWorkerSpecificPath)
