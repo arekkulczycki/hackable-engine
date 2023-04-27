@@ -57,8 +57,8 @@ class BaseEval(ABC):
 
     @staticmethod
     def calculate_score(
-        action: ActionType, params: ActionType, bonus: float32
+        action: ActionType, params: ActionType
     ) -> float32:
-        score = dot(action, params) + bonus
+        score = dot(action, params)
 
         return score

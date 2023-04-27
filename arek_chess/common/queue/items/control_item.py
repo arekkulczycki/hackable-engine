@@ -15,17 +15,18 @@ class ControlItem(BaseItem):
 
     # control_value: str
 
-    def __init__(self, control_value: str) -> None:
+    def __init__(self, run_id: str, control_value: str) -> None:
+        self.run_id: str = run_id
         self.control_value: str = control_value
 
     @staticmethod
     def loads(b: memoryview) -> ControlItem:
         """"""
 
-        return ControlItem(b.tobytes().decode("utf-8"))
+        return ControlItem(*b.tobytes().decode("utf-8").split(";"))
 
     @staticmethod
     def dumps(obj: ControlItem) -> bytes:
         """"""
 
-        return obj.control_value.encode()
+        return f"{obj.run_id};{obj.control_value}".encode()

@@ -16,8 +16,10 @@ redis==4.*
 # python setup.py build_ext -I /usr/include/boost install
 
 ##### dev
-#mypy==0.920
-mypy==0.961  # for newer versions compiled board fails on pickling, WARNING 3.11 requires mypy>=0.981 to compile Board
+# python 3.9
+mypy==0.961  # for newer versions compiled board fails on pickling
+# python 3.11
+# mypy==1.2
 mypy-extensions==0.4.*
 pylint==2.15.4
 perflint==0.7.3

@@ -10,7 +10,7 @@ from arek_chess.common.queue.items.control_item import ControlItem
 from arek_chess.common.queue.items.distributor_item import DistributorItem
 from arek_chess.common.queue.items.eval_item import EvalItem
 from arek_chess.common.queue.items.selector_item import SelectorItem
-from arek_chess.common.queue_manager import QueueManager
+from arek_chess.common.queue.manager import QueueManager
 
 
 class TestQueueManager(TestCase):

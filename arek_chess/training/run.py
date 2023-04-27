@@ -38,7 +38,7 @@ def train(version=-1, gpu: bool = False):
             f"./chess.v{version}",
             env=env,
             verbose=2,
-            custom_objecs={"clip_range": 0.1, "learning_rate": 3e-3, "n_steps": 128},
+            custom_objecs={"clip_range": 0.1, "learning_rate": 3e-3, "n_steps": 512},
             device="cuda" if gpu else "auto",
         )
     else:
@@ -49,6 +49,7 @@ def train(version=-1, gpu: bool = False):
             verbose=2,
             clip_range=0.1,
             learning_rate=3e-3,
+            n_steps=512,
             device="cuda" if gpu else "auto"
         )
         # model = PPO("MultiInputPolicy", env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
@@ -74,7 +75,7 @@ def loop_train(version=-1, loops=5, gpu: bool = False):
                 f"./chess.v{version}",
                 env=env,
                 verbose=2,
-                custom_objecs={"clip_range": 0.3, "learning_rate": 3e-3, "n_steps": 128},
+                custom_objecs={"clip_range": 0.3, "learning_rate": 3e-3, "n_steps": 256},
                 device="cuda" if gpu else "cpu"
             )
         else:
@@ -85,6 +86,7 @@ def loop_train(version=-1, loops=5, gpu: bool = False):
                 verbose=2,
                 clip_range=0.3,
                 learning_rate=3e-3,
+                n_steps=512,
                 device="cuda" if gpu else "cpu"
             )
             # model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)

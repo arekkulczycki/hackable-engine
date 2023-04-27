@@ -2,7 +2,7 @@
 
 from typing import Callable, List, Optional
 
-from arek_chess.common.queue.faster_fifo_queue import FasterFifoQueue
+from arek_chess.common.queue.adapters.faster_fifo_adapter import FasterFifoAdapter
 from arek_chess.common.queue.items.base_item import BaseItem
 
 
@@ -16,7 +16,7 @@ class QueueManager:
         Initialize a queue of a chosen queuing class.
         """
 
-        self.queue = FasterFifoQueue(name, loader, dumper)
+        self.queue = FasterFifoAdapter(name, loader, dumper)
         # self.queue = RedisQueue(name)
         # self.queue = RabbitmqQueue(name)
 
@@ -40,7 +40,7 @@ class QueueManager:
         return self.queue.get()
 
     def get_many(
-        self, max_messages_to_get: int = 10, timeout: int = 0
+        self, max_messages_to_get: int = 10, timeout: float = 0
     ) -> List[BaseItem]:
         """"""
 

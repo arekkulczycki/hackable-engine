@@ -6,7 +6,7 @@ from time import perf_counter
 from unittest import TestCase
 
 from arek_chess.board.board import Board
-from arek_chess.common.memory_manager import MemoryManager
+from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.criteria.evaluation.square_control_eval import SquareControlEval
 from arek_chess.workers.eval_worker import EvalWorker
 
@@ -267,3 +267,15 @@ class BoardTest(TestCase):
     #
     #     print(k)
     #     assert k > 10000
+
+    def test_get_occupied_square_value_map_for_both(self):
+        fen = "nR4R1/n1B5/3b2Q1/2kN3r/6bq/2rBK3/7N/8 w - - 0 1"
+        board = Board(fen)
+
+        w = board.get_occupied_square_value_map(True)
+        b = board.get_occupied_square_value_map(False)
+
+        w_, b_ = board.get_occupied_square_value_map_for_both()
+
+        assert (w == w_).all()
+        assert (b == b_).all()

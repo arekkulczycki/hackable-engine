@@ -2,19 +2,20 @@
 
 import traceback
 from time import sleep
-from typing import Optional, List, Union, Dict
+from typing import Optional, List, Union
+from weakref import WeakValueDictionary
 
 from chess import Move, Termination
 
 from arek_chess.board.board import Board
 from arek_chess.common.constants import Print, SLEEP
 from arek_chess.common.exceptions import SearchFailed
-from arek_chess.common.memory_manager import MemoryManager
+from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.common.queue.items.control_item import ControlItem
 from arek_chess.common.queue.items.distributor_item import DistributorItem
 from arek_chess.common.queue.items.eval_item import EvalItem
 from arek_chess.common.queue.items.selector_item import SelectorItem
-from arek_chess.common.queue_manager import QueueManager
+from arek_chess.common.queue.manager import QueueManager
 from arek_chess.criteria.evaluation.base_eval import ActionType
 from arek_chess.game_tree.node import Node
 from arek_chess.workers.distributor_worker import DistributorWorker
@@ -42,18 +43,18 @@ class Controller:
         tree_params: str = "",
         search_limit: Optional[int] = None,
         model_version: Optional[str] = None,
-        timeout: Optional[float] = None,
         memory_action: bool = False,
         in_thread: bool = False,
+        timeout: Optional[float] = None,
     ):
         """"""
 
         self.printing = printing
         self.tree_params = tree_params
         self.search_limit = search_limit
-        self.timeout = timeout
         self.original_timeout = timeout
         self.in_thread = in_thread
+        self.timeout = timeout
 
         self.queue_throttle = (CPU_CORES - 2) * (
             search_limit if search_limit < 12 else (search_limit * 3)
@@ -121,19 +122,17 @@ class Controller:
                 self.search_worker.join(0.5)
         sleep(0.5)
         self.clear_queues()
-        self._setup_search_worker(restart=True)
+        self._setup_search_worker()
 
-    def _setup_search_worker(self, restart: bool = False):
-        next_root: Optional[Node] = None
-        nodes_dict: Optional[Dict[str, Node]] = None
-        if not restart:
-            next_root = (
-                self._get_next_root()
-                if self.search_worker and self.board.move_stack
-                else None
-            )
-            nodes_dict = self.search_worker.nodes_dict if self.search_worker else None
-        # TODO: in training this is wrong, it should re-use old tree every full move, not sharing tree with the opponent
+    def _setup_search_worker(self, reuse: bool = False):
+        """"""
+
+        if reuse and self.search_worker is None:
+            raise ValueError("Cannot reuse root when no root was set yet")
+
+        if reuse:
+            last_root: Node = self.search_worker.root
+            last_nodes_dict: WeakValueDictionary = self.search_worker.nodes_dict
 
         self.search_worker = SearchWorker(
             self.distributor_queue,
@@ -145,17 +144,12 @@ class Controller:
             self.search_limit,
         )
 
-        if next_root:
-            self.release_memory(
-                except_prefix=next_root.name,
-                silent=self.printing in [Print.MOVE, Print.MOVE],
-            )
+        if reuse:
+            # TODO: in order to go this way storing nodes in shared memory has to change keys
+            self.search_worker.set_root(self.board, self._get_next_root(last_root), last_nodes_dict)
+            # TODO: in training this is wrong, it should re-use old tree every full move, not sharing tree with the opponent
         else:
-            self.release_memory(silent=self.printing in [Print.MOVE, Print.MOVE])
-
-        self.search_worker.set_root(
-            self.board, next_root, nodes_dict
-        )  # TODO: set previously calculated tree as new root
+            self.search_worker.set_root(self.board)
 
     def make_move(
         self,
@@ -163,7 +157,11 @@ class Controller:
     ) -> None:
         """"""
 
-        self._setup_search_worker(restart=True)  # TODO: set False when branch reusing works
+        if self.board.is_checkmate():
+            print("asked for a move in checkmate position")
+            return
+
+        self._setup_search_worker(reuse=False)  # TODO: set True when branch reusing works
 
         if memory_action is not None:
             MemoryManager().set_action(memory_action, len(memory_action))
@@ -176,33 +174,42 @@ class Controller:
                 print("restarting all workers...")
                 self.restart(fen=self.board.fen())
                 self._restart_search_worker()
-                sleep(5)
+                sleep(3)
             elif fails > 0:
                 print("restarting search worker...")
+                self.release_memory(silent=self.printing in [Print.MOVE, Print.MOVE])
                 self._restart_search_worker()
             try:
                 move = self._search()
                 # self.timeout = self.original_timeout
                 break
             except SearchFailed as e:
+                fails += 1
                 if fails >= 2:
                     traceback.print_exc()
                 else:
                     print(f"search failed: {e}\nstarting over...")
+                    print(self.get_pgn())
+                    print(self.search_worker.root.children)
+            except TimeoutError as e:
                 fails += 1
+                print(f"timed out in search: {e}")
+                print("restarting all workers...")
+                self.restart(fen=self.board.fen())
+                sleep(3)
 
         self.board.push(Move.from_uci(move))
 
         self.clear_queues()
 
     def get_move(self) -> str:
-        self._setup_search_worker(restart=True)
+        self._setup_search_worker()
         return self._search()
 
-    def _get_next_root(self) -> Optional[Node]:
+    def _get_next_root(self, last_root: Node) -> Node:
         last_move = self.board.move_stack[-1].uci()
         chosen_child: Optional[Node] = None
-        for child in self.search_worker.root.children:
+        for child in last_root.children:
             if child.move == last_move:
                 chosen_child = child
                 break
@@ -217,6 +224,8 @@ class Controller:
         if self.in_thread:
             self.search_worker.start()
             move = self.search_worker.join(self.timeout)
+            if self.search_worker.is_alive():
+                raise TimeoutError
         else:
             move = self.search_worker._search()
         if not move:
@@ -264,10 +273,15 @@ class Controller:
     def restart(self, fen: Optional[str] = None) -> None:
         """"""
 
-        self.release_memory()
+        # self.release_memory(
+        #     except_prefix=next_root.name,
+        #     silent=self.printing in [Print.MOVE, Print.MOVE],
+        # )
+        self.release_memory(silent=self.printing in [Print.MOVE, Print.MOVE])
         self.restart_child_processes()
 
         self.board = Board(fen or self.initial_fen)
+        self._restart_search_worker()
 
         # TODO: restart the action to default
         # MemoryManager().set_action(self.evaluator_class.DEFAULT_ACTION, self.evaluator_class.DEFAULT_ACTION)
@@ -313,15 +327,15 @@ class Controller:
     def clear_queues(self):
         """"""
 
-        for queue in [
-            self.eval_queue,
-            self.control_queue,
-            self.selector_queue,
-        ]:
-            items = queue.get_many(10, SLEEP)
-            while items:
-                # print(f"cleaned leftover items from {queue.name}")
-                items = queue.get_many(10, SLEEP)
+        # for queue in [
+        #     self.control_queue,
+        #     self.selector_queue,
+        #     self.distributor_queue,
+        #     self.eval_queue,
+        # ]:
+        #     queue.get_many(10, SLEEP)
+        #     while queue.get_many(100, SLEEP):
+        #         print(f"cleaned leftover items from {queue.name}")
 
     def tear_down(self) -> None:
         """"""

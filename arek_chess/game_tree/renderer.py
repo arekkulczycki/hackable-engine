@@ -2,7 +2,7 @@
 Tree renderer class.
 """
 
-from typing import Optional, Generator
+from typing import Generator
 
 from anytree import Node, RenderTree
 from anytree.render import _is_last
@@ -11,9 +11,19 @@ from arek_chess.common.constants import INF
 
 
 class PrunedTreeRenderer(RenderTree):
-    """"""
+    """
+    Tree renderer class.
+    """
 
-    def __init__(self, root: Node, *, depth: int = 0, path: str = "", to_file: bool = False, **kwargs) -> None:
+    def __init__(
+        self,
+        root: Node,
+        *,
+        depth: int = 0,
+        path: str = "",
+        to_file: bool = False,
+        **kwargs
+    ) -> None:
         """"""
 
         super().__init__(root, **kwargs)
@@ -36,7 +46,11 @@ class PrunedTreeRenderer(RenderTree):
         new_children = ()
         for i in range(len(children)):
             child = children[i]
-            if self.path and (level > 0) and (".".join(self.path.split(".")[:level]) not in node.name):
+            if (
+                self.path
+                and (level > 0)
+                and (".".join(self.path.split(".")[:level]) not in node.name)
+            ):
                 continue
             if self.has_deep_family(child):  # and self.path in node.name:
                 new_children += (child,)

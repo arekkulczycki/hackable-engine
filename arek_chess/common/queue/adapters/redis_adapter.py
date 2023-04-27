@@ -10,7 +10,7 @@ from arek_chess.common.queue.base_queue import BaseQueue
 from arek_chess.common.queue.items.base_item import BaseItem
 
 
-class RedisQueue(BaseQueue):
+class RedisAdapter(BaseQueue):
     """
     Queue provided by external Redis service.
     """

@@ -10,8 +10,8 @@ from typing import Tuple, Dict, Optional
 from chess import Move
 
 from arek_chess.board.board import Board, SQUARE_NAMES, PIECE_SYMBOLS
-from arek_chess.common.memory.shared_memory import remove_shm_from_resource_tracker
-from arek_chess.common.memory_manager import MemoryManager
+from arek_chess.common.memory.adapters.shared_memory_adapter import remove_shm_from_resource_tracker
+from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.common.profiler_mixin import ProfilerMixin
 from arek_chess.criteria.evaluation.base_eval import ActionType
 
@@ -29,7 +29,7 @@ class BaseWorker(Process, ProfilerMixin):
         """"""
 
         try:
-            self.memory_manager = MemoryManager()
+            self.memory_manager: MemoryManager = MemoryManager()
             remove_shm_from_resource_tracker()
 
             self._run()

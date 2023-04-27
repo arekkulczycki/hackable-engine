@@ -16,7 +16,8 @@ class EvalItem(BaseItem):
     # node_name: str
     # move_str: str
 
-    def __init__(self, node_name: str, move_str: str) -> None:
+    def __init__(self, run_id: str, node_name: str, move_str: str) -> None:
+        self.run_id: str = run_id
         self.node_name: str = node_name
         self.move_str: str = move_str
 
@@ -30,4 +31,4 @@ class EvalItem(BaseItem):
     def dumps(obj: EvalItem) -> bytes:
         """"""
 
-        return f"{obj.node_name};{obj.move_str}".encode()
+        return f"{obj.run_id};{obj.node_name};{obj.move_str}".encode()

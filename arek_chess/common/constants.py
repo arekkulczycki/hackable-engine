@@ -6,13 +6,19 @@ from enum import IntEnum
 
 INF: float32 = float32(1000000.0)
 DRAW: float32 = float32(0.0)
-SLEEP: float32 = float32(0.001)
-LOG_INTERVAL: float32 = float32(0.2)
-BREAK_INTERVAL: float32 = float32(3.0)
+SLEEP: float = 0.001
+LOG_INTERVAL: float = 0.2
+BREAK_INTERVAL: float = 3.0
 
 ROOT_NODE_NAME: str = "1"
-FINISHED: str = "finished"
-ERROR: str = "error"
+
+STATUS: str = "status"
+DISTRIBUTED: str = "distributed"
+
+STARTED: int = 0
+FINISHED: int = 1
+CLOSED: int = 2
+ERROR: int = 3
 
 
 class Print(IntEnum):

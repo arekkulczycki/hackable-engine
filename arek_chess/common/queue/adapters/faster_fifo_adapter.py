@@ -11,7 +11,7 @@ from arek_chess.common.queue.base_queue import BaseQueue
 from arek_chess.common.queue.items.base_item import BaseItem
 
 
-class FasterFifoQueue(BaseQueue):
+class FasterFifoAdapter(BaseQueue):
     """
     Queue provided by external FasterFifo library.
     """

@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Manages the shared memory between multiple processes.
-"""
 
 import os
 from typing import List, Tuple

@@ -26,7 +26,6 @@ class Node:
     being_processed: bool
 
     children: List[Node]
-    looked_at: bool
     leaf_color: bool
 
     def __init__(
@@ -50,7 +49,6 @@ class Node:
         self.being_processed = being_processed
 
         self.children = []
-        self.looked_at = False
         self.leaf_color = color
 
         self.score = score
@@ -65,7 +63,7 @@ class Node:
 
         parent = self.parent
         while parent:
-            name = f"{parent.move}.{name}"
+            name = f"{parent.move}.{name}" if parent.parent else f"1.{name}"
             parent = parent.parent
 
         return name

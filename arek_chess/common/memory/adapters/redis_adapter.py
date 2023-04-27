@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Manages the memory between multiple processes by storing in Redis.
-"""
 
 import os
 from typing import Dict, List
@@ -14,7 +11,7 @@ from arek_chess.common.memory.base_memory import BaseMemory
 
 class RedisMemory(BaseMemory):
     """
-    Manages the memory between multiple processes by storing in Redis.
+    Adapts Redis to be used for memory storage.
     """
 
     def __init__(self):

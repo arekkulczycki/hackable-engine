@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Queue provided by external FasterFifo library.
-
-pip install confluent-kafka==1.9.*
-"""
 
 from typing import Tuple, List
 
@@ -12,9 +7,11 @@ from arek_chess.common.queue.base_queue import BaseQueue
 from confluent_kafka import Consumer, Producer
 
 
-class KafkaQueue(BaseQueue):
+class KafkaAdapter(BaseQueue):
     """
     Queue provided by external FasterFifo library.
+
+    pip install confluent-kafka==1.9.*
     """
 
     def __init__(self, name):

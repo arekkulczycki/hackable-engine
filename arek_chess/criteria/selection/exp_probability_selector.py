@@ -7,6 +7,9 @@ from numpy import float32
 from arek_chess.criteria.selection.base_selector import BaseSelector
 from arek_chess.game_tree.node import Node
 
+ONE: float32 = float32(1)
+EXPONENT: float32 = float32(3)
+
 
 class ExpProbabilitySelector(BaseSelector):
     """
@@ -16,7 +19,7 @@ class ExpProbabilitySelector(BaseSelector):
     @staticmethod
     def select(nodes: List[Node], color: bool) -> Node:
         best_node: Node
-        normalized_weights: List[float32] = ExpProbabilitySelector._normalized_weights(
+        normalized_weights: List[float] = ExpProbabilitySelector._normalized_weights(
             [node.score for node in nodes], color
         )
 
@@ -26,7 +29,7 @@ class ExpProbabilitySelector(BaseSelector):
             return nodes[0]
 
     @staticmethod
-    def _normalized_weights(scores: List[float32], color: bool) -> List[float32]:
+    def _normalized_weights(scores: List[float32], color: bool) -> List[float]:
         """
         Normalize scores so that are all between 0 and 1.
         """
@@ -35,12 +38,12 @@ class ExpProbabilitySelector(BaseSelector):
         max_score = max(scores)
 
         if min_score == max_score:
-            return scores
+            return [1 for _ in scores]
 
         discount = max_score - min_score
 
         return (
-            [((score - min_score) / discount) ** 3 for score in scores]
+            [float(((score - min_score) / discount) ** EXPONENT) for score in scores]
             if color
-            else [(1 - ((score - min_score) / discount) ** 3) for score in scores]
+            else [float((ONE - ((score - min_score) / discount) ** EXPONENT)) for score in scores]
         )

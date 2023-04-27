@@ -41,14 +41,19 @@ def _convert(filename, from_chars, to_chars):
         res = to_chars[0]
     else:
         res = ''
+        k = 0
         while x > 0:
             digit = x % len(to_chars)
             res = to_chars[digit] + res
             x = int(x // len(to_chars))
+            k += 1
+            if k > 100:
+                print("fuck it's this")
+                print(filename)
     return res
 
 
-class SharedMemory(BaseMemory):
+class SharedMemoryAdapter(BaseMemory):
     """
     Manages the shared memory between multiple processes.
     """
@@ -79,7 +84,7 @@ class SharedMemory(BaseMemory):
     def get_many(self, keys: List[str]) -> List[Optional[bytes]]:
         return [self.get(key) for key in keys]
 
-    def set(self, key: str, value: bytes) -> None:
+    def set(self, key: str, value: bytes, *, new: bool = True) -> None:
         key = self.parse_key(key)
         # print(key)
 
@@ -89,7 +94,7 @@ class SharedMemory(BaseMemory):
         try:
             shm = DangerousSharedMemory(
                 name=key,
-                create=True,
+                create=new,
                 size=size,
                 write=True,
             )
@@ -98,12 +103,14 @@ class SharedMemory(BaseMemory):
             # print(f"Re-created file for: {key}")
             self.remove(key)
             self.set(key, value)
-        except:
-            print(f"Error! Cannot set: {key}")
+        except FileNotFoundError:
+            self.set(key, value)
+        except Exception as e:
+            print(f"Error! Cannot set: {key}. {e}")
             try:
                 shm = DangerousSharedMemory(
                     name=key,
-                    create=True,
+                    create=new,
                     size=size,
                     write=True,
                 )
@@ -132,66 +139,6 @@ class SharedMemory(BaseMemory):
     @classmethod
     def get_node_params(cls, node_name: str) -> List[float]:
         return cls.get_node_memory(f"{node_name}.params")
-
-    @staticmethod
-    def get_node_board(node_name: str) -> Board:
-        try:
-            shm = DangerousSharedMemory(name=f"{node_name}.board")
-        except FileNotFoundError:
-            print(f"recreating node {node_name}...")
-            return SharedMemory.recreate_node_board(node_name)
-
-        # TODO: tobytes copies the data which could be just read into loads, find improvement
-        board = loads(shm.buf.tobytes())
-        if not isinstance(board, Board):
-            return SharedMemory.recreate_node_board(node_name)
-        else:
-            return board
-
-    @staticmethod
-    def recreate_node_board(node_name: str) -> Board:
-        if node_name == ROOT_NODE_NAME:
-            raise ValueError(f"cannot recreate root")
-
-        parent_node_name, _, node_move = node_name.rpartition(".")
-        board = SharedMemory.get_node_board(parent_node_name)
-        board.light_push(Move.from_uci(node_move), state_required=True)
-
-        SharedMemory.set_node_board(node_name, board)
-
-        return board
-
-    @staticmethod
-    def set_node_board(node_name: str, board: Board) -> None:
-        b = dumps(board, protocol=5, with_refs=False)
-        size = len(b)
-        try:
-            shm = DangerousSharedMemory(
-                name=f"{node_name}.board",
-                create=True,
-                size=size,
-            )
-        except FileExistsError:
-            # FIXME: raises a lot of times
-            # print(f"board not erased... {node_name}")
-            try:
-                shm = DangerousSharedMemory(
-                    name=f"{node_name}.board",
-                    create=False,
-                    size=size,
-                )
-            except:
-                print("I'm sad")
-            # shm.close()
-            # shm.unlink()
-            #
-            # shm = DangerousSharedMemory(
-            #     name=f"{node_name}.board",
-            #     create=True,
-            #     size=size,
-            # )
-
-        shm.buf[:] = b
 
     @staticmethod
     def set_node_params(node_name: str, *args: float) -> None:

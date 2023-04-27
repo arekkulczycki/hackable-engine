@@ -8,10 +8,10 @@ from stable_baselines3 import PPO
 
 from arek_chess.board.board import Board
 from arek_chess.common.constants import INF, DRAW, SLEEP
-from arek_chess.common.memory_manager import MemoryManager
+from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.common.queue.items.eval_item import EvalItem
 from arek_chess.common.queue.items.selector_item import SelectorItem
-from arek_chess.common.queue_manager import QueueManager
+from arek_chess.common.queue.manager import QueueManager
 from arek_chess.criteria.evaluation.base_eval import ActionType
 from arek_chess.criteria.evaluation.square_control_eval import SquareControlEval
 from arek_chess.workers.base_worker import BaseWorker
@@ -47,6 +47,8 @@ class EvalWorker(BaseWorker):
             model_version,
             env=self.env,
         )
+
+        self.board: Board = Board()
 
     def setup(self) -> None:
         """"""
@@ -105,11 +107,11 @@ class EvalWorker(BaseWorker):
                 continue
 
             last_name = item.node_name
-            last_board = memory_manager.get_node_board(item.node_name)
+            last_board = memory_manager.get_node_board(item.node_name)  # TODO: pass board obj for optimization
             boards.append(last_board)
 
         queue_items = [
-            self.eval_item(board, item.node_name, item.move_str)
+            self.eval_item(board, item.node_name, item.move_str, item.run_id)
             # for (node_name, move_str), board in zip((item.as_tuple() for item in eval_items), boards)
             for item, board in zip(eval_items, boards)
             if board is not None
@@ -118,7 +120,7 @@ class EvalWorker(BaseWorker):
         return queue_items
 
     def eval_item(
-        self, board: Board, node_name: str, move_str: str
+        self, board: Board, node_name: str, move_str: str, run_id: str
     ) -> SelectorItem:
         """"""
 
@@ -137,11 +139,11 @@ class EvalWorker(BaseWorker):
         result, is_check = self.get_quick_result(board, node_name, move_str)
         if result is not None:
             # sending -1 as signal game over in this node
-            return SelectorItem(node_name, move_str, result, -1)
+            return SelectorItem(run_id, node_name, move_str, result, -1)
 
         score: float32 = self.evaluate(board, move_str, captured_piece_type, is_check)
 
-        return SelectorItem(node_name, move_str, score, captured_piece_type)
+        return SelectorItem(run_id, node_name, move_str, score, captured_piece_type)
 
     def get_quick_result(
         self, board: Board, node_name: str, move_str: str
@@ -153,9 +155,11 @@ class EvalWorker(BaseWorker):
             return DRAW, False
 
         is_check = board.is_check()
-        if is_check:
-            if not any(board.generate_legal_moves()):
+        if not any(board.generate_legal_moves()):  # TODO: optimize and do on distributor?
+            if is_check:
                 return -INF if board.turn else INF, True
+            else:
+                return DRAW, True
 
         return None, is_check
 

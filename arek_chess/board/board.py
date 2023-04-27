@@ -49,10 +49,18 @@ from chess import (
     BB_RANK_MASKS,
     BB_FILE_MASKS,
     PieceType,
-    square_distance, scan_reversed, BB_ALL, BB_RANK_3, BB_RANK_4, BB_RANK_5, BB_RANK_6,
+    square_distance,
+    scan_reversed,
+    BB_ALL,
+    BB_RANK_3,
+    BB_RANK_4,
+    BB_RANK_5,
+    BB_RANK_6,
 )
 from nptyping import NDArray, Shape, Int
-from numpy import float32, empty
+from numpy import float32, empty, zeros
+
+from arek_chess.board.mixins.board_serializer_mixin import BoardSerializerMixin
 
 SQUARES = [
     A1,
@@ -214,7 +222,7 @@ else:
         return bb.bit_count()
 
 
-class Board(ChessBoard):
+class Board(ChessBoard, BoardSerializerMixin):
     """
     Handling the chessboard and calculating features of a position.
     """
@@ -312,9 +320,7 @@ class Board(ChessBoard):
     def get_piece_value(
         self, color: Color, piece_type: Optional[PieceType], rank: int = 0
     ) -> float32:
-        if piece_type is None or piece_type == 6:
-            return float32(0)
-        elif piece_type == 1:
+        if piece_type == 1:
             return self.get_pawn_value(rank, color) if rank else float32(1)
         elif piece_type in [2, 3]:
             return float32(3)
@@ -567,10 +573,48 @@ class Board(ChessBoard):
                     fast_piece_type_at(
                         mask, pawns, knights, bishops, rooks, queens, kings
                     ),
-                    square >> 3,
+                    square >> 3,  # piece rank
                 )
             )
         return arr
+
+    def get_occupied_square_value_map_for_both(
+        self,
+    ) -> Tuple[NDArray[Shape["64"], Single], NDArray[Shape["64"], Single]]:
+        """"""
+
+        pawns = self.pawns
+        knights = self.knights
+        bishops = self.bishops
+        rooks = self.rooks
+        queens = self.queens
+        kings = self.kings
+
+        get_piece_value = self.get_piece_value
+        fast_piece_type_at = self.fast_piece_type_at
+        oc_black, oc_white = self.occupied_co
+
+        arr_white = zeros(shape=(64,), dtype=float32)
+        arr_black = zeros(shape=(64,), dtype=float32)
+        for square, mask in SQUARE_MASK_ITERATOR:
+            if bool((oc_white >> square) & 1):  # is occupied by white
+                arr_white[square] = get_piece_value(
+                    True,
+                    fast_piece_type_at(
+                        mask, pawns, knights, bishops, rooks, queens, kings
+                    ),
+                    square >> 3,  # piece rank
+                )
+            elif bool((oc_black >> square) & 1):  # is occupied by black
+                arr_black[square] = get_piece_value(
+                    False,
+                    fast_piece_type_at(
+                        mask, pawns, knights, bishops, rooks, queens, kings
+                    ),
+                    square >> 3,  # piece rank
+                )
+
+        return arr_white, arr_black
 
     @staticmethod
     def fast_piece_type_at(
@@ -612,12 +656,10 @@ class Board(ChessBoard):
         :param king: square where the king is
         """
 
-        seven: float32 = float32(7.0)  # pff
-
         arr = empty(shape=(64,), dtype=float32)
         for square in SQUARES:
             arr[square] = float32(square_distance(square, king))
-        return (seven - arr) / seven
+        return (float32(7) - arr) / float32(7)
 
     def get_king_proximity_map_normalized(
         self, color: Color
@@ -991,7 +1033,9 @@ class Board(ChessBoard):
         self.occupied_co[False] = board_state.occupied_b
         self.occupied = board_state.occupied
 
-    def generate_pseudo_legal_moves(self, from_mask: Bitboard = BB_ALL, to_mask: Bitboard = BB_ALL) -> Iterator[Move]:
+    def generate_pseudo_legal_moves(
+        self, from_mask: Bitboard = BB_ALL, to_mask: Bitboard = BB_ALL
+    ) -> Iterator[Move]:
         """
         Override from original changing the order to start generating from pawn captures, then other captures.
         """
@@ -1004,8 +1048,10 @@ class Board(ChessBoard):
             # Generate pawn captures.
             for from_square in scan_reversed(pawns):
                 targets = (
-                    BB_PAWN_ATTACKS[self.turn][from_square] &
-                    self.occupied_co[not self.turn] & to_mask)
+                    BB_PAWN_ATTACKS[self.turn][from_square]
+                    & self.occupied_co[not self.turn]
+                    & to_mask
+                )
 
                 for to_square in scan_reversed(targets):
                     if square_rank(to_square) in [0, 7]:
@@ -1067,8 +1113,11 @@ class Board(ChessBoard):
 
 
 KING_PROXIMITY_MAPS_NORMALIZED: Dict[Bitboard, NDArray[Shape["64"], Single]] = {
-    mask: Board.generate_king_proximity_map_normalized(square) for mask, square in zip(BB_SQUARES, SQUARES)
+    mask: Board.generate_king_proximity_map_normalized(square)
+    for mask, square in zip(BB_SQUARES, SQUARES)
 }
+""""""
+
 pawn_attacks_white: List[Bitboard] = BB_PAWN_ATTACKS[False]
 pawn_attacks_black: List[Bitboard] = BB_PAWN_ATTACKS[True]
 SQUARE_MASK_ITERATOR: List[Tuple[int, Bitboard]] = list(zip(SQUARES, BB_SQUARES))
@@ -1124,4 +1173,4 @@ PAWN_VALUES: Dict[int, float32] = {
 KING_ATTACKS: Dict[Bitboard, Bitboard] = {
     mask: BB_KING_ATTACKS[square] for square, mask in zip(SQUARES, BB_SQUARES)
 }
-ONES: Bitboard = (2**64 - 1)
+ONES: Bitboard = 2**64 - 1

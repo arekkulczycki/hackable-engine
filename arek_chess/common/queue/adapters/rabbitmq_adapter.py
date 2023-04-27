@@ -9,7 +9,7 @@ from arek_chess.common.queue.base_queue import BaseQueue
 from arek_chess.common.queue.items.base_item import BaseItem
 
 
-class RabbitmqQueue(BaseQueue):
+class RabbitmqAdapter(BaseQueue):
     """
     Queue provided by external RabbitMQ service.
 

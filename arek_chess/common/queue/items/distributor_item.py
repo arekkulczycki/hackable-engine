@@ -22,7 +22,8 @@ class DistributorItem(BaseItem):
     # score: float32
     # captured: int
 
-    def __init__(self, node_name: str, move_str: str, score: float32, captured: int) -> None:
+    def __init__(self, run_id: str, node_name: str, move_str: str, score: float32, captured: int) -> None:
+        self.run_id: str = run_id
         self.node_name: str = node_name
         self.move_str: str = move_str
         self.score: float32 = score
@@ -36,7 +37,7 @@ class DistributorItem(BaseItem):
         values = string_part.decode().split(";")
 
         return DistributorItem(
-            values[0], values[1], unpack("f", float_part)[0], int(values[2])
+            values[0], values[1], values[2], unpack("f", float_part)[0], int(values[3])
         )
 
     @staticmethod
@@ -46,5 +47,5 @@ class DistributorItem(BaseItem):
         score_bytes = pack("f", obj.score)
 
         return (
-            f"{obj.node_name};{obj.move_str};{obj.captured}@@@@@".encode() + score_bytes
+            f"{obj.run_id};{obj.node_name};{obj.move_str};{obj.captured}@@@@@".encode() + score_bytes
         )

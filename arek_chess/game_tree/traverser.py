@@ -2,6 +2,7 @@
 
 from itertools import cycle
 from typing import Dict, List, Optional, Generator
+from weakref import WeakValueDictionary
 
 from chess import BISHOP, KNIGHT
 from numpy import abs, float32
@@ -22,17 +23,17 @@ class Traverser:
 
     root: Node
 
-    def __init__(self, root: Node, nodes_dict: Dict[str, Node]) -> None:
+    def __init__(self, root: Node, nodes_dict: WeakValueDictionary) -> None:
         super().__init__()
 
         self.root = root
-        self.nodes_dict: Dict[str, Node] = nodes_dict
+        self.nodes_dict: WeakValueDictionary = nodes_dict
 
         # self.selector: LinearProbabilitySelector = LinearProbabilitySelector()
         # self.selector: ExpProbabilitySelector = ExpProbabilitySelector()
         """gives a chance to unlikely sequences at a cost of looking at tons of nonsense"""
         self.selector: FastSelector = FastSelector()
-        """straight to the point by is more likely to miss on something"""
+        """straight to the point but is more likely to miss on something"""
         # self.selector: Cluster1dSelector = Cluster1dSelector()
 
         self.last_best_node: Optional[Node] = None
@@ -42,9 +43,7 @@ class Traverser:
 
         self.selections: Dict[Node, int] = {}
 
-    def get_nodes_to_look_at(
-        self, iterations: int = 1
-    ) -> List[Node]:
+    def get_nodes_to_look_at(self, iterations: int = 1) -> List[Node]:
         """
         Get N nodes, taking each from a different node, but focusing around the best nodes.
         """
@@ -75,9 +74,7 @@ class Traverser:
     def _get_next_node_to_look_at_and_block(
         self, leaf_color: bool, level_to_block: int = 0
     ) -> Optional[Node]:
-        node: Optional[Node] = self.get_next_node_to_look_at(
-            leaf_color, level_to_block
-        )
+        node: Optional[Node] = self.get_next_node_to_look_at(leaf_color, level_to_block)
 
         if self.node_to_block is not None and not self.node_to_block.being_processed:
             self.node_to_block.being_processed = True  # temporarily blocking
@@ -114,13 +111,19 @@ class Traverser:
                 return best_node
 
             # children of right leaf color, except ones being processed or checkmate
-            free_children: List[Node] = [
-                node
-                for node in children
-                if not node.being_processed and node.leaf_color == leaf_color
-            ]
+            free_children: List[Node] = []
+            free_correct_leaf_children: List[Node] = []
+            for node in children:
+                if not node.being_processed and node.leaf_color == leaf_color:
+                    free_correct_leaf_children.append(node)
+                elif not node.being_processed:
+                    free_children.append(node)
 
-            if free_children:
+            if free_correct_leaf_children:
+                best_node = self.select_promising_node(
+                    free_correct_leaf_children, best_node.color
+                )
+            elif free_children:
                 best_node = self.select_promising_node(free_children, best_node.color)
             else:
                 return None
@@ -157,8 +160,14 @@ class Traverser:
                 parent = self.get_node(candidate.node_name)
                 # parent_score = parent.score
             except KeyError as e:
-                # print(self.nodes_dict)
-                raise SearchFailed(f"node not found in items: {candidate.node_name}")
+                if not self.root.children:
+                    # getting some leftover evaluations from the previous run
+                    continue
+
+                raise SearchFailed(
+                    f"node not found in items: {candidate.node_name}, "
+                    f"{candidate.run_id}, {candidate.move_str}, {self.root.move}"
+                ) from e
 
             level = candidate.node_name.count(".") + 1
             color: bool = self.root.color if level % 2 == 0 else not self.root.color
@@ -221,17 +230,16 @@ class Traverser:
     ) -> Optional[Node]:
         """"""
 
-        parent_name: str = parent.name
-        child_name: str = f"{parent_name}.{move}"
-        if captured == -1:  # node reversed from distributor when found checkmate
-            try:
-                self.nodes_dict[child_name].score = score
-                self.nodes_dict[child_name].captured = -1
-                return None
-            except KeyError:
-                # was never meant to be here, but somehow queue delivers phantom items
-                pass
+        # if captured == -1:  # node reversed from distributor when found checkmate
+        #     try:
+        #         self.nodes_dict[child_name].score = score
+        #         self.nodes_dict[child_name].captured = -1
+        #         return None
+        #     except KeyError:
+        #         # was never meant to be here, but somehow queue delivers phantom items
+        #         pass
 
+        # print(f"creating: {move}, {parent.name}")
         node: Node = Node(
             parent=parent,
             move=move,
@@ -241,7 +249,7 @@ class Traverser:
             being_processed=should_process,
         )
 
-        self.nodes_dict[child_name] = node
+        self.nodes_dict[node.name] = node
 
         return node
 
