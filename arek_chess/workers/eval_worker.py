@@ -29,7 +29,7 @@ class EvalWorker(BaseWorker):
         queue_throttle: int,
         *,
         evaluator_name: Optional[str] = None,
-        memory_action: bool = False,
+        is_training_run: bool = False,
         env: Optional[gym.Env] = None,
         model_version: Optional[str] = None,
     ) -> None:
@@ -41,7 +41,7 @@ class EvalWorker(BaseWorker):
 
         self.evaluator_name = evaluator_name
 
-        self.memory_action: bool = memory_action
+        self.is_training_run: bool = is_training_run
         self.env: gym.Env = env
         self.model = env and PPO.load(
             model_version,
@@ -185,7 +185,7 @@ class EvalWorker(BaseWorker):
 
         action = (
             self.get_memory_action(self.evaluator.ACTION_SIZE)
-            if self.memory_action
+            if self.is_training_run
             else self.env and self.get_action()
         )
 

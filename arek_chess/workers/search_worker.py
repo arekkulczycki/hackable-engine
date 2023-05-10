@@ -93,7 +93,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         self,
         board: Board,
         root: Optional[Node] = None,
-        nodes_dict: Optional[WeakValueDictionary] = None,
+        nodes_dict: WeakValueDictionary = None,
     ) -> None:
         """"""
 

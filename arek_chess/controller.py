@@ -2,7 +2,7 @@
 
 import traceback
 from time import sleep
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict
 from weakref import WeakValueDictionary
 
 from chess import Move, Termination
@@ -43,7 +43,7 @@ class Controller:
         tree_params: str = "",
         search_limit: Optional[int] = None,
         model_version: Optional[str] = None,
-        memory_action: bool = False,
+        is_training_run: bool = False,
         in_thread: bool = False,
         timeout: Optional[float] = None,
     ):
@@ -66,8 +66,13 @@ class Controller:
         self.child_processes: List = []
 
         self.model_version = model_version
-        self.memory_action = memory_action
+        self.is_training_run = is_training_run
         self.search_worker = None
+
+        # cache search results for subsequent moves
+        self.initial_root_color: bool = True
+        self.last_root: Optional[Node] = None
+        self.last_nodes_dict: WeakValueDictionary[str, Node] = WeakValueDictionary({})
 
     def boot_up(self, fen: Optional[str] = None) -> None:
         """"""
@@ -81,6 +86,7 @@ class Controller:
             self.board = Board()
             self.initial_fen = self.board.fen()
 
+        self.initial_root_color = self.board.turn
         self.start_child_processes()
 
     def start_child_processes(self) -> None:
@@ -97,7 +103,7 @@ class Controller:
                 self.eval_queue,
                 self.selector_queue,
                 (self.queue_throttle // num_eval_workers),
-                memory_action=self.memory_action,
+                is_training_run=self.is_training_run,
                 env=self.model_version and SquareControlEnv(self),
                 model_version=self.model_version,
             )
@@ -130,9 +136,18 @@ class Controller:
         if reuse and self.search_worker is None:
             raise ValueError("Cannot reuse root when no root was set yet")
 
-        if reuse:
+        # cache previous run tree if there was a move
+        if (
+            self.board.move_stack
+            and reuse
+            and (
+                not self.is_training_run
+                or self.search_worker.root.color != self.initial_root_color
+            )
+        ):
             last_root: Node = self.search_worker.root
             last_nodes_dict: WeakValueDictionary = self.search_worker.nodes_dict
+            # TODO: make sure it re-uses old tree every full move, not sharing tree with the opponent
 
         self.search_worker = SearchWorker(
             self.distributor_queue,
@@ -144,12 +159,24 @@ class Controller:
             self.search_limit,
         )
 
-        if reuse:
+        if reuse and (
+            not self.is_training_run
+            or self.search_worker.root.color == self.initial_root_color
+        ):
             # TODO: in order to go this way storing nodes in shared memory has to change keys
-            self.search_worker.set_root(self.board, self._get_next_root(last_root), last_nodes_dict)
-            # TODO: in training this is wrong, it should re-use old tree every full move, not sharing tree with the opponent
+            self.search_worker.set_root(
+                self.board, self._get_next_root(self.last_root), self.last_nodes_dict
+            )
         else:
             self.search_worker.set_root(self.board)
+
+        # save cached values to self
+        if reuse and (
+            not self.is_training_run
+            or self.search_worker.root.color != self.initial_root_color
+        ):
+            self.last_root = last_root
+            self.last_nodes_dict = last_nodes_dict
 
     def make_move(
         self,
@@ -161,7 +188,9 @@ class Controller:
             print("asked for a move in checkmate position")
             return
 
-        self._setup_search_worker(reuse=False)  # TODO: set True when branch reusing works
+        self._setup_search_worker(
+            reuse=False
+        )  # TODO: set True when branch reusing works
 
         if memory_action is not None:
             MemoryManager().set_action(memory_action, len(memory_action))

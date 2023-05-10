@@ -18,6 +18,16 @@ register(
 
 LOG_PATH = "./arek_chess/training/logs/"
 
+TOTAL_TIMESTEPS = int(2**14)
+LEARNING_RATE = 3e-3
+N_EPOCHS = 10
+N_STEPS = 2048
+BATCH_SIZE = 512
+CLIP_RANGE = 0.3
+
+POLICY_KWARGS = dict(net_arch=dict(pi=[128, 128], vf=[128, 128]))
+# POLICY_KWARGS["activation_fn"] = "tanh"
+
 
 def train(version=-1, gpu: bool = False):
     t0 = perf_counter()
@@ -38,7 +48,12 @@ def train(version=-1, gpu: bool = False):
             f"./chess.v{version}",
             env=env,
             verbose=2,
-            custom_objecs={"clip_range": 0.1, "learning_rate": 3e-3, "n_steps": 512},
+            custom_objecs={
+                "clip_range": CLIP_RANGE,
+                "learning_rate": LEARNING_RATE,
+                "n_steps": N_STEPS,
+                "batch_size": BATCH_SIZE,
+            },
             device="cuda" if gpu else "auto",
         )
     else:
@@ -47,16 +62,17 @@ def train(version=-1, gpu: bool = False):
             "MlpPolicy",
             env=env,
             verbose=2,
-            clip_range=0.1,
-            learning_rate=3e-3,
-            n_steps=512,
-            device="cuda" if gpu else "auto"
+            clip_range=CLIP_RANGE,
+            learning_rate=LEARNING_RATE,
+            n_steps=N_STEPS,
+            batch_size=BATCH_SIZE,
+            device="cuda" if gpu else "auto",
         )
         # model = PPO("MultiInputPolicy", env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
 
     print("training started...")
 
-    model.learn(total_timesteps=int(2**14))
+    model.learn(total_timesteps=TOTAL_TIMESTEPS)
     model.save(f"./chess.v{version + 1}")
 
     env.envs[0].controller.tear_down()
@@ -75,8 +91,14 @@ def loop_train(version=-1, loops=5, gpu: bool = False):
                 f"./chess.v{version}",
                 env=env,
                 verbose=2,
-                custom_objecs={"clip_range": 0.3, "learning_rate": 3e-3, "n_steps": 256},
-                device="cuda" if gpu else "cpu"
+                custom_objecs={
+                    "clip_range": CLIP_RANGE,
+                    "learning_rate": LEARNING_RATE,
+                    "n_epochs": N_EPOCHS,
+                    "n_steps": N_STEPS,
+                    "batch_size": BATCH_SIZE,
+                },
+                device="cuda" if gpu else "cpu",
             )
         else:
             print("setting up model...")
@@ -84,10 +106,11 @@ def loop_train(version=-1, loops=5, gpu: bool = False):
                 "MlpPolicy",
                 env=env,
                 verbose=2,
-                clip_range=0.3,
-                learning_rate=3e-3,
-                n_steps=512,
-                device="cuda" if gpu else "cpu"
+                clip_range=CLIP_RANGE,
+                learning_rate=LEARNING_RATE,
+                n_steps=N_STEPS,
+                batch_size=BATCH_SIZE,
+                device="cuda" if gpu else "cpu",
             )
             # model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
 
@@ -164,9 +187,7 @@ def get_args():
     parser.add_argument(
         "-v", "--version", type=int, default=-1, help="version of the model to use"
     )
-    parser.add_argument(
-        "-g", "--gpu", help="run on gpu or fail", action="store_true"
-    )
+    parser.add_argument("-g", "--gpu", help="run on gpu or fail", action="store_true")
 
     return parser.parse_args()
 

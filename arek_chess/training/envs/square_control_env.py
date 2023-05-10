@@ -76,7 +76,7 @@ class SquareControlEnv(gym.Env):
             self.controller = Controller(
                 Print.MOVE,
                 search_limit=9,
-                memory_action=True,
+                is_training_run=True,
                 in_thread=False,
                 timeout=3,
             )
