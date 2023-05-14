@@ -11,7 +11,9 @@ class BoardSerializerMixin:
     """
 
     def serialize_position(self: BoardProtocol) -> bytes:
-        """"""
+        """
+        :return: bytes array of length 73
+        """
 
         pawns = pack("Q", self.pawns)
         knights = pack("Q", self.knights)
@@ -27,6 +29,8 @@ class BoardSerializerMixin:
         return b"".join((pawns, knights, bishops, rooks, queens, kings, whites, blacks, castling_rights, turn))
 
     def deserialize_position(self: BoardProtocol, bytes_: bytes) -> None:
+        """"""
+
         pawns_bytes = bytes_[:8]
         knights_bytes = bytes_[8:16]
         bishops_bytes = bytes_[16:24]

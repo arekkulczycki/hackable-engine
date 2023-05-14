@@ -87,18 +87,18 @@ class EvalWorkerSpecificPath(EvalWorker):
     eval = float32(1.5)
 
     def evaluate(
-        self, board: Board, move_str: str, captured_piece_type: int, is_check: bool
+        self, board: Board, is_check: bool
     ) -> float32:
         """"""
 
-        moves = list(move.uci() for move in board.move_stack) + [move_str]
-        nm = len(moves)
-        if all([a == b for a, b in zip(reversed(moves), list(self.PATH.keys())[:nm])]):
-            # self.RETURNED_ONCE = True
-            if nm % 2 == 1:
-                return self.eval
-            else:
-                return - self.eval
+        # moves = list(move.uci() for move in board.move_stack) + [move_str]
+        # nm = len(moves)
+        # if all([a == b for a, b in zip(reversed(moves), list(self.PATH.keys())[:nm])]):
+        #     # self.RETURNED_ONCE = True
+        #     if nm % 2 == 1:
+        #         return self.eval
+        #     else:
+        #         return - self.eval
 
         return float32(random() * 2 - 1)
 

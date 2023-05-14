@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 import os
 from asyncio import sleep as asyncio_sleep
 from time import time, sleep
@@ -105,12 +104,15 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         else:
             self._set_new_root()
 
-        self.memory_manager.set_node_board(ROOT_NODE_NAME, self.board)
-
         if not self.root.children:
             self.distributor_queue.put(
                 DistributorItem(
-                    self.root.move, ROOT_NODE_NAME, self.root.move, self.root.score, 0
+                    self.root.move,
+                    ROOT_NODE_NAME,
+                    self.root.move,
+                    0,
+                    self.root.score,
+                    self.board.serialize_position(),
                 )
             )
 
@@ -120,7 +122,9 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         """"""
 
         score = -INF if self.board.turn else INF
-        move = self.board.move_stack[-1].uci() if self.board.move_stack else ROOT_NODE_NAME
+        move = (
+            self.board.move_stack[-1].uci() if self.board.move_stack else ROOT_NODE_NAME
+        )
 
         self.root = Node(
             parent=None,
@@ -129,6 +133,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
             captured=0,
             color=self.board.turn,
             being_processed=True,
+            board=self.board.serialize_position()
         )
 
         self.nodes_dict = {ROOT_NODE_NAME: self.root}
@@ -297,7 +302,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 )
 
                 for child in sorted_children[:N_CANDIDATES]:
-                    print(child.move, child.score)
+                    print(child.move, child.leaf_level, child.score)
 
             self.t_tmp = t
             self.last_evaluated = self.evaluated
@@ -362,7 +367,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 # value from previous cycle
                 continue
 
-            # no children to look at, so nothing sent to evaluation
+            # 0 children or 1 root child, so nothing sent to evaluation
             try:
                 node = self.traverser.get_node(item.control_value)
             except KeyError:
@@ -374,7 +379,10 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 # node.being_processed = False
 
                 if node is self.root:
+                    # case was root and had just 1 child
                     move = list(self.board.legal_moves)[0]
+
+                    self.board.push(move)
                     self.traverser.create_node(
                         self.root,
                         move.uci(),
@@ -382,9 +390,13 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                         0,
                         not self.root.color,
                         False,
+                        self.board.serialize_position()
                     )
+                    self.board.pop()
+
                     self.finished = True
                 else:
+                    # case was not root and had 0 children
                     node.parent.propagate_score(node.score, None, node.color)
 
     def _read_control_values(self) -> None:
@@ -401,7 +413,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 return
             sleep(SLEEP)
 
-        print("distributor non-responsive")
+        # print("distributor non-responsive")
         # raise SearchFailed
 
     def handle_candidates(
@@ -449,8 +461,9 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                     self.root.move,
                     node.name,
                     node.move,
-                    node.score,
                     node.captured if recaptures else 0,
+                    node.score,
+                    node.board
                 )
                 for node in nodes
             ]
@@ -539,9 +552,14 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         if self.printing == Print.CANDIDATES:
             os.system("clear")
             for child in sorted_children[:]:
-                print(child.move, child.score)
+                print(child.move, child.leaf_level, child.score)
 
-        best = sorted_children[0]
+        depth = max([child.leaf_level for child in sorted_children[:3]])
+
+        for child in sorted_children:
+            if child.leaf_level >= 2/3 * depth:
+                best = child
+                break
         return best.score, best.move
 
     def print_tree(

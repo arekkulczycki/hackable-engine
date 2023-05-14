@@ -13,7 +13,9 @@ from arek_chess.common.queue.items.selector_item import SelectorItem
 from arek_chess.criteria.selection.fast_selector import FastSelector
 from arek_chess.game_tree.node import Node
 
-level_to_block: cycle = cycle([3, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0, 0])
+# level_to_block: cycle = cycle([3, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0, 0])
+# level_to_block: cycle = cycle([4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1, 0])
+level_to_block: cycle = cycle([7, 6, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0])
 
 
 class Traverser:
@@ -183,6 +185,7 @@ class Traverser:
                 candidate.captured,
                 color,
                 should_search_recaptures,
+                candidate.board,
             )
 
             # analyse "good" captures immediately if they are in the top branch
@@ -227,6 +230,7 @@ class Traverser:
         captured: int,
         color: bool,
         should_process: bool,
+        board: bytes,
     ) -> Optional[Node]:
         """"""
 
@@ -247,6 +251,7 @@ class Traverser:
             captured=captured,
             color=color,
             being_processed=should_process,
+            board=board
         )
 
         self.nodes_dict[node.name] = node

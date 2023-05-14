@@ -1,8 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Module_docstring.
-"""
-
 import sys
 from multiprocessing import Process
 from typing import Tuple, Dict, Optional

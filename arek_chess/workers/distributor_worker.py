@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
-
 from typing import List, Optional
 
 from chess import Move, KNIGHT, BISHOP
 
 from arek_chess.board.board import Board
-from arek_chess.common.constants import FINISHED, ROOT_NODE_NAME, SLEEP, DISTRIBUTED, STATUS, CLOSED
+from arek_chess.common.constants import (
+    FINISHED,
+    ROOT_NODE_NAME,
+    SLEEP,
+    DISTRIBUTED,
+    STATUS,
+    CLOSED,
+)
 from arek_chess.common.queue.items.control_item import ControlItem
 from arek_chess.common.queue.items.distributor_item import DistributorItem
 from arek_chess.common.queue.items.eval_item import EvalItem
@@ -64,7 +70,7 @@ class DistributorWorker(BaseWorker):
             else:
                 status: int = memory_manager.get_int(STATUS)
                 if status == FINISHED:
-                    self.memory_manager.set_int(STATUS, CLOSED, new=False)
+                    memory_manager.set_int(STATUS, CLOSED, new=False)
                     self.distributed = 0
 
     def get_items(self, queue_throttle: int) -> List[DistributorItem]:
@@ -81,65 +87,28 @@ class DistributorWorker(BaseWorker):
 
         queue_items = []
 
-        # for node_name, move_str, score, captured in (item.as_tuple() for item in items):
         for item in items:  # TODO: get_many_boards ?
-            # root board is already created at the very start in the search_manager
-            if item.node_name == ROOT_NODE_NAME:
-                board = self.memory_manager.get_node_board(item.node_name, self.board)
-                if board is None:
-                    raise ValueError(f"node memory not found: {item.node_name}")
-            else:
-                parent_node_name = ".".join(item.node_name.split(".")[:-1])
+            self.board.deserialize_position(item.board)
 
-                # storing the shared memory for node_name board
-                try:
-                    board = self.create_node_board(
-                        parent_node_name, item.node_name, item.move_str
-                    )
-                except ValueError as e:
-                    # FIXME: getting items from previous run???
-                    # print(e)
-                    # print(item.run_id, item.node_name, item.move_str)
-                    self.control_queue.put(ControlItem(item.run_id, "error"))
-                    break
+            # TODO: if it could be done efficiently, would be beneficial to check game over here
+            # TODO: there is no more captured=-1, now control_queue is for special cases treatment
 
             recaptures = []
             new_queue_items = []
-            for move in board.legal_moves:
+            for move in self.board.copy().legal_moves:
+                eval_item = self._get_eval_item(item, move)
+
                 if item.captured:
-                    recaptured = board.get_captured_piece_type(move)
+                    recaptured = self.board.get_captured_piece_type(move)
                     if recaptured >= item.captured or (
                         recaptured == KNIGHT and item.captured == BISHOP
                     ):
-                        recaptures.append(EvalItem(item.run_id, item.node_name, move.uci()))
+                        recaptures.append(eval_item)
 
-                new_queue_items.append(EvalItem(item.run_id, item.node_name, move.uci()))
+                new_queue_items.append(eval_item)
 
             if item.captured and recaptures:
                 new_queue_items = recaptures
-
-            # TODO: if it could be done efficiently, would be beneficial to check game over here
-            # new_queue_items = []
-            # move: Move
-            # for move in board.legal_moves:
-            #     outcome = self.get_outcome(board, move)
-            #
-            #     if outcome is not None:
-            #         winner: bool = outcome.winner
-            #         score = 0 if winner is None else INF if winner else -INF
-            #
-            #         # if game over then return the move back to the selector
-            #         self.selector_queue.put(
-            #             (
-            #                 parent_node_name,  # will always be assigned because root position is never game over
-            #                 move_str,
-            #                 0,
-            #                 -1,  # sending -1 as signal game over in this node
-            #                 score,
-            #             )
-            #         )
-            #     else:
-            #         new_queue_items.append((node_name, move.uci()))
 
             if item.node_name == ROOT_NODE_NAME and len(new_queue_items) == 1:
                 self.control_queue.put(ControlItem(item.run_id, item.node_name))
@@ -161,6 +130,17 @@ class DistributorWorker(BaseWorker):
             except ValueError as e:  # `Cannot mmap an empty file` randomly occurring sometimes
                 # doesn't matter, will set in next iteration - probably is because SearchWorker accesses concurrently
                 print(f"Setting distributed number error: {e}")
+
+    def _get_eval_item(self, item: DistributorItem, move: Move) -> EvalItem:
+        """"""
+
+        captured = self.board.get_captured_piece_type(move)
+        state = self.board.light_push(move)
+        eval_item = EvalItem(
+            item.run_id, item.node_name, move.uci(), captured, self.board.serialize_position()
+        )
+        self.board.lighter_pop(state)
+        return eval_item
 
     def create_node_board(
         self, parent_node_name: str, node_name: str, node_move: str

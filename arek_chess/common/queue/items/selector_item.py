@@ -19,25 +19,43 @@ class SelectorItem(BaseItem):
 
     # node_name: str
     # move_str: str
-    # score: float32
     # captured: int
+    # score: float32
+    # board: bytes
 
-    def __init__(self, run_id: str, node_name: str, move_str: str, score: float32, captured: int) -> None:
+    def __init__(
+        self,
+        run_id: str,
+        node_name: str,
+        move_str: str,
+        captured: int,
+        score: float32,
+        board: bytes,
+    ) -> None:
         self.run_id: str = run_id
         self.node_name: str = node_name
         self.move_str: str = move_str
-        self.score: float32 = score
         self.captured: int = captured
+        self.score: float32 = score
+        self.board: bytes = board
 
     @staticmethod
     def loads(b: memoryview) -> SelectorItem:
         """"""
 
-        string_part, float_part = b.tobytes().split(b"@@@@@")
-        values = string_part.decode().split(";")
+        _bytes = b.tobytes()
+        string_part = _bytes[:-77]
+        float_part = _bytes[-77:-73]
+        board = _bytes[-73:]
+        values = string_part.decode("utf-8").split(";")
 
         return SelectorItem(
-            values[0], values[1], values[2], unpack("f", float_part)[0], int(values[3])
+            values[0],
+            values[1],
+            values[2],
+            int(values[3]),
+            unpack("f", float_part)[0],
+            board,
         )
 
     @staticmethod
@@ -47,5 +65,7 @@ class SelectorItem(BaseItem):
         score_bytes = pack("f", obj.score)
 
         return (
-            f"{obj.run_id};{obj.node_name};{obj.move_str};{obj.captured}@@@@@".encode() + score_bytes
+            f"{obj.run_id};{obj.node_name};{obj.move_str};{obj.captured}".encode()
+            + score_bytes
+            + obj.board
         )

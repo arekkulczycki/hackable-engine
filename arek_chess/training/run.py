@@ -18,6 +18,7 @@ register(
 
 LOG_PATH = "./arek_chess/training/logs/"
 
+ENV_NAME = "chess"
 TOTAL_TIMESTEPS = int(2**14)
 LEARNING_RATE = 3e-3
 N_EPOCHS = 10
@@ -45,7 +46,7 @@ def train(version=-1, gpu: bool = False):
     if version >= 0:
         # model = PPO.load(f"./chess.v{version}", env=env, custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
         model = PPO.load(
-            f"./chess.v{version}",
+            f"./{ENV_NAME}.v{version}",
             env=env,
             verbose=2,
             custom_objecs={
@@ -88,7 +89,7 @@ def loop_train(version=-1, loops=5, gpu: bool = False):
         if version >= 0:
             # custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
             model = PPO.load(
-                f"./chess.v{version}",
+                f"./{ENV_NAME}.v{version}",
                 env=env,
                 verbose=2,
                 custom_objecs={
@@ -125,7 +126,7 @@ def loop_train(version=-1, loops=5, gpu: bool = False):
         else:
             # on success increment the version and keep learning
             version += 1
-            model.save(f"./chess.v{version}")
+            model.save(f"./{ENV_NAME}.v{version}")
         finally:
             print(f"training finished in: {perf_counter() - t0}")
 

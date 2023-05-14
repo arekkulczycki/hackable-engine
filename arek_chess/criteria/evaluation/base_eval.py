@@ -32,15 +32,11 @@ class BaseEval(ABC):
     def get_score(
         self,
         board: Board,
-        move_str: str,
-        captured_piece_type: int,
         is_check: bool,
         action: Optional[ActionType] = None,
     ) -> float32:
         """
         :param board
-        :param move_str:
-        :param captured_piece_type: 0 - no capture, 1 - PAWN, 2 - KNIGHT, 3 - BISHOP, 4 - ROOK, 5 - QUEEN
         :param is_check:
         :param action:
 

@@ -16,6 +16,7 @@ class BaseItem(ABC):
     """
 
     # run_id: str
+    SEPARATOR: bytes = b"@@@@@"
 
     def __iter__(self) -> Iterator:
         return iter(astuple(self))

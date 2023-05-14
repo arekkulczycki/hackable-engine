@@ -56,6 +56,8 @@ from chess import (
     BB_RANK_4,
     BB_RANK_5,
     BB_RANK_6,
+    BB_RANK_1,
+    BB_RANK_8,
 )
 from nptyping import NDArray, Shape, Int
 from numpy import float32, empty, zeros
@@ -820,87 +822,106 @@ class Board(ChessBoard, BoardSerializerMixin):
 
         return False
 
-    def light_push(self: BoardT, move: Move) -> None:
+    def light_push(self, move: Move) -> Dict[str, Bitboard]:
         """
         Updates the position with the given *move* and puts it onto the move stack.
         """
 
-        # Push move and remember board state.
-        move = self._to_chess960(move)
-        board_state = self._board_state()
-        self.move_stack.append(
-            self._from_chess960(
-                self.chess960,
-                move.from_square,
-                move.to_square,
-                move.promotion,
-                move.drop,
-            )
-        )
-        self._stack.append(board_state)
+        board_state = self.get_board_state()
+
+        move, is_castling = self._is_castling(move)
 
         # Reset en passant square.
         ep_square = self.ep_square
         self.ep_square = None
 
-        from_bb = BB_SQUARES[move.from_square]
-        to_bb = BB_SQUARES[move.to_square]
+        piece_type = self._remove_piece_at(move.from_square)
+        if piece_type is None:
+            raise ValueError("no piece on moving square")
 
-        promoted = bool(self.promoted & from_bb)
-        piece_type = cast(int, self._remove_piece_at(move.from_square))
-        capture_square = move.to_square
-        captured_piece_type = self.piece_type_at(capture_square)
+        # Update castling rights.
+        self._update_castling_rights(move, piece_type)
 
         # Handle special pawn moves.
         if piece_type == PAWN:
-            diff = move.to_square - move.from_square
-
-            if diff == 16 and square_rank(move.from_square) == 1:
-                self.ep_square = move.from_square + 8
-            elif diff == -16 and square_rank(move.from_square) == 6:
-                self.ep_square = move.from_square - 8
-            elif (
-                move.to_square == ep_square
-                and abs(diff) in [7, 9]
-                and not captured_piece_type
-            ):
-                # Remove pawns captured en passant.
-                down = -8 if self.turn == True else 8
-                capture_square = ep_square + down
-                captured_piece_type = self._remove_piece_at(capture_square)
+            self._handle_special_pawn_move(move, ep_square)
 
         # Promotion.
         if move.promotion:
-            promoted = True
             piece_type = move.promotion
 
         # Castling.
-        castling = piece_type == KING and self.occupied_co[self.turn] & to_bb
-        if castling:
-            a_side = square_file(move.to_square) < square_file(move.from_square)
-
-            self._remove_piece_at(move.from_square)
-            self._remove_piece_at(move.to_square)
-
-            if a_side:
-                self._set_piece_at(C1 if self.turn == True else C8, KING, self.turn)
-                self._set_piece_at(D1 if self.turn == True else D8, ROOK, self.turn)
-            else:
-                self._set_piece_at(G1 if self.turn == True else G8, KING, self.turn)
-                self._set_piece_at(F1 if self.turn == True else F8, ROOK, self.turn)
+        if is_castling:
+            self._handle_castling(move)
 
         # Put the piece on the target square.
-        if not castling:
-            was_promoted = bool(self.promoted & to_bb)
-            self._set_piece_at(move.to_square, piece_type, self.turn, promoted)
+        else:
+            self._set_piece_at(move.to_square, piece_type, self.turn, False)
 
-            if captured_piece_type:
-                self._push_capture(
-                    move, capture_square, captured_piece_type, was_promoted
-                )
-
-        # Swap turn.
         self.turn = not self.turn
+
+        return board_state
+
+    def _is_castling(self, move: Move) -> Tuple[Move, bool]:
+        if move.from_square == E1 and self.kings & BB_E1:
+            if move.to_square == G1 and not self.rooks & BB_G1:
+                return Move(E1, H1), True
+            elif move.to_square == C1 and not self.rooks & BB_C1:
+                return Move(E1, A1), True
+        elif move.from_square == E8 and self.kings & BB_E8:
+            if move.to_square == G8 and not self.rooks & BB_G8:
+                return Move(E8, H8), True
+            elif move.to_square == C8 and not self.rooks & BB_C8:
+                return Move(E8, A8), True
+
+        return move, False
+
+    def _update_castling_rights(self, move: Move, piece_type: int) -> None:
+        if piece_type == KING or piece_type == ROOK:
+            from_bb = BB_SQUARES[move.from_square]
+            to_bb = BB_SQUARES[move.to_square]
+
+            castling_rights = self.castling_rights
+            castling_rights &= ~to_bb & ~from_bb
+
+            if piece_type == KING:
+                if self.turn is True:
+                    castling_rights &= ~BB_RANK_1
+                else:
+                    castling_rights &= ~BB_RANK_8
+
+            self.castling_rights = castling_rights
+
+    def _handle_special_pawn_move(self, move: Move, ep_square: Optional[int]) -> None:
+        diff = move.to_square - move.from_square
+        captured_piece_type = self.piece_type_at(move.to_square)
+
+        if diff == 16 and square_rank(move.from_square) == 1:
+            self.ep_square = move.from_square + 8
+        elif diff == -16 and square_rank(move.from_square) == 6:
+            self.ep_square = move.from_square - 8
+        elif (
+            move.to_square == ep_square
+            and abs(diff) in [7, 9]
+            and not captured_piece_type
+        ):
+            # Remove pawns captured en passant.
+            down = -8 if self.turn is True else 8
+            capture_square = ep_square + down
+            self._remove_piece_at(capture_square)
+
+    def _handle_castling(self, move: Move) -> None:
+        a_side = square_file(move.to_square) < square_file(move.from_square)
+
+        self._remove_piece_at(move.from_square)
+        self._remove_piece_at(move.to_square)
+
+        if a_side:
+            self._set_piece_at(C1 if self.turn is True else C8, KING, self.turn)
+            self._set_piece_at(D1 if self.turn is True else D8, ROOK, self.turn)
+        else:
+            self._set_piece_at(G1 if self.turn is True else G8, KING, self.turn)
+            self._set_piece_at(F1 if self.turn is True else F8, ROOK, self.turn)
 
     def get_board_state(self) -> Dict[str, Bitboard]:
         return {
@@ -988,6 +1009,11 @@ class Board(ChessBoard, BoardSerializerMixin):
 
         # Swap turn.
         self.turn = not self.turn
+
+        return board_state
+
+    def extremely_light_push(self, move: Move) -> Dict[str, Bitboard]:
+        board_state = self.get_board_state()
 
         return board_state
 

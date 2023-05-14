@@ -11,12 +11,12 @@ Desired:
 [ ] threats (x ray)
 
 Observation:
-[x] king mobility (king safety)
+[x] king mobility (king safety?)
 [x] material on board
 [x] pawns on board (how open is the position)
+[x] king proximity square control
 [ ] bishops on board (color)
 [ ] space of each player
-[ ] own king proximity
 [ ] better openness of the position (many pawns locked > ... > many pawns gone)
 """
 
@@ -50,12 +50,12 @@ class SquareControlEval(BaseEval):
     """"""
 
     DEFAULT_ACTION: ActionType = (
-        float32(-0.1),  # king_mobility
-        float32(0.15),  # castling_rights
+        float32(-0.05),  # king_mobility
+        float32(0.05),  # castling_rights
         float32(0.1),  # is_check
         float32(1.0),  # material
-        float32(0.015),  # own occupied square control
-        float32(0.015),  # opp occupied square control
+        float32(0.0075),  # own occupied square control
+        float32(0.0125),  # opp occupied square control
         float32(0.01),  # empty square control
         float32(0.01),  # own king proximity square control
         float32(0.02),  # opp king proximity square control
@@ -66,8 +66,6 @@ class SquareControlEval(BaseEval):
     def get_score(
         self,
         board: Board,
-        move_str: str,
-        captured_piece_type: int,
         is_check: bool,
         action: Optional[ActionType] = None,
     ) -> float32:
@@ -83,13 +81,9 @@ class SquareControlEval(BaseEval):
         castling_rights_value: float32 = float32(
             board.has_castling_rights(True)
         ) - float32(board.has_castling_rights(False))
-        try:  # TODO: find the bug that's causing it to raise, seems like king is captured in checkmate position
-            king_mobility_int = board.get_king_mobility(True) - board.get_king_mobility(
-                False
-            )
-        except KeyError:
-            # white king was captured therefore black win...
-            return float32(-1000) if board.turn else float32(1000)
+        king_mobility_int = board.get_king_mobility(True) - board.get_king_mobility(
+            False
+        )
         is_check_value: float32 = (
             -float32(is_check) if board.turn else float32(is_check)
         )  # color is the one who gave the check
@@ -105,19 +99,12 @@ class SquareControlEval(BaseEval):
             Shape["64"], Int
         ] = board.get_square_control_map_for_both()
 
-        # white_piece_value_map: NDArray[
-        #     Shape["64"], Single
-        # ] = board.get_occupied_square_value_map(True)
-        # black_piece_value_map: NDArray[
-        #     Shape["64"], Single
-        # ] = board.get_occupied_square_value_map(False)
         white_piece_value_map: NDArray[Shape["64"], Single]
         black_piece_value_map: NDArray[Shape["64"], Single]
         (
             white_piece_value_map,
             black_piece_value_map,
         ) = board.get_occupied_square_value_map_for_both()
-        empty_square_map: NDArray[Shape["64"], Int] = board.get_empty_square_map()
 
         # TODO: for attacks on material should be considered 3 options: equal, more white attack or more black attacks
         white_material_square_control: NDArray[
@@ -133,29 +120,37 @@ class SquareControlEval(BaseEval):
             -HALFS_float32,  # defending multiple times considered equal to defending half
         )
 
-        # the following is done so that for both players the first param represents the same value
-        own_occupied_square_control: float32 = (
-            matmul(white_material_square_control, ONES_float32)
-            if board.turn
-            else matmul(black_material_square_control, ONES_float32)
+        white_occupied_square_control = matmul(
+            white_material_square_control, ONES_float32
         )
-        opp_occupied_square_control: float32 = (
-            matmul(black_material_square_control, ONES_float32)
-            if board.turn
-            else matmul(white_material_square_control, ONES_float32)
+        black_occupied_square_control = matmul(
+            black_material_square_control, ONES_float32
         )
-        empty_square_control: float32 = matmul(
-            square_control_diff * empty_square_map, ONES_INT
+        empty_square_control: float32 = self._get_empty_square_control(
+            board, square_control_diff
         )
 
-        own_king_proximity_square_control: float32
-        opp_king_proximity_square_control: float32
+        white_king_proximity_square_control: float32
+        black_king_proximity_square_control: float32
         (
-            own_king_proximity_square_control,
-            opp_king_proximity_square_control,
-        ) = _get_king_proximity_square_control(board, square_control_diff)
+            white_king_proximity_square_control,
+            black_king_proximity_square_control,
+        ) = self._get_king_proximity_square_control(board, square_control_diff)
 
-        turn_bonus: float32 = ONE if board.turn else -ONE  # TODO: change to param
+        # a switch is done so that for both players the first param represents the same value
+        turn_bonus: float32
+        if board.turn:  # turn after the move
+            turn_bonus = ONE
+            own_occupied_square_control = black_occupied_square_control
+            opp_occupied_square_control = white_occupied_square_control
+            own_king_proximity_square_control = black_king_proximity_square_control
+            opp_king_proximity_square_control = white_king_proximity_square_control
+        else:
+            turn_bonus = -ONE
+            own_occupied_square_control = white_occupied_square_control
+            opp_occupied_square_control = black_occupied_square_control
+            own_king_proximity_square_control = white_king_proximity_square_control
+            opp_king_proximity_square_control = black_king_proximity_square_control
 
         params = (
             float32(king_mobility_int),
@@ -166,44 +161,57 @@ class SquareControlEval(BaseEval):
             opp_occupied_square_control,
             empty_square_control,
             own_king_proximity_square_control,
-            own_king_proximity_square_control,
+            opp_king_proximity_square_control,
             turn_bonus,
         )
-
         return self.calculate_score(action, params)
 
         # n = len(board.move_stack)
         # return self.calculate_score(action[:-1], params, board.turn, n)
 
+    @staticmethod
+    def _get_empty_square_control(
+        board: Board, square_control_diff: NDArray[Shape["64"], Int]
+    ) -> float32:
+        empty_square_map: NDArray[Shape["64"], Int] = board.get_empty_square_map()
+        return matmul(square_control_diff * empty_square_map, ONES_INT)
 
-def _get_king_proximity_square_control(
-    board: Board,
-    square_control_diff: NDArray[Shape["64"], Int],
-) -> Tuple[float32, float32]:
-    """
+    @staticmethod
+    def _get_king_proximity_square_control(
+        board: Board,
+        square_control_diff: NDArray[Shape["64"], Int],
+    ) -> Tuple[float32, float32]:
+        """
+        :returns: the value at most is around
+            (if all squares around king are controlled by 1 player)
+        """
 
-    :returns: the value at extreme most would be ~8 I suppose...
-        (if all squares around king are controlled by 1 player)
-    """
+        white_king_proximity_map: NDArray[
+            Shape["64"], Single
+        ] = board.get_king_proximity_map_normalized(True)
+        black_king_proximity_map: NDArray[
+            Shape["64"], Single
+        ] = board.get_king_proximity_map_normalized(False)
 
-    white_king_proximity_map: NDArray[
-        Shape["64"], Single
-    ] = board.get_king_proximity_map_normalized(True)
-    black_king_proximity_map: NDArray[
-        Shape["64"], Single
-    ] = board.get_king_proximity_map_normalized(False)
+        white_king_proximity_square_control = matmul(
+            white_king_proximity_map * square_control_diff, ONES_float32
+        )
+        black_king_proximity_square_control = matmul(
+            black_king_proximity_map * square_control_diff, ONES_float32
+        )
+        return white_king_proximity_square_control, black_king_proximity_square_control
 
-    own_occupied_square_control: float32 = (
-        matmul(white_king_proximity_map * square_control_diff, ONES_float32)
-        if board.turn
-        else matmul(black_king_proximity_map * square_control_diff, ONES_float32)
-    )
-    opp_occupied_square_control: float32 = (
-        matmul(white_king_proximity_map * square_control_diff, ONES_float32)
-        if not board.turn
-        else matmul(black_king_proximity_map * square_control_diff, ONES_float32)
-    )
-    return own_occupied_square_control, opp_occupied_square_control
+    # own_occupied_square_control: float32 = (
+    #     matmul(white_king_proximity_map * square_control_diff, ONES_float32)
+    #     if board.turn  # board after the move
+    #     else matmul(black_king_proximity_map * square_control_diff, ONES_float32)
+    # )
+    # opp_occupied_square_control: float32 = (
+    #     matmul(white_king_proximity_map * square_control_diff, ONES_float32)
+    #     if not board.turn
+    #     else matmul(black_king_proximity_map * square_control_diff, ONES_float32)
+    # )
+    # return own_occupied_square_control, opp_occupied_square_control
 
 
 # def _get_king_proximity_square_control(

@@ -24,9 +24,11 @@ class Node:
     captured: int
     color: bool
     being_processed: bool
+    board: bytes
 
     children: List[Node]
     leaf_color: bool
+    leaf_level: int
 
     def __init__(
         self,
@@ -36,6 +38,7 @@ class Node:
         captured: int,
         color: bool,
         being_processed: bool,
+        board: bytes,
     ):
         self.parent = parent
         if parent:
@@ -47,9 +50,11 @@ class Node:
         self.captured = captured
         self.color = color
         self.being_processed = being_processed
+        self.board = board
 
         self.children = []
         self.leaf_color = color
+        self.leaf_level = self.level
 
         self.score = score
         """assign last because requires other attributes initiated"""
@@ -100,10 +105,10 @@ class Node:
             parent.being_processed = False
 
             if not self.being_processed:  # don't propagate until capture-fest finished
-                parent.propagate_score(value, old_value, self.leaf_color)
+                parent.propagate_score(value, old_value, self.leaf_color, self.leaf_level)
 
     def propagate_score(
-        self, value: float32, old_value: Optional[float32], leaf_color: bool
+        self, value: float32, old_value: Optional[float32], leaf_color: bool, leaf_level: int
     ) -> None:
         """"""
 
@@ -112,32 +117,33 @@ class Node:
         children = self.children
 
         if not children:
-            self.set_score(value, leaf_color)
+            self.set_score(value, leaf_color, leaf_level)
 
         else:
             parent_score: float32 = self._score
             if self.color:
                 if value > parent_score:
                     # score increased, propagate immediately
-                    self.set_score(value, leaf_color)
+                    self.set_score(value, leaf_color, leaf_level)
                 elif old_value is not None and value < old_value < parent_score:
                     # score decreased, but old score indicates an insignificant node
                     pass
                 else:
-                    self.set_score(reduce(self.maximal, children)._score, leaf_color)
+                    self.set_score(reduce(self.maximal, children)._score, leaf_color, leaf_level)
             else:
                 if value < parent_score:
                     # score increased (relatively), propagate immediately
-                    self.set_score(value, leaf_color)
+                    self.set_score(value, leaf_color, leaf_level)
                 elif old_value is not None and value > old_value > parent_score:
                     # score decreased (relatively), but old score indicates an insignificant node
                     pass
                 else:
-                    self.set_score(reduce(self.minimal, children)._score, leaf_color)
+                    self.set_score(reduce(self.minimal, children)._score, leaf_color, leaf_level)
 
-    def set_score(self, value: float32, leaf_color: bool) -> None:
+    def set_score(self, value: float32, leaf_color: bool, leaf_level) -> None:
         self.score = value
         self.leaf_color = leaf_color
+        self.leaf_level = leaf_level
 
     def has_grand_children(self) -> bool:
         for child in self.children:

@@ -5,6 +5,7 @@ rm arek_chess/criteria/selection/*.cpython*
 rm arek_chess/game_tree/*.cpython*
 
 mypyc arek_chess/board/board.py
+mypyc arek_chess/common/queue/items/base_item.py
 mypyc arek_chess/common/queue/items/control_item.py
 mypyc arek_chess/common/queue/items/distributor_item.py
 mypyc arek_chess/common/queue/items/eval_item.py
