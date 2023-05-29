@@ -87,37 +87,33 @@ class EvalWorker(BaseWorker):
     def eval_items(self, eval_items: List[EvalItem]) -> List[SelectorItem]:
         """"""
 
-        queue_items = []
-        for item in eval_items:
-            self.board.deserialize_position(item.board)
-            # FIXME: at this moment the ep_square is not included and engine doesnt play en-passant!!!
-            score, finished = self.eval_item(item.node_name, item.move_str)
-            # print(score)
+        return [self.eval_item(item) for item in eval_items]
 
-            queue_items.append(
-                SelectorItem(
-                    item.run_id,
-                    item.node_name,
-                    item.move_str,
-                    -1 if finished else item.captured,
-                    score,
-                    item.board,
-                )
-            )
-
-        return queue_items
-
-    def eval_item(
-        self, node_name: str, move_str: str
-    ) -> Tuple[Optional[float32], bool]:
+    def eval_item(self, item: EvalItem) -> SelectorItem:
         """"""
 
-        result, is_check = self.get_quick_result(self.board, node_name, move_str)
+        self.board.deserialize_position(item.board)
+        # FIXME: at this moment the ep_square is not included and engine doesnt play en-passant!!!
+
+        finished = False
+        result, is_check = self.get_quick_result(
+            self.board, item.node_name, item.move_str
+        )
         if result is not None:
             # True indicating that game is finished
-            return result, True
+            finished = True
+            # return result, True
+        else:
+            result = self.evaluate(self.board, is_check)
 
-        return self.evaluate(self.board, is_check), False
+        return SelectorItem(
+            item.run_id,
+            item.node_name,
+            item.move_str,
+            -1 if finished else item.captured,
+            result,
+            item.board,
+        )
 
     # def eval_items_(
     #     self, eval_items: List[EvalItem], memory_manager: MemoryManager

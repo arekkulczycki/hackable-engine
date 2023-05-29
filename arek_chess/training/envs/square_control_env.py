@@ -1,5 +1,4 @@
 from itertools import cycle
-from time import sleep
 from typing import Dict, List, Optional
 
 import gym
@@ -7,8 +6,8 @@ import numpy
 from numpy import float32, ones, matmul
 
 from arek_chess.common.constants import Print
-from arek_chess.criteria.evaluation.base_eval import ActionType
 from arek_chess.controller import Controller
+from arek_chess.criteria.evaluation.base_eval import ActionType
 
 DEFAULT_ACTION: ActionType = (
     float32(-0.05),  # king_mobility
@@ -47,11 +46,13 @@ WEAK_ACTION: ActionType = (
     float32(0.1),  # turn
 )
 ACTION_SIZE: int = 10
+INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 EQUAL_MIDDLEGAME_FEN = "r3k2r/1ppbqpp1/pb1p1n1p/n3p3/2B1P2B/2PP1N1P/PPQN1PP1/R3K2R w KQkq - 0 12"
 SHARP_MIDDLEGAME_FEN = "rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"
 ADVANTAGE_MIDDLEGAME_FEN = "r2qk2r/pp1nbppp/2p1pn2/5b2/2BP1B2/2N1PN2/PP3PPP/R2Q1RK1 w kq - 3 9"
 DISADVANTAGE_MIDDLEGAME_FEN = "rn1qkb1r/p3pppp/2p5/1p1n1b2/2pP4/2N1PNB1/PP3PPP/R2QKB1R w KQkq - 0 8"
 fens = cycle([EQUAL_MIDDLEGAME_FEN, SHARP_MIDDLEGAME_FEN, ADVANTAGE_MIDDLEGAME_FEN, DISADVANTAGE_MIDDLEGAME_FEN])
+# fens = cycle([INITIAL_FEN])
 
 
 class SquareControlEnv(gym.Env):
@@ -118,18 +119,30 @@ class SquareControlEnv(gym.Env):
         action = self.action_upgrade(action)
         self._run_action(action)
 
-        result = self.controller.board.result()
+        result = self.get_result()  # self.controller.board.result()
         if result == "*":
             # playing against a configured action
-            self._run_action(DEFAULT_ACTION)
+            self._run_action(WEAK_ACTION)
 
-            result = self.controller.board.result()
+            result = self.get_result()  # self.controller.board.result()
 
         self.obs = self.observation()
         reward = self._get_reward(result)
         self.steps_done += 1
 
         return self.obs, reward, result != "*", {}
+
+    def get_result(self):
+        result = self.controller.board.result()
+        if result == "*":
+            white_material = self.controller.board.get_material_simple(True)
+            black_material = self.controller.board.get_material_simple(False)
+            dif = white_material - black_material
+            if dif > 12:
+                return "1-0"
+            elif dif < -12:
+                return "0-1"
+        return result
 
     def reset(self):
         self.render()
@@ -178,13 +191,13 @@ class SquareControlEnv(gym.Env):
 
     @staticmethod
     def action_upgrade(action: ActionType) -> ActionType:
-        # return action
+        return action
 
         # artificially make turn value smaller
         # artificially multiply material value for easier random discovery
-        return tuple(
-            v / 2 if i == 9 else v * 2 if i == 3 else v for i, v in enumerate(action)
-        )
+        #return tuple(
+        #    v / 2 if i == 9 else v * 2 if i == 3 else v for i, v in enumerate(action)
+        #)
 
     @staticmethod
     def action_downgrade(action: ActionType) -> ActionType:

@@ -22,11 +22,11 @@ ENV_NAME = "chess"
 TOTAL_TIMESTEPS = int(2**14)
 LEARNING_RATE = 3e-3
 N_EPOCHS = 10
-N_STEPS = 2048
-BATCH_SIZE = 512
+N_STEPS = 512
+BATCH_SIZE = 128
 CLIP_RANGE = 0.3
 
-POLICY_KWARGS = dict(net_arch=dict(pi=[128, 128], vf=[128, 128]))
+POLICY_KWARGS = dict(net_arch=[dict(pi=[128, 128], vf=[128, 128])])
 # POLICY_KWARGS["activation_fn"] = "tanh"
 
 
@@ -56,6 +56,7 @@ def train(version=-1, gpu: bool = False):
                 "batch_size": BATCH_SIZE,
             },
             device="cuda" if gpu else "auto",
+            policy_kwargs=POLICY_KWARGS,
         )
     else:
         print("setting up model...")
@@ -68,13 +69,14 @@ def train(version=-1, gpu: bool = False):
             n_steps=N_STEPS,
             batch_size=BATCH_SIZE,
             device="cuda" if gpu else "auto",
+            policy_kwargs=POLICY_KWARGS,
         )
         # model = PPO("MultiInputPolicy", env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
 
     print("training started...")
 
     model.learn(total_timesteps=TOTAL_TIMESTEPS)
-    model.save(f"./chess.v{version + 1}")
+    model.save(f"./{ENV_NAME}.v{version + 1}")
 
     env.envs[0].controller.tear_down()
     print(f"training finished in: {perf_counter() - t0}")
@@ -100,6 +102,7 @@ def loop_train(version=-1, loops=5, gpu: bool = False):
                     "batch_size": BATCH_SIZE,
                 },
                 device="cuda" if gpu else "cpu",
+                policy_kwargs=POLICY_KWARGS,
             )
         else:
             print("setting up model...")
@@ -112,6 +115,7 @@ def loop_train(version=-1, loops=5, gpu: bool = False):
                 n_steps=N_STEPS,
                 batch_size=BATCH_SIZE,
                 device="cuda" if gpu else "cpu",
+                policy_kwargs=POLICY_KWARGS,
             )
             # model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
 

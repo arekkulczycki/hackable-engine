@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 from typing import Callable, List, Optional
 
 from arek_chess.common.queue.adapters.faster_fifo_adapter import FasterFifoAdapter

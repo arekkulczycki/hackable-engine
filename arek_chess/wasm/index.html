@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>hackable-bot-wasm</title>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.23.2/full/pyodide.js"></script>
+</head>
+<body>
+    <button onclick="startWorker()">Run</button>
+    <textarea id="output" rows="25" cols="120"></textarea>
+
+    <script>
+      const output = document.getElementById("output");
+
+      function showOutput(s) {
+        output.value = s;
+      }
+
+      // init Pyodide
+      async function main() {
+        let pyodide = await loadPyodide();
+        output.value = "Ready!\n";
+        return pyodide;
+      }
+      let pyodideReadyPromise = main();
+
+      async function startWorker() {
+          const pyodideWorker = new Worker("./worker.js");
+
+          let startTime = null;
+
+          pyodideWorker.onmessage = (event) => {
+              const { id, ...data } = event.data;
+              // const onSuccess = callbacks[id];
+              // delete callbacks[id];
+              // console.log('returned', id);
+              if (id == 0) {
+                  console.log('sending more');
+                  startTime = new Date();
+                  sendMore(pyodideWorker)
+              }
+
+              if (id == 1000) {
+                  console.log('done');
+                  let endTime = new Date();
+                  var ms = Math.round(endTime - startTime);
+                  console.log(ms);
+                  console.log(data);
+              }
+            };
+
+          pyodideWorker.postMessage({a: 0, id: 0});
+          // for (let i=0; i<1000; i++) {
+          //     pyodideWorker.postMessage({a: i, id: 0});
+          // }
+          console.log('msgs sent');
+      }
+
+      async function sendMore(pyodideWorker) {
+          for (let i=1; i<=1000; i++) {
+              pyodideWorker.postMessage({a: i, id: 0});
+          }
+      }
+    </script>
+</body>
+</html>

@@ -165,10 +165,10 @@ class Controller:
         ):
             # TODO: in order to go this way storing nodes in shared memory has to change keys
             self.search_worker.set_root(
-                self.board, self._get_next_root(self.last_root), self.last_nodes_dict
+                self.board.copy(), self._get_next_root(self.last_root), self.last_nodes_dict
             )
         else:
-            self.search_worker.set_root(self.board)
+            self.search_worker.set_root(self.board.copy())
 
         # save cached values to self
         if reuse and (
@@ -186,7 +186,8 @@ class Controller:
 
         if self.board.is_checkmate():
             print("asked for a move in checkmate position")
-            return
+            print(self.get_pgn())
+            raise ValueError("asked for a move in checkmate position")
 
         self._setup_search_worker(
             reuse=False
@@ -306,13 +307,12 @@ class Controller:
         #     except_prefix=next_root.name,
         #     silent=self.printing in [Print.MOVE, Print.MOVE],
         # )
-        self.release_memory(silent=self.printing in [Print.MOVE, Print.MOVE])
-        self.restart_child_processes()
+        self.release_memory(silent=self.printing in [Print.NOTHING, Print.MOVE])
+        # self.restart_child_processes()
 
         self.board = Board(fen or self.initial_fen)
         self._restart_search_worker()
 
-        # TODO: restart the action to default
         # MemoryManager().set_action(self.evaluator_class.DEFAULT_ACTION, self.evaluator_class.DEFAULT_ACTION)
 
     def restart_child_processes(self) -> None:

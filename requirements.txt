@@ -6,6 +6,7 @@ faster-fifo==1.4.*
 anytree==2.*
 #scikit-learn==0.*
 kmeans1d==0.3.*
+nptyping==2.4.*
 
 ### optional
 redis==4.*

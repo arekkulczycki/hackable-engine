@@ -1,8 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Commonly used exception classes.
-"""
-
 
 class SearchFailed(Exception):
     """

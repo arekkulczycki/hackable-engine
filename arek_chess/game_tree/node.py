@@ -1,8 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Node that propagates fast through its tree.
-"""
-
 from __future__ import annotations
 
 from functools import reduce

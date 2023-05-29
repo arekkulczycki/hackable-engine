@@ -397,7 +397,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                     self.finished = True
                 else:
                     # case was not root and had 0 children
-                    node.parent.propagate_score(node.score, None, node.color)
+                    node.parent.propagate_score(node.score, None, node.color, node.level)
 
     def _read_control_values(self) -> None:
         """"""

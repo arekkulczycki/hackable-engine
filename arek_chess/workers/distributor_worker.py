@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from chess import Move, KNIGHT, BISHOP
 
@@ -62,11 +62,11 @@ class DistributorWorker(BaseWorker):
         memory_manager = self.memory_manager
         queue_throttle = self.queue_throttle
         get_items = self.get_items
-        distribute = self.distribute
+        distribute_items = self.distribute_items
         while True:
             items: List[DistributorItem] = get_items(queue_throttle)
             if items:
-                distribute(items)
+                distribute_items(items)
             else:
                 status: int = memory_manager.get_int(STATUS)
                 if status == FINISHED:
@@ -78,7 +78,7 @@ class DistributorWorker(BaseWorker):
 
         return self.distributor_queue.get_many(queue_throttle, SLEEP)
 
-    def distribute(self, items: List[DistributorItem]) -> None:
+    def distribute_items(self, items: List[DistributorItem]) -> None:
         """
         Queue all legal moves for evaluation.
 
@@ -88,34 +88,17 @@ class DistributorWorker(BaseWorker):
         queue_items = []
 
         for item in items:  # TODO: get_many_boards ?
-            self.board.deserialize_position(item.board)
-
-            # TODO: if it could be done efficiently, would be beneficial to check game over here
-            # TODO: there is no more captured=-1, now control_queue is for special cases treatment
-
-            recaptures = []
-            new_queue_items = []
-            for move in self.board.copy().legal_moves:
-                eval_item = self._get_eval_item(item, move)
-
-                if item.captured:
-                    recaptured = self.board.get_captured_piece_type(move)
-                    if recaptured >= item.captured or (
-                        recaptured == KNIGHT and item.captured == BISHOP
-                    ):
-                        recaptures.append(eval_item)
-
-                new_queue_items.append(eval_item)
+            recaptures, eval_items = self._get_eval_items(item)
 
             if item.captured and recaptures:
-                new_queue_items = recaptures
+                eval_items = recaptures
 
-            if item.node_name == ROOT_NODE_NAME and len(new_queue_items) == 1:
+            if item.node_name == ROOT_NODE_NAME and len(eval_items) == 1:
                 self.control_queue.put(ControlItem(item.run_id, item.node_name))
                 return
 
-            if new_queue_items:
-                queue_items += new_queue_items
+            if eval_items:
+                queue_items += eval_items
             else:
                 self.control_queue.put(ControlItem(item.run_id, item.node_name))
 
@@ -130,6 +113,30 @@ class DistributorWorker(BaseWorker):
             except ValueError as e:  # `Cannot mmap an empty file` randomly occurring sometimes
                 # doesn't matter, will set in next iteration - probably is because SearchWorker accesses concurrently
                 print(f"Setting distributed number error: {e}")
+
+    def _get_eval_items(self, item: DistributorItem) -> Tuple[List[EvalItem], List[EvalItem]]:
+        """"""
+
+        self.board.deserialize_position(item.board)
+
+        # TODO: if it could be done efficiently, would be beneficial to check game over here
+        # TODO: there is no more captured=-1, now control_queue is for special cases treatment
+
+        recaptures = []
+        eval_items = []
+        for move in self.board.copy().legal_moves:
+            eval_item = self._get_eval_item(item, move)
+
+            if item.captured:
+                recaptured = self.board.get_captured_piece_type(move)
+                if recaptured >= item.captured or (
+                        recaptured == KNIGHT and item.captured == BISHOP
+                ):
+                    recaptures.append(eval_item)
+
+            eval_items.append(eval_item)
+
+        return recaptures, eval_items
 
     def _get_eval_item(self, item: DistributorItem, move: Move) -> EvalItem:
         """"""

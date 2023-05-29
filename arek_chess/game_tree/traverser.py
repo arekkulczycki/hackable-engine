@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 from itertools import cycle
 from typing import Dict, List, Optional, Generator
 from weakref import WeakValueDictionary
