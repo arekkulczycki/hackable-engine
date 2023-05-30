@@ -26,7 +26,7 @@ N_STEPS = 512
 BATCH_SIZE = 128
 CLIP_RANGE = 0.3
 
-POLICY_KWARGS = dict(net_arch=[dict(pi=[128, 128], vf=[128, 128])])
+POLICY_KWARGS = dict(net_arch=[dict(pi=[64, 64, 64], vf=[64, 64, 64])])
 # POLICY_KWARGS["activation_fn"] = "tanh"
 
 
