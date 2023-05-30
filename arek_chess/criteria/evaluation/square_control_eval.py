@@ -81,9 +81,17 @@ class SquareControlEval(BaseEval):
         castling_rights_value: float32 = float32(
             board.has_castling_rights(True)
         ) - float32(board.has_castling_rights(False))
-        king_mobility_int = board.get_king_mobility(True) - board.get_king_mobility(
-            False
-        )
+        try:
+            king_mobility_int = board.get_king_mobility(True) - board.get_king_mobility(
+                False
+            )
+        except KeyError:
+            print(f"king not found in: {board.fen()}")
+            print(board.kings)
+            print(board.occupied_co)
+            # print(board.serialize_position())
+            print("continuing")
+            return float32(0)
         is_check_value: float32 = (
             -float32(is_check) if board.turn else float32(is_check)
         )  # color is the one who gave the check

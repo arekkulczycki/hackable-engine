@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 from __future__ import annotations
 
 from arek_chess.common.queue.items.base_item import BaseItem

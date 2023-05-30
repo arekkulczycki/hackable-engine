@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 
 from struct import pack, unpack
+from typing import Optional
 
 from arek_chess.board.mixins import BoardProtocol
+
+BOARD_BYTES_NUMBER = 75
+NONE_EP_SQUARE = 64
 
 
 class BoardSerializerMixin:
@@ -15,6 +19,8 @@ class BoardSerializerMixin:
         :return: bytes array of length 73
         """
 
+        ep_square_: Optional[int] = self.ep_square
+
         pawns = pack("Q", self.pawns)
         knights = pack("Q", self.knights)
         bishops = pack("Q", self.bishops)
@@ -24,9 +30,24 @@ class BoardSerializerMixin:
         whites = pack("Q", self.occupied_co[True])
         blacks = pack("Q", self.occupied_co[False])
         castling_rights = pack("Q", self.castling_rights)
+        ep_square = pack("H", ep_square_ if ep_square_ is not None else NONE_EP_SQUARE)
         turn = pack("?", self.turn)
 
-        return b"".join((pawns, knights, bishops, rooks, queens, kings, whites, blacks, castling_rights, turn))
+        return b"".join(
+            (
+                pawns,
+                knights,
+                bishops,
+                rooks,
+                queens,
+                kings,
+                whites,
+                blacks,
+                castling_rights,
+                ep_square,
+                turn,
+            )
+        )
 
     def deserialize_position(self: BoardProtocol, bytes_: bytes) -> None:
         """"""
@@ -40,6 +61,7 @@ class BoardSerializerMixin:
         whites_bytes = bytes_[48:56]
         blacks_bytes = bytes_[56:64]
         castling_rights_bytes = bytes_[64:72]
+        ep_square = bytes_[72:74]
         turn = bytes_[-1:]
 
         self.pawns = unpack("Q", pawns_bytes)[0]
@@ -52,4 +74,6 @@ class BoardSerializerMixin:
         self.occupied_co[False] = unpack("Q", blacks_bytes)[0]
         self.occupied = self.occupied_co[True] | self.occupied_co[False]
         self.castling_rights = unpack("Q", castling_rights_bytes)[0]
+        ep_square_ = unpack("H", ep_square)[0]
+        self.ep_square = ep_square_ if ep_square_ < 64 else None
         self.turn = unpack("?", turn)[0]

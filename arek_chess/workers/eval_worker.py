@@ -93,7 +93,6 @@ class EvalWorker(BaseWorker):
         """"""
 
         self.board.deserialize_position(item.board)
-        # FIXME: at this moment the ep_square is not included and engine doesnt play en-passant!!!
 
         finished = False
         result, is_check = self.get_quick_result(

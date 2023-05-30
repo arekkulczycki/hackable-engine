@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-
 from __future__ import annotations
 
 from struct import pack, unpack
 
 from numpy import float32
 
+from arek_chess.board.mixins.board_serializer_mixin import BOARD_BYTES_NUMBER
 from arek_chess.common.queue.items.base_item import BaseItem
+
+BOARD_AND_FLOAT_BYTES_NUMBER = BOARD_BYTES_NUMBER + 4
 
 
 # @dataclass
@@ -44,9 +46,9 @@ class DistributorItem(BaseItem):
         """"""
 
         _bytes = b.tobytes()
-        string_part = _bytes[:-77]
-        float_part = _bytes[-77:-73]
-        board = _bytes[-73:]
+        string_part = _bytes[:-BOARD_AND_FLOAT_BYTES_NUMBER]
+        float_part = _bytes[-BOARD_AND_FLOAT_BYTES_NUMBER:-BOARD_BYTES_NUMBER]
+        board = _bytes[-BOARD_BYTES_NUMBER:]
         values = string_part.decode("utf-8").split(";")
 
         return DistributorItem(
@@ -57,6 +59,7 @@ class DistributorItem(BaseItem):
             unpack("f", float_part)[0],
             board,
         )
+
     @staticmethod
     def dumps(obj: DistributorItem) -> bytes:
         """"""

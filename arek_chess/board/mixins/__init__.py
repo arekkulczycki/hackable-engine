@@ -13,3 +13,4 @@ class BoardProtocol(Protocol):
     kings: int
     occupied_co: List[int]
     castling_rights: int
+    ep_square: int

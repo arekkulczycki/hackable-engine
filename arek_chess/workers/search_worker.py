@@ -96,7 +96,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
     ) -> None:
         """"""
 
-        self.board = board
+        self.board = board.copy()
 
         if root and nodes_dict:
             self._reuse_root(root, nodes_dict)
@@ -279,8 +279,10 @@ class SearchWorker(ReturningThread, ProfilerMixin):
             if self.evaluated == self.last_evaluated:
                 if not self.finished or progress < 95:
                     print(
-                        f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}, score: {self.root.score}"
+                        f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}"
                     )
+                    print(self.root)
+                    print(self.board)
                     # print(PrunedTreeRenderer(self.root, depth=0, maxlevel=20))
                     raise SearchFailed("nodes not delivered on queues")
                 else:

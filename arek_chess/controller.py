@@ -285,18 +285,23 @@ class Controller:
     def get_pgn(self) -> str:
         """"""
 
+        board = self.board.copy()
+
         moves = []
         notation = []
-        for _ in range(len(self.board.move_stack)):
-            move = self.board.pop()
+        for _ in range(len(board.move_stack)):
+            move = board.pop()
             moves.append(move)
-            notation.append(self.board.san(move))
+            notation.append(board.san(move))
 
-        fen = self.board.fen()
-        pgn = self.board.variation_san(reversed(moves))
+        fen = board.fen()
+        try:
+            pgn = board.variation_san(reversed(moves))
+        except ValueError:
+            return ".".join([move.uci() for move in reversed(moves)])
 
         for move in reversed(moves):
-            self.board.push(move)
+            board.push(move)
 
         return f'[FEN "{fen}"]\n\n{pgn}'
 
@@ -319,7 +324,7 @@ class Controller:
         """"""
 
         self.stop_child_processes()
-        self.recreate_queues()
+        # self.recreate_queues()
         self.start_child_processes()
         # self._restart_search_worker()
 
