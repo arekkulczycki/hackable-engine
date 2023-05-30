@@ -202,8 +202,9 @@ class Controller:
                 raise RuntimeError
             elif fails >= 3:
                 print("restarting all workers...")
-                self.restart(fen=self.board.fen())
-                self._restart_search_worker()
+                # self.restart(fen=self.board.fen())
+                self.restart()
+                self.restart_child_processes()
                 sleep(3)
             elif fails > 0:
                 print("restarting search worker...")
@@ -225,7 +226,9 @@ class Controller:
                 fails += 1
                 print(f"timed out in search: {e}")
                 print("restarting all workers...")
-                self.restart(fen=self.board.fen())
+                # self.restart(fen=self.board.fen())
+                self.restart()
+                self.restart_child_processes()
                 sleep(3)
 
         self.board.push(Move.from_uci(move))
