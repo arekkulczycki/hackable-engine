@@ -105,14 +105,14 @@ class SquareControlEnv(gym.Env):
         [x] opponents king mobility (king safety)
         [x] material on board
         [x] pawns on board (how open is the position)
+        [x] space of each player
+        [x] king proximity
         [ ] bishops on board (color)
-        [ ] space of each player
-        [ ] king proximity
         """
 
         return gym.spaces.Box(
-            numpy.array([0 for _ in range(6)], dtype=numpy.float32),
-            numpy.array([1 for _ in range(6)], dtype=numpy.float32),
+            numpy.array([0 for _ in range(9)], dtype=numpy.float32),
+            numpy.array([1 for _ in range(9)], dtype=numpy.float32),
         )
 
     def step(self, action: ActionType):
@@ -168,8 +168,14 @@ class SquareControlEnv(gym.Env):
             own_king_proximity_control,
             opp_king_proximity_control,
         ) = _get_king_proximity_square_control(board, square_control_diff)
+
         material = float32(board.get_material_simple_both() / 40.0)
-        pawns = float32(board.get_pawns_simple_both() / 16.0)
+        own_pawns = float32(board.get_pawns_simple_color(board.turn) / 8.0)
+        opp_pawns = float32(board.get_pawns_simple_color(not board.turn) / 8.0)
+
+        # advanced pawns mean more space
+        own_space = float32(board.get_material_pawns(board.turn) / (8.0 * 3.0))  # 8 times piece value
+        opp_space = float32(board.get_material_pawns(not board.turn) / (8.0 * 3.0))  # 8 times piece value
 
         return [
             own_king_mobility,
@@ -177,7 +183,10 @@ class SquareControlEnv(gym.Env):
             own_king_proximity_control / 8.0,
             opp_king_proximity_control / 8.0,
             material,
-            pawns,
+            own_pawns,
+            opp_pawns,
+            own_space,
+            opp_space,
         ]
 
     def _run_action(self, action: ActionType) -> None:

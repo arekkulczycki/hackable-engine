@@ -303,6 +303,9 @@ class Board(ChessBoard, BoardSerializerMixin):
     def get_pawns_simple_both(self) -> int:
         return get_bit_count(self.pawns)
 
+    def get_pawns_simple_color(self, color: bool) -> int:
+        return get_bit_count(self.pawns & self.occupied_co[color])
+
     def get_material_pawns(self, color: bool) -> float32:
         pawn_bb: Bitboard = self.pawns & self.occupied_co[color]
 

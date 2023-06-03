@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from redis import Redis
 from redis.asyncio import Redis as AsyncRedis
@@ -9,7 +9,7 @@ from redis.asyncio import Redis as AsyncRedis
 from arek_chess.common.memory.base_memory import BaseMemory
 
 
-class RedisMemory(BaseMemory):
+class RedisAdapter(BaseMemory):
     """
     Adapts Redis to be used for memory storage.
     """
@@ -18,13 +18,13 @@ class RedisMemory(BaseMemory):
         self.db: Redis = Redis()
         self.async_db: AsyncRedis = AsyncRedis()
 
-    def get(self, key: str) -> bytes:
+    def get(self, key: str) -> Optional[bytes]:
         return self.db.get(key)
 
     def get_many(self, keys: List[str]):
         return self.db.mget(keys)
 
-    def set(self, key: str, value: bytes):
+    def set(self, key: str, value: bytes, *, new: bool = True):
         self.db.set(key, value)
 
     def set_many(self, many: Dict[str, bytes]):
@@ -39,7 +39,7 @@ class RedisMemory(BaseMemory):
     def set_action(self, action) -> None:
         self.db.set("action", action)
 
-    def clean(self):
+    def clean(self, *args, **kwargs) -> None:
         os.system("redis-cli FLUSHALL")
 
     async def get_async(self, key: str) -> bytes:

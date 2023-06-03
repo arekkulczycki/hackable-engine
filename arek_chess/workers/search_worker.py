@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import gc
 import os
 from asyncio import sleep as asyncio_sleep
 from time import time, sleep
@@ -42,6 +43,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
     board: Board
     root: Node
+    run_id: str
 
     tree: Dict[str, Node]
     distributor_queue: QM
@@ -78,36 +80,47 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         self.nodes_dict: WeakValueDictionary = WeakValueDictionary({})
         self.memory_manager = MemoryManager()
 
+        self._reset_counters()
+
+        self.limit: int = 2 ** (search_limit or 14)  # 14 -> 16384, 15 -> 32768
+
+        self.should_profile: bool = False
+
+    def _reset_counters(self) -> None:
+        """"""
+
         self.distributed: int = 0
         self.evaluated: int = 0
         self.selected: int = 0
         self.explored: int = 0
 
-        self.limit: int = 2 ** (search_limit or 14)  # 14 -> 16384, 15 -> 32768
-
         self.finished: bool = False
-        self.should_profile: bool = False
 
-    def set_root(
+    def restart(
         self,
         board: Board,
-        root: Optional[Node] = None,
+        new_root: Optional[Node] = None,
         nodes_dict: WeakValueDictionary = None,
+        run_iteration: int = 0,
     ) -> None:
         """"""
 
+        self._reset_counters()
+
         self.board = board.copy()
 
-        if root and nodes_dict:
-            self._reuse_root(root, nodes_dict)
+        if new_root and nodes_dict:
+            self._reuse_root(new_root, nodes_dict)
 
         else:
             self._set_new_root()
 
+        self.run_id = f"{self.root.move}.{run_iteration}"
+
         if not self.root.children:
             self.distributor_queue.put(
                 DistributorItem(
-                    self.root.move,
+                    self.run_id,
                     ROOT_NODE_NAME,
                     self.root.move,
                     0,
@@ -138,32 +151,16 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         self.nodes_dict = {ROOT_NODE_NAME: self.root}
 
-    def _reuse_root(self, root: Node, nodes_dict: WeakValueDictionary) -> None:
+    def _reuse_root(self, new_root: Node, nodes_dict: WeakValueDictionary) -> None:
         """"""
 
-        self.nodes_dict = self._remap_nodes_dict(nodes_dict, root.name)
+        # del self.root
+        # gc.collect()
 
-        self.root = root
+        self.root = new_root
         self.root.parent = None
-        # self.root.move = ROOT_NODE_NAME  # TODO: why was this shit?
-
-    def _remap_nodes_dict(
-        self, nodes_dict: WeakValueDictionary, root_name: str
-    ) -> WeakValueDictionary:
-        """
-        Clean hashmap of discarded moves and rename remaining keys.
-        """
-
-        nodes_dict[ROOT_NODE_NAME] = nodes_dict[root_name]
-
-        for key in list(nodes_dict.keys()):
-            # if key.startswith(root_name):  # not needed for the weakref stuff
-            new_key = key.replace(root_name, ROOT_NODE_NAME)
-            nodes_dict[new_key] = nodes_dict[key]
-
-            # del self.nodes_dict[key]  # not needed for the weakref stuff
-
-        return nodes_dict
+        self.nodes_dict = nodes_dict
+        # print(f"inheriting {len(self.nodes_dict.keys())} nodes")
 
     def run(self) -> None:
         """"""
@@ -281,8 +278,6 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                     print(
                         f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}"
                     )
-                    print(self.root)
-                    print(self.board)
                     # print(PrunedTreeRenderer(self.root, depth=0, maxlevel=20))
                     raise SearchFailed("nodes not delivered on queues")
                 else:
@@ -356,7 +351,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
     def _exclude_by_run_id(self, candidates: List[SelectorItem]) -> List[SelectorItem]:
         """"""
 
-        return [item for item in candidates if item.run_id == self.root.move]
+        return [item for item in candidates if item.run_id == self.run_id]
 
     def _handle_control_queue(self, control_queue) -> None:
         """"""
@@ -365,11 +360,30 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         for item in control_items:
             if item.control_value == "error":  # TODO: switch to read status from memory
                 raise SearchFailed("Distributor error")
-            if item.run_id != self.root.move:
+            if item.run_id != self.run_id:
                 # value from previous cycle
                 continue
 
-            # 0 children or 1 root child, so nothing sent to evaluation
+            # only 1 root child, therefore nothing to analyse (finishing immediately)
+            if item.control_value == ROOT_NODE_NAME:
+                move = list(self.board.legal_moves)[0]
+
+                self.board.push(move)
+                self.traverser.create_node(
+                    self.root,
+                    move.uci(),
+                    float32(0),
+                    0,
+                    not self.root.color,
+                    False,
+                    self.board.serialize_position()
+                )
+                self.board.pop()
+
+                self.finished = True
+                continue
+
+            # 0 children, so nothing sent to evaluation
             try:
                 node = self.traverser.get_node(item.control_value)
             except KeyError:
@@ -377,29 +391,8 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 pass
                 # TODO: should raise?
             else:
-                # this I think was incorrect, but can be replaced with final-leaf marker or something
-                # node.being_processed = False
-
-                if node is self.root:
-                    # case was root and had just 1 child
-                    move = list(self.board.legal_moves)[0]
-
-                    self.board.push(move)
-                    self.traverser.create_node(
-                        self.root,
-                        move.uci(),
-                        float32(0),
-                        0,
-                        not self.root.color,
-                        False,
-                        self.board.serialize_position()
-                    )
-                    self.board.pop()
-
-                    self.finished = True
-                else:
-                    # case was not root and had 0 children
-                    node.parent.propagate_score(node.score, None, node.color, node.level)
+                # TODO: if no children then control if the score is valid for checkmate or stalemate
+                node.parent.propagate_score(node.score, None, node.color, node.level)
 
     def _read_control_values(self) -> None:
         """"""
@@ -460,7 +453,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         distributor_queue.put_many(
             [
                 DistributorItem(
-                    self.root.move,
+                    self.run_id,
                     node.name,
                     node.move,
                     node.captured if recaptures else 0,

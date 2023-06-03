@@ -6,6 +6,8 @@ from typing import Optional, List
 
 from numpy import float32
 
+from arek_chess.common.constants import ROOT_NODE_NAME
+
 
 class Node:
     """
@@ -60,11 +62,13 @@ class Node:
 
     @property
     def name(self) -> str:
-        name = self.move
+        if self.parent is None:
+            return ROOT_NODE_NAME
 
-        parent = self.parent
+        name: str = self.move
+        parent: Optional[Node] = self.parent
         while parent:
-            name = f"{parent.move}.{name}" if parent.parent else f"1.{name}"
+            name = f"{parent.move}.{name}" if parent.parent else f"{ROOT_NODE_NAME}.{name}"
             parent = parent.parent
 
         return name

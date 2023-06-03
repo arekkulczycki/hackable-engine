@@ -24,6 +24,7 @@ class MemoryManager:
     def __init__(self):
         self.memory: BaseMemory = SharedMemoryAdapter()
         # self.memory: BaseMemory = UltraDictAdapter()
+        # self.memory: BaseMemory = RedisAdapter()
 
     def get_action(self, size: int) -> ActionType:
         action_bytes = self.memory.get("action")
