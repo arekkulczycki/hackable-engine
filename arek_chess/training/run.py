@@ -11,6 +11,10 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import load_results
 from stable_baselines3.common.results_plotter import ts2xy
 from stable_baselines3.common.vec_env import VecMonitor, DummyVecEnv
+
+from arek_chess.common.constants import Print
+from arek_chess.controller import Controller
+
 # from stable_baselines3.common.callbacks import (
 #     EvalCallback,
 #     StopTrainingOnNoModelImprovement,
@@ -25,14 +29,21 @@ LOG_PATH = "./arek_chess/training/logs/"
 
 ENV_NAME = "tight-fit"
 TOTAL_TIMESTEPS = int(2**13)  # keeps failing before finish on 2**14
-LEARNING_RATE = 3e-3
+LEARNING_RATE = 1e-3
 N_EPOCHS = 10
-N_STEPS = 254
-BATCH_SIZE = 64
+N_STEPS = 512
+BATCH_SIZE = 128  # recommended to be a factor of (N_STEPS * N_ENVS)
 CLIP_RANGE = 0.3
+
+SEARCH_LIMIT = 9
 
 POLICY_KWARGS = dict(net_arch=[dict(pi=[10, 16], vf=[16, 10])])
 # POLICY_KWARGS["activation_fn"] = "tanh"
+
+policy_kwargs_map = {
+    "tight-fit": dict(net_arch=[dict(pi=[10, 16], vf=[16, 10])]),
+    "additional-layer": dict(net_arch=[dict(pi=[10, 24, 16], vf=[16, 10])]),
+}
 
 
 class Device(str, Enum):
@@ -45,14 +56,7 @@ def train(version=-1, device: Device = Device.AUTO.value):
     t0 = perf_counter()
 
     print("loading env...")
-    env: DummyVecEnv = make_vec_env(
-        "chess-v0", n_envs=1
-    )  # , vec_env_cls=SubprocVecEnv)
-    # env = make("chess-v0", fen=EQUAL_MIDDLEGAME_FEN)
-    # env = VecEnv([lambda: FullBoardEnv(EQUAL_MIDDLEGAME_FEN)])
-    # env = FullBoardEnv(EQUAL_MIDDLEGAME_FEN)
-
-    env = VecMonitor(env, os.path.join(LOG_PATH, f"{ENV_NAME}-v{version}"))
+    env: DummyVecEnv = get_env(version)
 
     # Stop training if there is no improvement after more than 3 evaluations
     # stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=3, min_evals=5, verbose=1)
@@ -156,9 +160,21 @@ def loop_train(version=-1, loops=5, device: Device = Device.AUTO.value):
 
 
 def get_env(version):
-    env: DummyVecEnv = make_vec_env("chess-v0", n_envs=1)
+    env: DummyVecEnv = make_vec_env(
+        "chess-v0",
+        n_envs=1,
+        vec_env_kwargs={
+            "controller": Controller(
+                Print.MOVE,
+                search_limit=SEARCH_LIMIT,
+                is_training_run=True,
+                in_thread=False,
+                timeout=3,
+            )
+        },
+    )
 
-    env = VecMonitor(env, os.path.join(LOG_PATH, f"{ENV_NAME}-v{version}"))
+    env = VecMonitor(env, os.path.join(LOG_PATH, ENV_NAME, f"v{version}"))
 
     return env
 
@@ -208,6 +224,9 @@ def get_args():
         "-pl", "--plot", help="show last learning progress plot", action="store_true"
     )
     parser.add_argument(
+        "-sp", "--subpath", help="monitor logs subpath to use for the plot", type=str
+    )
+    parser.add_argument(
         "-v", "--version", type=int, default=-1, help="version of the model to use"
     )
     parser.add_argument(
@@ -232,6 +251,7 @@ if __name__ == "__main__":
     elif args.loop_train:
         loop_train(args.version, args.loops, args.device)
     elif args.plot:
-        plot_results(LOG_PATH)
+        path = LOG_PATH if not args.subpath else os.path.join(LOG_PATH, args.subpath)
+        plot_results(path)
     else:
         find_move()

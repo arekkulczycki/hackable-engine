@@ -57,6 +57,7 @@ class SquareControlEval(BaseEval):
         float32(0.0075),  # own occupied square control
         float32(0.0125),  # opp occupied square control
         float32(0.01),  # empty square control
+        # float32(0.015),  # empty square control nominal
         float32(0.01),  # own king proximity square control
         float32(0.02),  # opp king proximity square control
         float32(0.15),  # turn
@@ -135,6 +136,7 @@ class SquareControlEval(BaseEval):
             black_material_square_control, ONES_float32
         )
         empty_square_control: float32 = self._get_empty_square_control(
+        # empty_square_control, empty_square_control_nominal = self._get_empty_square_controls(
             board, square_control_diff
         )
 
@@ -180,9 +182,28 @@ class SquareControlEval(BaseEval):
     @staticmethod
     def _get_empty_square_control(
         board: Board, square_control_diff: NDArray[Shape["64"], Int]
-    ) -> float32:
+    ) -> Tuple[float32, float32]:
         empty_square_map: NDArray[Shape["64"], Int] = board.get_empty_square_map()
+
         return matmul(square_control_diff * empty_square_map, ONES_INT)
+
+    @staticmethod
+    def _get_empty_square_controls(
+        board: Board, square_control_diff: NDArray[Shape["64"], Int]
+    ) -> Tuple[float32, float32]:
+        empty_square_map: NDArray[Shape["64"], Int] = board.get_empty_square_map()
+
+        square_control_diff_nominal: NDArray[Shape["64"], Int] = np_max(
+            np_min(
+                square_control_diff,
+                ONES_float32,
+            ),
+            -ONES_float32,
+        )
+
+        return matmul(square_control_diff * empty_square_map, ONES_INT), matmul(
+            square_control_diff_nominal * empty_square_map, ONES_INT
+        )
 
     @staticmethod
     def _get_king_proximity_square_control(

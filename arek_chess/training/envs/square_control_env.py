@@ -1,3 +1,4 @@
+import sys
 from itertools import cycle
 from typing import Dict, List, Optional
 
@@ -14,16 +15,17 @@ DEFAULT_ACTION: ActionType = (
     float32(0.05),  # castling_rights
     float32(0.1),  # is_check
     float32(1.0),  # material
-    float32(0.015),  # own occupied square control
-    float32(0.015),  # opp occupied square control
+    float32(0.0125),  # own occupied square control
+    float32(0.0125),  # opp occupied square control
     float32(0.01),  # empty square control
-    float32(0.01),  # own king proximity square control
+    # float32(0.015),  # empty square control nominal
+    float32(0.015),  # own king proximity square control
     float32(0.01),  # opp king proximity square control
     float32(0.15),  # turn
 )
 MEDIUM_ACTION: ActionType = (
     float32(-0.05),  # king_mobility
-    float32(0.075),  # castling_rights
+    float32(0.1),  # castling_rights
     float32(0.1),  # is_check
     float32(1.0),  # material
     float32(0.1),  # own occupied square control
@@ -65,7 +67,7 @@ class SquareControlEnv(gym.Env):
         "0-1": float32(-1.0),
     }
 
-    def __init__(self, controller: Optional[Controller] = None):
+    def __init__(self, *, controller: Optional[Controller] = None):
         super().__init__()
 
         self.reward_range = (float32(-1.0), float32(1.0))
@@ -73,6 +75,12 @@ class SquareControlEnv(gym.Env):
         self.action_space = self._get_action_space()
         self.observation_space = self._get_observation_space()
 
+        self._set_controller(controller)
+
+        self.obs = self.observation()
+        self.steps_done = 0
+
+    def _set_controller(self, controller: Optional[Controller] = None):
         if controller is None:
             self.controller = Controller(
                 Print.MOVE,
@@ -85,9 +93,7 @@ class SquareControlEnv(gym.Env):
             # self.controller.boot_up()
         else:
             self.controller = controller
-
-        self.obs = self.observation()
-        self.steps_done = 0
+            self.controller.boot_up(next(fens))
 
     def _get_action_space(self):
         return gym.spaces.Box(
@@ -122,7 +128,7 @@ class SquareControlEnv(gym.Env):
         result = self.get_result()  # self.controller.board.result()
         if result == "*":
             # playing against a configured action
-            self._run_action(WEAK_ACTION)
+            self._run_action(MEDIUM_ACTION)
 
             result = self.get_result()  # self.controller.board.result()
 
@@ -161,6 +167,7 @@ class SquareControlEnv(gym.Env):
 
     def _board_to_obs(self) -> List[float32]:
         board = self.controller.board
+
         own_king_mobility = float32(board.get_king_mobility(board.turn) / 8.0)
         opp_king_mobility = float32(board.get_king_mobility(not board.turn) / 8.0)
         square_control_diff = board.get_square_control_map_for_both()
@@ -169,7 +176,7 @@ class SquareControlEnv(gym.Env):
             opp_king_proximity_control,
         ) = _get_king_proximity_square_control(board, square_control_diff)
 
-        material = float32(board.get_material_simple_both() / 40.0)
+        material = float32(board.get_material_no_pawns_both() / 31.0)
         own_pawns = float32(board.get_pawns_simple_color(board.turn) / 8.0)
         opp_pawns = float32(board.get_pawns_simple_color(not board.turn) / 8.0)
 
@@ -190,7 +197,12 @@ class SquareControlEnv(gym.Env):
         ]
 
     def _run_action(self, action: ActionType) -> None:
-        self.controller.make_move(action)
+        try:
+            self.controller.make_move(action)
+        except RuntimeError:
+            sys.exit()
+            # self._set_controller()
+            # self._run_action(action)
 
     def _get_reward(self, result):
         return self.REWARDS[result]

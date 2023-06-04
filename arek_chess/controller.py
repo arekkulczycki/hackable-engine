@@ -272,9 +272,9 @@ class Controller:
 
         fails = 0
         while True:
-            if fails > 5:
+            if fails > 3:
                 raise RuntimeError
-            elif fails >= 2:
+            elif fails > 1:
                 print("restarting all workers...")
                 sleep(3 * fails)
                 self.restart(fen=self.board.fen())
@@ -299,7 +299,13 @@ class Controller:
                 print(f"timed out in search: {e}")
                 sleep(fails)
 
-        self.board.push(Move.from_uci(move))
+        try:
+            self.board.push(Move.from_uci(move))
+        except AssertionError:
+            # move illegal ???
+            print("found illegal move, restarting...")
+            self.restart(self.initial_fen)
+            self.make_move()
 
         self.clear_queues()
 
@@ -384,8 +390,13 @@ class Controller:
     def restart_child_processes(self) -> None:
         """"""
 
+        print("stopping child processes")
         self.stop_child_processes()
-        # self.recreate_queues()
+
+        print("recreating queues")
+        self.recreate_queues()
+
+        print("starting child processes")
         self.start_child_processes()
         # self._restart_search_worker()
 
