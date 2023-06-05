@@ -14,6 +14,7 @@ from stable_baselines3.common.vec_env import VecMonitor, DummyVecEnv
 
 from arek_chess.common.constants import Print
 from arek_chess.controller import Controller
+from arek_chess.training.envs.square_control_env import SquareControlEnv
 
 # from stable_baselines3.common.callbacks import (
 #     EvalCallback,
@@ -27,19 +28,19 @@ register(
 
 LOG_PATH = "./arek_chess/training/logs/"
 
-ENV_NAME = "tight-fit"
+# ENV_NAME = "tight-fit"
+ENV_NAME = "additional-layer"
 TOTAL_TIMESTEPS = int(2**13)  # keeps failing before finish on 2**14
 LEARNING_RATE = 1e-3
 N_EPOCHS = 10
 N_STEPS = 512
 BATCH_SIZE = 128  # recommended to be a factor of (N_STEPS * N_ENVS)
-CLIP_RANGE = 0.3
+CLIP_RANGE = 0.1
 
 SEARCH_LIMIT = 9
 
-POLICY_KWARGS = dict(net_arch=[dict(pi=[10, 16], vf=[16, 10])])
+POLICY_KWARGS = dict(net_arch=[dict(pi=[10, 24, 16], vf=[16, 10])])
 # POLICY_KWARGS["activation_fn"] = "tanh"
-
 policy_kwargs_map = {
     "tight-fit": dict(net_arch=[dict(pi=[10, 16], vf=[16, 10])]),
     "additional-layer": dict(net_arch=[dict(pi=[10, 24, 16], vf=[16, 10])]),
@@ -75,7 +76,7 @@ def train(version=-1, device: Device = Device.AUTO.value):
                 "n_epochs": N_EPOCHS,
                 "batch_size": BATCH_SIZE,
             },
-            policy_kwargs=POLICY_KWARGS,
+            policy_kwargs=policy_kwargs_map[ENV_NAME],
             device=device,
         )
     else:
@@ -89,7 +90,7 @@ def train(version=-1, device: Device = Device.AUTO.value):
             n_steps=N_STEPS,
             n_epochs=N_EPOCHS,
             batch_size=BATCH_SIZE,
-            policy_kwargs=POLICY_KWARGS,
+            policy_kwargs=policy_kwargs_map[ENV_NAME],
             device=device,
         )
         # model = PPO("MultiInputPolicy", env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
@@ -122,7 +123,7 @@ def loop_train(version=-1, loops=5, device: Device = Device.AUTO.value):
                     "n_epochs": N_EPOCHS,
                     "batch_size": BATCH_SIZE,
                 },
-                policy_kwargs=POLICY_KWARGS,
+                policy_kwargs=policy_kwargs_map[ENV_NAME],
                 device=device,
             )
         else:
@@ -136,7 +137,7 @@ def loop_train(version=-1, loops=5, device: Device = Device.AUTO.value):
                 n_steps=N_STEPS,
                 n_epochs=N_EPOCHS,
                 batch_size=BATCH_SIZE,
-                policy_kwargs=POLICY_KWARGS,
+                policy_kwargs=policy_kwargs_map[ENV_NAME],
                 device=device,
             )
             # model = PPO("MultiInputPolicy", env, verbose=2, clip_range=0.3, learning_rate=3e-3)
@@ -161,17 +162,16 @@ def loop_train(version=-1, loops=5, device: Device = Device.AUTO.value):
 
 def get_env(version):
     env: DummyVecEnv = make_vec_env(
-        "chess-v0",
-        n_envs=1,
-        vec_env_kwargs={
-            "controller": Controller(
-                Print.MOVE,
+        lambda: SquareControlEnv(
+            controller=Controller(
+                printing=Print.MOVE,
                 search_limit=SEARCH_LIMIT,
                 is_training_run=True,
                 in_thread=False,
                 timeout=3,
             )
-        },
+        ),
+        n_envs=1,
     )
 
     env = VecMonitor(env, os.path.join(LOG_PATH, ENV_NAME, f"v{version}"))

@@ -83,17 +83,17 @@ class SquareControlEnv(gym.Env):
     def _set_controller(self, controller: Optional[Controller] = None):
         if controller is None:
             self.controller = Controller(
-                Print.MOVE,
+                fen=next(fens),
+                printing=Print.MOVE,
                 search_limit=9,
                 is_training_run=True,
                 in_thread=False,
                 timeout=3,
             )
-            self.controller.boot_up(next(fens))
-            # self.controller.boot_up()
         else:
             self.controller = controller
-            self.controller.boot_up(next(fens))
+            self.controller._set_board(next(fens))
+        self.controller.boot_up()
 
     def _get_action_space(self):
         return gym.spaces.Box(
@@ -152,8 +152,7 @@ class SquareControlEnv(gym.Env):
 
     def reset(self):
         self.render()
-        self.controller.restart(fen=next(fens))
-        # self.controller.restart()
+        self.controller.reset_board(next(fens))
 
         return self.observation()
 

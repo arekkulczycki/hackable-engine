@@ -36,6 +36,7 @@ class Node:
         captured: int,
         color: bool,
         being_processed: bool,
+        only_captures: bool,
         board: bytes,
     ):
         self.parent = parent
@@ -48,6 +49,7 @@ class Node:
         self.captured = captured
         self.color = color
         self.being_processed = being_processed
+        self.only_captures = only_captures
         self.board = board
 
         self.children = []

@@ -96,6 +96,8 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         self.finished: bool = False
 
+        self.memory_manager.set_int(STATUS, CLOSED)
+
     def restart(
         self,
         board: Board,
@@ -107,7 +109,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         self._reset_counters()
 
-        self.board = board.copy()
+        self.board = board
 
         if new_root and nodes_dict:
             self._reuse_root(new_root, nodes_dict)
@@ -146,6 +148,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
             captured=0,
             color=self.board.turn,
             being_processed=True,
+            only_captures=False,
             board=self.board.serialize_position()
         )
 
@@ -450,19 +453,41 @@ class SearchWorker(ReturningThread, ProfilerMixin):
     ) -> None:
         """"""
 
-        distributor_queue.put_many(
-            [
-                DistributorItem(
-                    self.run_id,
-                    node.name,
-                    node.move,
-                    node.captured if recaptures else 0,
-                    node.score,
-                    node.board
-                )
-                for node in nodes
-            ]
-        )
+        # distributor_queue.put_many(
+        #     [
+        #         DistributorItem(
+        #             self.run_id,
+        #             node.name,
+        #             node.move,
+        #             node.captured if recaptures else -1 if node.only_captures else 0,
+        #             node.score,
+        #             node.board
+        #         )
+        #         for node in nodes
+        #     ]
+        # )
+
+        to_queue: List[DistributorItem] = []
+        for node in nodes:
+            captured: int
+            if recaptures:
+                captured = node.captured
+            elif node.only_captures:
+                captured = -1
+                node.only_captures = False
+            else:
+                captured = 0
+
+            to_queue.append(DistributorItem(
+                self.run_id,
+                node.name,
+                node.move,
+                captured,
+                node.score,
+                node.board
+            ))
+
+        distributor_queue.put_many(to_queue)
 
     async def harvesting_loop(
         self,
@@ -545,6 +570,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         )
 
         if self.printing == Print.CANDIDATES:
+            print("***")
             os.system("clear")
             for child in sorted_children[:]:
                 print(child.move, child.leaf_level, child.score)

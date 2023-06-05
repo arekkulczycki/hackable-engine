@@ -64,20 +64,15 @@ if __name__ == "__main__":
         "--search-limit",
         type=int,
         help="The engine will look at roughly 2^<LIMIT> nodes. "
-             "14-15 is suggested for quick results. "
-             "16-18 for a thorough examination.",
+        "14-15 is suggested for quick results. "
+        "16-18 for a thorough examination.",
     )
     arg_parser.add_argument(
         "-mv",
         "--model-version",
-        help="Name of the trained model file in root directory to be used for evalueation."
+        help="Name of the trained model file in root directory to be used for evalueation.",
     )
-    arg_parser.add_argument(
-        "-t",
-        "--timeout",
-        type=float,
-        help="Timeout"
-    )
+    arg_parser.add_argument("-t", "--timeout", type=float, help="Timeout")
     arg_parser.add_argument(
         "-th",
         "--thread",
@@ -92,8 +87,15 @@ if __name__ == "__main__":
         sys.exit(0)
 
     validate_tree_params(args.tree_params)
-    controller = Controller(args.printing, args.tree_params, args.search_limit, args.model_version, args.timeout)
-    controller.boot_up(args.fen)
+    controller = Controller(
+        fen=args.fen,
+        printing=args.printing,
+        tree_params=args.tree_params,
+        search_limit=args.search_limit,
+        model_version=args.model_version,
+        timeout=args.timeout,
+    )
+    controller.boot_up()
 
     if args.move:
         controller.make_move()
@@ -116,7 +118,7 @@ if __name__ == "__main__":
                 controller.release_memory()
             elif key == "restart":
                 fen = input("type starting fen:\n")
-                controller.boot_up(fen)
+                controller.reset_board(fen)
             elif key == "move":
                 controller.make_move()
             elif key == "play":

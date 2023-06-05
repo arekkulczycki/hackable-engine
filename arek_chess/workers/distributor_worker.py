@@ -127,14 +127,20 @@ class DistributorWorker(BaseWorker):
         for move in self.board.copy().legal_moves:
             eval_item = self._get_eval_item(item, move)
 
-            if item.captured:
+            if item.captured != 0:
                 recaptured = self.board.get_captured_piece_type(move)
-                if recaptured >= item.captured or (
+                if item.captured > 0:
+                    if recaptured >= item.captured or (
                         recaptured == KNIGHT and item.captured == BISHOP
-                ):
-                    recaptures.append(eval_item)
+                    ):
+                        recaptures.append(eval_item)
 
-            eval_items.append(eval_item)
+                # if captures were analysed already then not adding to eval_items
+                if not recaptured:
+                    eval_items.append(eval_item)
+
+            else:
+                eval_items.append(eval_item)
 
         return recaptures, eval_items
 

@@ -98,7 +98,7 @@ class Traverser:
         k = 0
         while True:
             children = best_node.children
-            if not children:
+            if not children or best_node.only_captures:
                 if best_node is self.root:
                     # haven't received child nodes evaluations yet
                     return None
@@ -115,10 +115,11 @@ class Traverser:
             free_children: List[Node] = []
             free_correct_leaf_children: List[Node] = []
             for node in children:
-                if not node.being_processed and node.leaf_color == leaf_color:
-                    free_correct_leaf_children.append(node)
-                elif not node.being_processed:
-                    free_children.append(node)
+                if not node.being_processed:
+                    if node.leaf_color == leaf_color:
+                        free_correct_leaf_children.append(node)
+                    else:
+                        free_children.append(node)
 
             if free_correct_leaf_children:
                 best_node = self.select_promising_node(
@@ -173,9 +174,7 @@ class Traverser:
             level = candidate.node_name.count(".") + 1
             color: bool = self.root.color if level % 2 == 0 else not self.root.color
 
-            should_search_recaptures: bool = self._is_good_capture_in_top_branch(
-                parent, candidate.captured
-            )
+            should_search_recaptures: bool = candidate.captured > 1
 
             node = self.create_node(
                 parent,
@@ -200,11 +199,16 @@ class Traverser:
 
         # if captured > 0:
         if captured > 1:
+            return True
             # check if is winning material
-            if captured > parent.captured and not (
-                captured == BISHOP and parent.captured == KNIGHT
-            ):  # not bishop vs knight
-                return True
+            # if captured > parent.captured and not (
+            #     captured == BISHOP and parent.captured == KNIGHT
+            # ):  # not bishop vs knight
+            #     return True
+            # if captured >= parent.captured or (
+            #     captured == KNIGHT and parent.captured == BISHOP
+            # ):  # bishop vs knight
+            #     return True
 
             # if (  # check if is a "good" capture
             #     parent is None
@@ -228,7 +232,7 @@ class Traverser:
         score: float32,
         captured: int,
         color: bool,
-        should_process: bool,
+        should_search_recaptures: bool,
         board: bytes,
     ) -> Optional[Node]:
         """"""
@@ -249,7 +253,8 @@ class Traverser:
             score=score,
             captured=captured,
             color=color,
-            being_processed=should_process,
+            being_processed=should_search_recaptures,
+            only_captures=should_search_recaptures,
             board=board
         )
 

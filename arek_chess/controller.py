@@ -38,7 +38,9 @@ class Controller:
 
     def __init__(
         self,
-        printing: Union[Print, int],
+        *,
+        fen: Optional[str] = None,
+        printing: Union[Print, int] = Print.LOGS,
         tree_params: str = "",
         search_limit: Optional[int] = None,
         model_version: Optional[str] = None,
@@ -47,6 +49,8 @@ class Controller:
         timeout: Optional[float] = None,
     ):
         """"""
+
+        self._set_board(fen)
 
         self.printing = printing
         self.tree_params = tree_params
@@ -87,20 +91,27 @@ class Controller:
             str, Node
         ] = WeakValueDictionary({})
 
-    def boot_up(self, fen: Optional[str] = None) -> None:
+    def boot_up(self) -> None:
+        """"""
+
+        self.start_child_processes()
+
+    def reset_board(self, fen: Optional[str] = None) -> None:
+        """"""
+
+        self._set_board(fen)
+
+        self.reset()
+
+    def _set_board(self, fen: Optional[str] = None) -> None:
         """"""
 
         if fen:
             self.initial_fen = fen
             self.board = Board(fen)
-        elif self.initial_fen:
-            self.board = Board(self.initial_fen)
         else:
             self.board = Board()
             self.initial_fen = self.board.fen()
-
-        self.initial_root_color = self.board.turn
-        self.start_child_processes()
 
     def start_child_processes(self) -> None:
         """"""
@@ -134,7 +145,7 @@ class Controller:
         for process in self.child_processes:
             process.start()
 
-    def _restart_search_worker(self, run_iteration: int = 0):
+    def _reset_search_worker(self, run_iteration: int = 0):
         if self.search_worker and self.in_thread:
             self.search_worker.stop()  # sends a signal for the thread to finish
             if self.search_worker._started.is_set():
@@ -274,24 +285,24 @@ class Controller:
         while True:
             if fails > 3:
                 raise RuntimeError
-            elif fails > 1:
+            elif fails > 2:
                 print("restarting all workers...")
                 sleep(3 * fails)
-                self.restart(fen=self.board.fen())
+                self.reset()
                 # self.restart()
                 sleep(3 * fails)
                 self.restart_child_processes()
             elif fails > 0:
                 print("restarting search worker...")
                 # self.release_memory(silent=self.printing in [Print.MOVE, Print.MOVE])
-                self.restart(fen=self.board.fen())
+                self.reset()
 
             try:
                 move = self._search()
                 # self.timeout = self.original_timeout
                 break
             except SearchFailed as e:
-                print(self.initial_fen)
+                print(e)
                 print(self.get_pgn())
                 fails += 1
             except TimeoutError as e:
@@ -304,7 +315,7 @@ class Controller:
         except AssertionError:
             # move illegal ???
             print("found illegal move, restarting...")
-            self.restart(self.initial_fen)
+            self.reset()
             self.make_move()
 
         self.clear_queues()
@@ -324,6 +335,7 @@ class Controller:
         else:
             move = self.search_worker._search()
         if not move:
+            print("returned null move")
             raise SearchFailed
 
         return move
@@ -361,12 +373,9 @@ class Controller:
 
         return f'[FEN "{fen}"]\n\n{pgn}'
 
-    def restart(self, fen: Optional[str] = None) -> None:
+    def reset(self) -> None:
         """"""
 
-        self.board = Board(fen or self.initial_fen)
-
-        self.initial_root_color: bool = self.board.turn
         self.last_white_root: Optional[Node] = None
         self.last_black_root: Optional[Node] = None
         self.last_white_nodes_dict: WeakValueDictionary[
@@ -376,14 +385,7 @@ class Controller:
             str, Node
         ] = WeakValueDictionary({})
 
-        # self.release_memory(
-        #     except_prefix=next_root.name,
-        #     silent=self.printing in [Print.MOVE, Print.MOVE],
-        # )
-        # self.release_memory(silent=self.printing in [Print.NOTHING, Print.MOVE])
-        # self.restart_child_processes()
-
-        self._restart_search_worker()
+        self._reset_search_worker()
 
         # MemoryManager().set_action(self.evaluator_class.DEFAULT_ACTION, self.evaluator_class.DEFAULT_ACTION)
 
