@@ -182,7 +182,7 @@ class SquareControlEval(BaseEval):
     @staticmethod
     def _get_empty_square_control(
         board: Board, square_control_diff: NDArray[Shape["64"], Int]
-    ) -> Tuple[float32, float32]:
+    ) -> float32:
         empty_square_map: NDArray[Shape["64"], Int] = board.get_empty_square_map()
 
         return matmul(square_control_diff * empty_square_map, ONES_INT)
