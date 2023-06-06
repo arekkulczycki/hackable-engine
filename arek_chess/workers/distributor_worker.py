@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from os import getpid
 from typing import List, Optional, Tuple
 
 from chess import Move, KNIGHT, BISHOP
@@ -10,7 +11,7 @@ from arek_chess.common.constants import (
     SLEEP,
     DISTRIBUTED,
     STATUS,
-    CLOSED,
+    CLOSED, STARTED,
 )
 from arek_chess.common.queue.items.control_item import ControlItem
 from arek_chess.common.queue.items.distributor_item import DistributorItem
@@ -63,15 +64,19 @@ class DistributorWorker(BaseWorker):
         queue_throttle = self.queue_throttle
         get_items = self.get_items
         distribute_items = self.distribute_items
+
+        self.memory_manager.set_int(str(getpid()), 1)
         while True:
-            items: List[DistributorItem] = get_items(queue_throttle)
-            if items:
+            # throttle has to be larger than value for putting from search worker
+            items: List[DistributorItem] = get_items(queue_throttle * 2)
+            status: int = memory_manager.get_int(STATUS)
+
+            if items and status == STARTED:
                 distribute_items(items)
-            else:
-                status: int = memory_manager.get_int(STATUS)
-                if status == FINISHED:
-                    memory_manager.set_int(STATUS, CLOSED, new=False)
-                    self.distributed = 0
+            elif status == FINISHED:
+                memory_manager.set_int(STATUS, CLOSED, new=False)
+                memory_manager.set_int(DISTRIBUTED, 0, new=False)
+                self.distributed = 0
 
     def get_items(self, queue_throttle: int) -> List[DistributorItem]:
         """"""
@@ -88,10 +93,7 @@ class DistributorWorker(BaseWorker):
         queue_items = []
 
         for item in items:  # TODO: get_many_boards ?
-            recaptures, eval_items = self._get_eval_items(item)
-
-            if item.captured and recaptures:
-                eval_items = recaptures
+            eval_items = self._get_eval_items(item)
 
             if item.node_name == ROOT_NODE_NAME and len(eval_items) == 1:
                 self.control_queue.put(ControlItem(item.run_id, item.node_name))
@@ -114,26 +116,24 @@ class DistributorWorker(BaseWorker):
                 # doesn't matter, will set in next iteration - probably is because SearchWorker accesses concurrently
                 print(f"Setting distributed number error: {e}")
 
-    def _get_eval_items(self, item: DistributorItem) -> Tuple[List[EvalItem], List[EvalItem]]:
+    def _get_eval_items(self, item: DistributorItem) -> List[EvalItem]:
         """"""
 
         self.board.deserialize_position(item.board)
 
         # TODO: if it could be done efficiently, would be beneficial to check game over here
-        # TODO: there is no more captured=-1, now control_queue is for special cases treatment
 
         recaptures = []
         eval_items = []
-        for move in self.board.copy().legal_moves:
+        for move in self.board.legal_moves:
             eval_item = self._get_eval_item(item, move)
 
+            # captured == -1 means that recaptures were already taken care of before
+            # captured > 0 means that only recaptures should be returned
             if item.captured != 0:
                 recaptured = self.board.get_captured_piece_type(move)
-                if item.captured > 0:
-                    if recaptured >= item.captured or (
-                        recaptured == KNIGHT and item.captured == BISHOP
-                    ):
-                        recaptures.append(eval_item)
+                if item.captured > 0 and recaptured:
+                    recaptures.append(eval_item)
 
                 # if captures were analysed already then not adding to eval_items
                 if not recaptured:
@@ -142,7 +142,9 @@ class DistributorWorker(BaseWorker):
             else:
                 eval_items.append(eval_item)
 
-        return recaptures, eval_items
+        if item.captured > 0:
+            return recaptures
+        return eval_items
 
     def _get_eval_item(self, item: DistributorItem, move: Move) -> EvalItem:
         """"""

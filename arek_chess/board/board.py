@@ -351,11 +351,12 @@ class Board(ChessBoard, BoardSerializerMixin):
 
         return 0
 
-    def get_square_control_map_for_both(self) -> NDArray[Shape["64"], Int]:
+    def get_square_control_map_for_both(self) -> Tuple[NDArray[Shape["64"], Int], NDArray[Shape["64"], Int]]:
         """
         Returns list of 64 values, accumulated attacks on each square.
         """
 
+        turn: bool = self.turn
         pawns: Bitboard = self.pawns
         kings: Bitboard = self.kings
         knights: Bitboard = self.knights
@@ -366,6 +367,7 @@ class Board(ChessBoard, BoardSerializerMixin):
         oc_co_black: Bitboard = self.occupied_co[False]
 
         arr = empty(shape=(64,), dtype=int)
+        arr_mod_turn = empty(shape=(64,), dtype=int)
         _attackers_mask_light_for_both = self._attackers_mask_light_for_both
         for (
             square,
@@ -395,12 +397,17 @@ class Board(ChessBoard, BoardSerializerMixin):
                 file_m,
                 diag_m,
             )
-            attackers_white = (attackers_both | (pawn_att_white & pawns)) & oc_co_white
-            attackers_black = (attackers_both | (pawn_att_black & pawns)) & oc_co_black
-            arr[square] = get_bit_count(attackers_white) - get_bit_count(
-                attackers_black
-            )
-        return arr
+            attackers_white = get_bit_count((attackers_both | (pawn_att_white & pawns)) & oc_co_white)
+            attackers_black = get_bit_count((attackers_both | (pawn_att_black & pawns)) & oc_co_black)
+            total = attackers_white - attackers_black
+            arr[square] = total
+            if attackers_white and turn:
+                arr_mod_turn[square] = total + 1
+            elif attackers_black and not turn:
+                arr_mod_turn[square] = total - 1
+            else:
+                arr_mod_turn[square] = total
+        return arr, arr_mod_turn
 
     @staticmethod
     def _attackers_mask_light_for_both(

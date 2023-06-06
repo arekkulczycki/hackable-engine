@@ -173,7 +173,7 @@ class SquareControlEnv(gym.Env):
         (
             own_king_proximity_control,
             opp_king_proximity_control,
-        ) = _get_king_proximity_square_control(board, square_control_diff)
+        ) = _get_king_proximity_square_control(board, square_control_diff)  # value range from ~ -25 to 25
 
         material = float32(board.get_material_no_pawns_both() / 31.0)
         own_pawns = float32(board.get_pawns_simple_color(board.turn) / 8.0)
@@ -186,8 +186,8 @@ class SquareControlEnv(gym.Env):
         return [
             own_king_mobility,
             opp_king_mobility,
-            own_king_proximity_control / 8.0,
-            opp_king_proximity_control / 8.0,
+            (own_king_proximity_control + 25) / 50.0,
+            (opp_king_proximity_control + 25) / 50.0,
             material,
             own_pawns,
             opp_pawns,
@@ -233,11 +233,7 @@ def _get_king_proximity_square_control(
     board,
     square_control_diff,
 ):
-    """
-
-    :returns: the value at extreme most would be ~8 I suppose...
-        (if all squares around king are controlled by 1 player)
-    """
+    """"""
 
     white_king_proximity_map = board.get_king_proximity_map_normalized(True)
     black_king_proximity_map = board.get_king_proximity_map_normalized(False)

@@ -91,8 +91,8 @@ class MemoryManager:
 
         self.memory.set("positions", BaseItem.SEPARATOR.join(new_positions_list))
 
-    def remove(self, node_name: str) -> None:
-        self.memory.remove(node_name)
+    def remove(self, key: str) -> None:
+        self.memory.remove(key)
 
     def clean(self, except_prefix: str = "", silent: bool = False):
         self.memory.clean(except_prefix, silent)

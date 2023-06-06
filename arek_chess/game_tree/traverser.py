@@ -14,7 +14,9 @@ from arek_chess.game_tree.node import Node
 
 # level_to_block: cycle = cycle([3, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0, 0])
 # level_to_block: cycle = cycle([4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1, 0])
-level_to_block: cycle = cycle([7, 6, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0])
+# level_to_block: cycle = cycle([7, 6, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0])
+# level_to_block: cycle = cycle([12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1])
+level_to_block: cycle = cycle([12])
 
 
 class Traverser:
@@ -24,11 +26,12 @@ class Traverser:
 
     root: Node
 
-    def __init__(self, root: Node, nodes_dict: WeakValueDictionary) -> None:
+    def __init__(self, root: Node, nodes_dict: WeakValueDictionary, transposition_dict: WeakValueDictionary) -> None:
         super().__init__()
 
         self.root = root
         self.nodes_dict: WeakValueDictionary = nodes_dict
+        self.transposition_dict: WeakValueDictionary = transposition_dict
 
         # self.selector: LinearProbabilitySelector = LinearProbabilitySelector()
         # self.selector: ExpProbabilitySelector = ExpProbabilitySelector()
@@ -49,26 +52,29 @@ class Traverser:
         Get N nodes, taking each from a different node, but focusing around the best nodes.
         """
 
-        iterations = 2 * iterations
+        # iterations = 2 * iterations
         # level_to_block: cycle = cycle(
         #     [3, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0, 0][-iterations:]
         # )
-        leaf_color: Generator[bool, None, None] = (
-            (i % 2 == 1) if self.root.color else (i % 2 != 1) for i in range(iterations)
-        )
+        # leaf_color: Generator[bool, None, None] = (
+        #     (i % 2 == 1) if self.root.color else (i % 2 != 1) for i in range(iterations)
+        # )
+        # maybe_nodes: Generator[Optional[Node], None, None] = (
+        #     self._get_next_node_to_look_at_and_block(
+        #         False, next(level_to_block)
+        #     )
+        #     for _ in range(iterations)
+        # )
         maybe_nodes: Generator[Optional[Node], None, None] = (
-            self._get_next_node_to_look_at_and_block(
-                next(leaf_color), next(level_to_block)
-            )
-            for _ in range(iterations)
+            self.get_next_node_to_look_at(False, 0) for _ in range(iterations)
         )
         nodes: List[Node] = [node for node in maybe_nodes if node is not None]
         """should challenge the best branch by first picking up odd-level leaf, i.e. leaf opposite to root color"""
 
         # unblock temporarily blocked nodes
-        for child in self.blocked_nodes:
-            child.being_processed = False
-        self.blocked_nodes.clear()
+        # for child in self.blocked_nodes:
+        #     child.being_processed = False
+        # self.blocked_nodes.clear()
 
         return nodes
 
@@ -107,31 +113,43 @@ class Traverser:
                     # the best path leads to checkmate then don't select anything more
                     return None
 
-                # is a leaf that hasn't yet been looked at
+                # is a leaf that hasn't yet been fully looked at (could have recaptures looked at)
                 best_node.being_processed = True
+                # best_node.parent.being_processed = True
                 return best_node
 
-            # children of right leaf color, except ones being processed or checkmate
-            free_children: List[Node] = []
-            free_correct_leaf_children: List[Node] = []
-            for node in children:
-                if not node.being_processed:
-                    if node.leaf_color == leaf_color:
-                        free_correct_leaf_children.append(node)
-                    else:
-                        free_children.append(node)
+            level = best_node.level
+            free_children = [node for node in children if not node.being_processed and node.level > level]
 
-            if free_correct_leaf_children:
-                best_node = self.select_promising_node(
-                    free_correct_leaf_children, best_node.color
-                )
-            elif free_children:
+            # children of right leaf color, except ones being processed or checkmate
+            # free_children: List[Node] = []
+            # free_correct_leaf_children: List[Node] = []
+            # for node in children:
+            #     if not node.being_processed:
+            #         if node.leaf_color == leaf_color:
+            #             free_correct_leaf_children.append(node)
+            #         else:
+            #            free_children.append(node)
+
+            # if free_correct_leaf_children:
+            #     best_node = self.select_promising_node(
+            #         free_correct_leaf_children, best_node.color
+            #     )
+            if free_children:
                 best_node = self.select_promising_node(free_children, best_node.color)
             else:
-                return None
+                # all children being processed, go up the tree again
+                best_node.being_processed = True
+                if best_node.parent is None:
+                    return None
 
-            if k == level_to_block:
-                self.node_to_block = best_node
+                best_node = best_node.parent
+
+                k -= 1
+                continue
+
+            # if k == level_to_block:
+            #     self.node_to_block = best_node
 
                 # if best_node in self.selections:
                 #     self.selections[best_node] += 1
@@ -147,7 +165,7 @@ class Traverser:
 
         return self.selector.select(nodes, color)
 
-    def get_nodes_to_distribute(self, candidates: List[SelectorItem]) -> List[Node]:
+    def get_nodes_to_distribute(self, candidates: List[SelectorItem], finished: bool) -> List[Node]:
         """"""
 
         candidate: SelectorItem
@@ -160,6 +178,9 @@ class Traverser:
         for candidate in candidates:
             try:
                 parent = self.get_node(candidate.node_name)
+
+                # if parent.name == "1.h4h3.e6h3.e1e7":
+                #     print(candidate.move_str)
                 # parent_score = parent.score
             except KeyError as e:
                 if not self.root.children:
@@ -171,35 +192,66 @@ class Traverser:
                     f"{candidate.run_id}, {candidate.move_str}, {self.root.move}"
                 ) from e
 
-            level = candidate.node_name.count(".") + 1
-            color: bool = self.root.color if level % 2 == 0 else not self.root.color
+            node = self.transposition_dict.get(candidate.board)
+            if node:
+                parent.children.append(node)
+                parent.propagate_score(node.score, None, node.color, node.level)
 
-            should_search_recaptures: bool = candidate.captured > 1
+            else:
+                level = candidate.node_name.count(".") + 1
+                color: bool = self.root.color if level % 2 == 0 else not self.root.color
 
-            node = self.create_node(
-                parent,
-                candidate.move_str,
-                candidate.score,
-                candidate.captured,
-                color,
-                should_search_recaptures,
-                candidate.board,
-            )
+                # should_search_recaptures: bool = self._is_good_capture_in_top_branch(parent, candidate.captured, finished)
+                # should_search_recaptures: bool = candidate.captured > 0 and (
+                #     not finished or self._is_good_recapture(parent, candidate.captured, candidate.score)
+                # )
+                # should_search_recaptures: bool = False
+                should_search_recaptures = candidate.captured > 0 and (
+                    (candidate.score > self.root.score and self.root.color) or (
+                    candidate.score < self.root.score and not self.root.color)
+                )
 
-            # analyse "good" captures immediately if they are in the top branch
-            if node and should_search_recaptures:
-                nodes_to_distribute.append(node)
+                node = self.create_node(
+                    parent,
+                    candidate.move_str,
+                    candidate.score,
+                    candidate.captured,
+                    color,
+                    bool(should_search_recaptures),
+                    candidate.board,
+                )
+
+                # analyse "good" captures immediately if they are in the top branch
+                if node and (should_search_recaptures or parent is self.root):
+                    nodes_to_distribute.append(node)
 
         return nodes_to_distribute
 
-    def _is_good_capture_in_top_branch(self, parent: Node, captured: int) -> bool:
+    def _is_good_recapture(self, parent: Node, captured: int, score: float32) -> bool:
+        """"""
+
+        if captured > parent.captured and not (
+            captured == BISHOP and parent.captured == KNIGHT  # not bishop vs knight
+        ) and ((score > self.root.score and self.root.color) or (score < self.root.score and not self.root.color)):
+            return True
+
+        return False
+
+    def _is_good_capture_in_top_branch(self, parent: Node, captured: int, finished: bool) -> bool:
         """"""
 
         # return False
 
-        # if captured > 0:
-        if captured > 1:
-            return True
+        if captured > 0:
+            if not finished:
+                return True
+
+            else:
+                top3 = (node for node in sorted(self.root.children, key=lambda node: node.score, reverse=self.root.color)[:5])
+                if any(parent.is_descendant_of(node) for node in top3):
+                    return True
+        # if captured > 1:
+        #     return True
             # check if is winning material
             # if captured > parent.captured and not (
             #     captured == BISHOP and parent.captured == KNIGHT
@@ -221,8 +273,6 @@ class Traverser:
             #         )
             #     )
             # ):
-            #     if parent.is_descendant_of(self.last_best_node):
-            #         return True
         return False
 
     def create_node(
@@ -259,6 +309,7 @@ class Traverser:
         )
 
         self.nodes_dict[node.name] = node
+        self.transposition_dict[board] = node
 
         return node
 

@@ -45,6 +45,11 @@ class QueueManager:
 
         return self.queue.get_many(max_messages_to_get, timeout)
 
+    def get_all(self) -> List[BaseItem]:
+        """"""
+
+        return self.queue.get_all()
+
     def is_empty(self) -> bool:
         """"""
 

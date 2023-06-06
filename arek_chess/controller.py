@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import traceback
+from multiprocessing import set_start_method
 from time import sleep
 from typing import Optional, List, Union
 from weakref import WeakValueDictionary
@@ -59,10 +59,13 @@ class Controller:
         self.in_thread = in_thread
         self.timeout = timeout
 
+        self.memory_manager = MemoryManager()
+
         self.queue_throttle = (CPU_CORES - 2) * (
             self.search_limit if self.search_limit < 12 else (self.search_limit * 3)
         )
 
+        set_start_method("spawn")
         self.create_queues()
         self.search_worker = SearchWorker(
             self.distributor_queue,
@@ -128,7 +131,7 @@ class Controller:
                 self.selector_queue,
                 (self.queue_throttle // num_eval_workers),
                 is_training_run=self.is_training_run,
-                env=self.model_version and SquareControlEnv(self),
+                env=self.model_version and SquareControlEnv(controller=self),
                 model_version=self.model_version,
             )
             self.child_processes.append(evaluator)
@@ -144,6 +147,16 @@ class Controller:
 
         for process in self.child_processes:
             process.start()
+
+        self._wait_child_processes_ready()
+
+    def _wait_child_processes_ready(self) -> None:
+        """"""
+
+        for process in self.child_processes:
+            while self.memory_manager.get_int(str(process.pid)) != 1:
+                # print(f"process not ready: {process.pid}")
+                sleep(0.01)
 
     def _reset_search_worker(self, run_iteration: int = 0):
         if self.search_worker and self.in_thread:
@@ -189,14 +202,14 @@ class Controller:
                 )
 
         if reuse and next_root:
-            self.search_worker.restart(
+            self.search_worker.reset(
                 self.board.copy(),
                 next_root,
                 next_nodes_dict,
                 run_iteration,
             )
         else:
-            self.search_worker.restart(self.board.copy(), run_iteration=run_iteration)
+            self.search_worker.reset(self.board.copy(), run_iteration=run_iteration)
 
         if reuse and self.is_training_run:
             if self.search_worker.root.color:
@@ -279,18 +292,19 @@ class Controller:
         )  # TODO: set True when branch reusing works
 
         if memory_action is not None:
-            MemoryManager().set_action(memory_action, len(memory_action))
+            self.memory_manager.set_action(memory_action, len(memory_action))
 
         fails = 0
         while True:
             if fails > 3:
+                self.stop_child_processes()
                 raise RuntimeError
             elif fails > 2:
                 print("restarting all workers...")
                 sleep(3 * fails)
                 self.reset()
                 # self.restart()
-                sleep(3 * fails)
+                sleep(fails)
                 self.restart_child_processes()
             elif fails > 0:
                 print("restarting search worker...")
@@ -333,7 +347,7 @@ class Controller:
             if self.search_worker.is_alive():
                 raise TimeoutError
         else:
-            move = self.search_worker._search()
+            move = self.search_worker.search()
         if not move:
             print("returned null move")
             raise SearchFailed
@@ -459,12 +473,17 @@ class Controller:
 
         for process in self.child_processes:
             process.terminate()
-            process.join(1)
+
+        for process in self.child_processes:
+            while process.is_alive():
+                sleep(0.01)
+
+            self.memory_manager.remove(str(process.pid))
+            process.close()
 
         self.child_processes.clear()
 
-    @staticmethod
-    def release_memory(except_prefix: str = "", *, silent: bool = False) -> None:
+    def release_memory(self, except_prefix: str = "", *, silent: bool = False) -> None:
         """"""
 
-        MemoryManager().clean(except_prefix, silent)
+        self.memory_manager.clean(except_prefix, silent)

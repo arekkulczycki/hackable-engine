@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import typing
+from os import getpid
 from typing import Tuple, Optional, List
 
-import gym
 from numpy import float32
-from stable_baselines3 import PPO
 
 from arek_chess.board.board import Board
 from arek_chess.common.constants import INF, DRAW, SLEEP
@@ -13,6 +15,10 @@ from arek_chess.common.queue.manager import QueueManager
 from arek_chess.criteria.evaluation.base_eval import ActionType
 from arek_chess.criteria.evaluation.square_control_eval import SquareControlEval
 from arek_chess.workers.base_worker import BaseWorker
+
+if typing.TYPE_CHECKING:
+    import gym
+    from stable_baselines3.common.base_class import BaseAlgorithmSelf
 
 
 class EvalWorker(BaseWorker):
@@ -40,11 +46,17 @@ class EvalWorker(BaseWorker):
         self.evaluator_name = evaluator_name
 
         self.is_training_run: bool = is_training_run
-        self.env: gym.Env = env
-        self.model = env and PPO.load(
-            model_version,
-            env=self.env,
-        )
+
+        self.env: Optional[gym.Env] = None
+        self.model: Optional[BaseAlgorithmSelf] = None
+        if env:
+            from stable_baselines3 import PPO
+
+            self.env: gym.Env = env
+            self.model = env and PPO.load(
+                model_version,
+                env=self.env,
+            )
 
         self.board: Board = Board()
 
@@ -78,6 +90,7 @@ class EvalWorker(BaseWorker):
         eval_items = self.eval_items
 
         # switch = True
+        self.memory_manager.set_int(str(getpid()), 1)
         while True:
             # items_to_eval: List[Tuple[str, str]] = input_queue.get_many_blocking(0.005, queue_throttle)
             items_to_eval: List[EvalItem] = eval_queue.get_many(queue_throttle, SLEEP)

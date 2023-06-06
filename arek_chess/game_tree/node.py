@@ -22,6 +22,7 @@ class Node:
     captured: int
     color: bool
     being_processed: bool
+    only_captures: bool
     board: bytes
 
     children: List[Node]
@@ -60,7 +61,7 @@ class Node:
         """assign last because requires other attributes initiated"""
 
     def __repr__(self):
-        return f"Node({self.level}, {self.move}, {round(self._score, 3)}, initial: {round(self.init_score, 3)}, {self.being_processed})"
+        return f"Node({self.level}, {self.name}, {round(self._score, 3)}, ini: {round(self.init_score, 3)})"
 
     @property
     def name(self) -> str:
@@ -104,10 +105,11 @@ class Node:
             # TODO: this potentially will leave some nodes processed forever, harmful or not?
             # TODO: should do the children iteration just once? (including the one below)
             # parent.being_processed = any(child.being_processed for child in parent.children)
-            parent.being_processed = False
+            parent.being_processed = self.being_processed if self.only_captures else False
 
-            if not self.being_processed:  # don't propagate until capture-fest finished
-                parent.propagate_score(value, old_value, self.leaf_color, self.leaf_level)
+            # if not self.being_processed:  # don't propagate until capture-fest finished
+                # TODO: to not propagate is good idea only if we wait all captures to finish which is not the case
+            parent.propagate_score(value, old_value, self.leaf_color, self.leaf_level)
 
     def propagate_score(
         self, value: float32, old_value: Optional[float32], leaf_color: bool, leaf_level: int
@@ -120,6 +122,32 @@ class Node:
 
         if not children:
             self.set_score(value, leaf_color, leaf_level)
+
+        elif self.only_captures and self.parent is not None:
+            if not self.color:
+                recapture_score = reduce(self.minimal, children)._score
+                if recapture_score >= self.init_score:
+                    # if opponent doesn't have any good recaptures then keeping the score
+                    score = self.init_score
+                elif self.being_processed:
+                    # children haven't finished processing, temporarily using recapture score
+                    score = recapture_score
+                else:
+                    # final propagation, not taking the recapture score as may have non-capture children
+                    score = max(self.parent.init_score, recapture_score)
+            else:
+                recapture_score = reduce(self.maximal, children)._score
+                if recapture_score <= self.init_score:
+                    # if opponent doesn't have any good recaptures then keeping the score
+                    score = self.init_score
+                elif self.being_processed:
+                    # children haven't finished processing, temporarily using recapture score
+                    score = recapture_score
+                else:
+                    # final propagation, not taking the recapture score as may have non-capture children
+                    score = min(self.parent.init_score, recapture_score)
+
+            self.set_score(score, leaf_color, leaf_level)
 
         else:
             parent_score: float32 = self._score

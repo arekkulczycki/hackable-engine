@@ -113,7 +113,7 @@ if __name__ == "__main__":
                 # teardown done on `finally`
                 quitting = True
             elif key == "help":
-                print("actions:\n")
+                print("actions:\n")  # TODO: ???
             elif key == "clean":
                 controller.release_memory()
             elif key == "restart":

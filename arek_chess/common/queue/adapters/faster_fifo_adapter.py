@@ -73,6 +73,14 @@ class FasterFifoAdapter(BaseQueue):
         except Empty:
             return []
 
+    def get_all(self) -> List[BaseItem]:
+        """"""
+
+        try:
+            return self.queue.get_many()
+        except Empty:
+            return []
+
     def is_empty(self) -> bool:
         """"""
 
