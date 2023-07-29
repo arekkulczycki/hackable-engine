@@ -42,13 +42,12 @@ class DistributorItem(BaseItem):
         self.board: bytes = board
 
     @staticmethod
-    def loads(b: memoryview) -> DistributorItem:
+    def loads(bytes_: bytes) -> DistributorItem:
         """"""
 
-        _bytes = b.tobytes()
-        string_part = _bytes[:-BOARD_AND_FLOAT_BYTES_NUMBER]
-        float_part = _bytes[-BOARD_AND_FLOAT_BYTES_NUMBER:-BOARD_BYTES_NUMBER]
-        board = _bytes[-BOARD_BYTES_NUMBER:]
+        string_part = bytes_[:-BOARD_AND_FLOAT_BYTES_NUMBER]
+        float_part = bytes_[-BOARD_AND_FLOAT_BYTES_NUMBER:-BOARD_BYTES_NUMBER]
+        board = bytes_[-BOARD_BYTES_NUMBER:]
         values = string_part.decode("utf-8").split(";")
 
         return DistributorItem(

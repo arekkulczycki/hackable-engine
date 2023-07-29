@@ -1,25 +1,14 @@
 # -*- coding: utf-8 -*-
 import os
 from asyncio import sleep as asyncio_sleep
-from time import time, sleep
-from typing import Optional, Dict, List, Tuple
-from weakref import WeakValueDictionary
+from time import sleep, time
+from typing import Dict, List, Optional, Tuple
 
 from numpy import abs, float32
 
 from arek_chess.board.board import Board
-from arek_chess.common.constants import (
-    Print,
-    INF,
-    ROOT_NODE_NAME,
-    LOG_INTERVAL,
-    FINISHED,
-    STARTED,
-    STATUS,
-    DISTRIBUTED,
-    SLEEP,
-    CLOSED,
-)
+from arek_chess.common.constants import (CLOSED, CPU_CORES, DEBUG, DISTRIBUTED, FINISHED, INF, LOG_INTERVAL, Print,
+                                         ROOT_NODE_NAME, RUN_ID, SLEEP, STARTED, STATUS, WORKER)
 from arek_chess.common.custom_threads import ReturningThread
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory.manager import MemoryManager
@@ -54,6 +43,11 @@ class SearchWorker(ReturningThread, ProfilerMixin):
     limit: int
     should_profile: bool
 
+    distributed: int
+    evaluated: int
+    selected: int
+    explored: int
+
     def __init__(
         self,
         distributor_queue: QM,
@@ -76,34 +70,43 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         self.root: Optional[Node] = None
         # self.nodes_dict: Dict[str, Node] = {}
-        self.nodes_dict: WeakValueDictionary = WeakValueDictionary({})
-        self.transposition_dict: WeakValueDictionary = WeakValueDictionary({})
+        self.nodes_dict: Dict[str, Node] = {}  # WeakValueDictionary({})
+        self.transposition_dict: Optional[Dict[bytes, Node]] = None  # WeakValueDictionary({})
         self.memory_manager = MemoryManager()
 
         self._reset_counters()
 
         self.limit: int = 2 ** (search_limit or 14)  # 14 -> 16384, 15 -> 32768
 
+        self.finished: bool = False
         self.should_profile: bool = False
+
+        self.debug = False
 
     def _reset_counters(self) -> None:
         """"""
 
-        self.distributed: int = 0
-        self.evaluated: int = 0
-        self.selected: int = 0
-        self.explored: int = 0
+        self.distributed = 0
+        self.evaluated = 0
+        self.selected = 0
+        self.explored = 0
 
-        self.finished: bool = False
+        self.finished = False
 
         self.memory_manager.set_int(STATUS, CLOSED)
+        self.memory_manager.set_int(DEBUG, 0)
+        self.memory_manager.set_int(DISTRIBUTED, 0)
+
+        for i in range(CPU_CORES - 1):
+            self.memory_manager.set_int(f"{WORKER}_{i}", 0)
 
     def reset(
         self,
         board: Board,
         new_root: Optional[Node] = None,
-        nodes_dict: WeakValueDictionary = None,
+        nodes_dict: Dict[str, Node] = None,
         run_iteration: int = 0,
+        should_use_transposition: bool = True,
     ) -> None:
         """"""
 
@@ -111,19 +114,35 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         self.board = board
 
-        if new_root and nodes_dict:
+        if new_root and nodes_dict is not None:
             self._reuse_root(new_root, nodes_dict)
 
         else:
-            self._set_new_root()
+            self._set_new_root(should_use_transposition)
 
         self.run_id = f"{self.root.move}.{run_iteration}"
+        self.memory_manager.set_str(RUN_ID, self.run_id)
 
         self.traverser: Traverser = Traverser(
             self.root, self.nodes_dict, self.transposition_dict
         )
 
-    def _set_new_root(self) -> None:
+    def _reuse_root(
+        self,
+        new_root: Node,
+        nodes_dict: Dict,
+    ) -> None:
+        """"""
+
+        # TODO: must be a bug in setting being_processed back to False for nodes after processing
+        new_root.propagate_being_processed_down()  # TODO: can this run in infinite loop?...
+
+        self.root = new_root
+
+        self.root.parent = None  # gc.collect needed ?
+        self.nodes_dict = nodes_dict
+
+    def _set_new_root(self, should_use_transposition: bool = True) -> None:
         """"""
 
         score = -INF if self.board.turn else INF
@@ -144,18 +163,10 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         )
 
         self.nodes_dict = {ROOT_NODE_NAME: self.root}
-        self.transposition_dict = {serialized_board: self.root}
+        self.transposition_dict = {serialized_board: self.root} if should_use_transposition else None
 
-    def _reuse_root(self, new_root: Node, nodes_dict: WeakValueDictionary) -> None:
-        """"""
-
-        # del self.root
-        # gc.collect()
-
-        self.root = new_root
-        self.root.parent = None
-        self.nodes_dict = nodes_dict
-        # print(f"inheriting {len(self.nodes_dict.keys())} nodes")
+        if should_use_transposition:
+            print("****** TRANSPOSITIONS ON ********")
 
     def run(self) -> None:
         """"""
@@ -177,13 +188,13 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         # must set status started before putting the element on queue or else will be discarded
         self.memory_manager.set_int(STATUS, STARTED)
-        if not self.root.children:
+        if not self.root.children or self.root.only_captures:
             self.distributor_queue.put(
                 DistributorItem(
                     self.run_id,
                     ROOT_NODE_NAME,
                     self.root.move,
-                    0,
+                    -1 if self.root.only_captures else 0,
                     self.root.score,
                     self.board.serialize_position(),
                 )
@@ -194,63 +205,72 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         self.t_tmp: float = self.t_0
         self.last_evaluated: int = 0
 
-        limit = self.limit
-        queue_throttle = self.queue_throttle
-        distributor_queue = self.distributor_queue
-        selector_queue = self.selector_queue
-        control_queue = self.control_queue
-        read_control_values = self._read_control_values
-        harvest_queues = self.harvest_queues
-        select_from_tree = self.select_from_tree
-        monitor = self.monitor
+        # limit = self.limit
+        # queue_throttle = self.queue_throttle
+        # distributor_queue = self.distributor_queue
+        # selector_queue = self.selector_queue
+        # control_queue = self.control_queue
+        # read_control_values = self._read_control_values
+        # harvest_queues = self.harvest_queues
+        # select_from_tree = self.select_from_tree
+        # monitor = self.monitor
 
         try:
             # TODO: refactor to use concurrency?
             while not (
                 self.finished and self.evaluated >= self.distributed
-            ):  # TODO: should check for equality but elements from previous runs are consumed too late
-                read_control_values()
-                if monitor():
-                    # breaks on a signal to stop the thread
+            ):  # TODO: should check for equality maybe, but this is safer
+                if self.main_loop():
                     break
-
-                harvest_queues(
-                    selector_queue,
-                    distributor_queue,
-                    control_queue,
-                    queue_throttle,
-                    self.finished,
-                )
-
-                if not self.finished:
-                    gap = 0
-                    ratio = 0
-                    if self.distributed != 0:
-                        gap = self.distributed - self.evaluated
-                        ratio = gap / self.distributed
-                    if self.distributed == 0 or (
-                        gap < 25000
-                        and not (ratio > 0.25 and gap > 10000)
-                        and not (
-                            ratio > 0.1
-                            and gap > 10000
-                            and self.distributed
-                            < limit / 2  # slow down in the first half of the search
-                        )
-                    ):
-                        select_from_tree(  # TODO: the param should depend on both gap and speed
-                            distributor_queue, 2 if gap > 10000 else 8
-                        )
-
-                if not self.finished and self._is_enough():
-                    self.finished = True
-                    self._run_validation_loop(distributor_queue)
 
         finally:
             self._reset_distributor()
-            self._wait_closed_status()
+            self._wait_all_workers()
 
         return self.finish_up(time() - self.t_0)
+
+    def main_loop(self) -> bool:
+        """
+        :return: if should break the loop
+        """
+
+        self._read_control_values()
+        if self.monitor():
+            # breaks on a signal to stop the thread
+            return True
+
+        self.harvest_queues(
+            self.selector_queue,
+            self.distributor_queue,
+            self.control_queue,
+            self.queue_throttle,
+        )
+
+        if not self.finished:
+            gap = 0
+            ratio = 0
+            if self.distributed != 0:
+                gap = self.distributed - self.evaluated
+                ratio = gap / self.distributed
+            if self.distributed == 0 or (
+                gap < 25000
+                and not (ratio > 0.25 and gap > 10000)
+                and not (
+                    ratio > 0.1
+                    and gap > 10000
+                    and self.distributed
+                    < self.limit / 2  # slow down in the first half of the search
+                )
+            ):
+                self.select_from_tree(  # TODO: the param should depend on both gap and speed
+                    self.distributor_queue, 1 if gap > 10000 else 6
+                )
+
+        if not self.finished and self._is_enough():
+            self.finished = True
+            # self._run_validation_loop(self.distributor_queue)
+
+        return False
 
     def monitor(self) -> bool:
         """
@@ -278,12 +298,14 @@ class SearchWorker(ReturningThread, ProfilerMixin):
             )
 
             if self.evaluated == self.last_evaluated:
+                # TODO: use signal for this?
                 if not self.finished or progress < 95:
                     print(
-                        f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}"
+                        f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}, finished: {self.finished}"
                     )
-                    # print(PrunedTreeRenderer(self.root, depth=0, maxlevel=20))
-                    print()
+                    print(PrunedTreeRenderer(self.root, depth=1, maxlevel=3))
+                    self.memory_manager.set_int(DEBUG, 1)
+                    self.memory_manager.set_int(STATUS, FINISHED, new=False)
                     raise SearchFailed("nodes not delivered on queues")
                 else:
                     # TODO: should be gone when queues handling is fixed and all items are consumed the right time
@@ -339,7 +361,6 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         distributor_queue: QM,
         control_queue: QM,
         queue_throttle: int,
-        finished: bool,
     ) -> None:
         """"""
 
@@ -354,17 +375,27 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         self.evaluated += len(candidates)
 
-        self.handle_candidates(distributor_queue, candidates, finished)
+        self.handle_candidates(distributor_queue, candidates)
 
     def _exclude_by_run_id(self, candidates: List[SelectorItem]) -> List[SelectorItem]:
         """"""
 
-        return [item for item in candidates if item.run_id == self.run_id]
+        def is_right_id(item):
+            if item.run_id == self.run_id:
+                return True
+            else:
+                # print(item.run_id, item.node_name, item.move_str)
+                return False
+
+        return [item for item in candidates if is_right_id(item)]
 
     def _handle_control_queue(self, control_queue) -> None:
         """"""
 
-        control_items: List[ControlItem] = control_queue.get_many(10000, SLEEP)
+        control_items: List[ControlItem] = control_queue.get_many(1000)
+        if not control_items:
+            return
+
         for item in control_items:
             if item.control_value == "error":  # TODO: switch to read status from memory
                 raise SearchFailed("Distributor error")
@@ -374,6 +405,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
             # only 1 root child, therefore nothing to analyse (finishing immediately)
             if item.control_value == ROOT_NODE_NAME:
+                self.evaluated += 1
                 move = list(self.board.legal_moves)[0]
 
                 self.board.push(move)
@@ -392,17 +424,13 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 continue
 
             # 0 children, so nothing sent to evaluation
-            try:
-                node = self.traverser.get_node(item.control_value)
-            except KeyError:
-                print("control node not found")
-                pass
-                # TODO: should raise?
-            else:
-                # TODO: if no children then control if the score is valid for checkmate or stalemate
-                # propagate here at the end of capture-fest
-                node.being_processed = False
-                node.parent.propagate_score(node.score, None, node.color, node.level)
+            node = self.traverser.get_node(item.control_value)
+
+            # TODO: if no children then control if the score is valid for checkmate or stalemate
+            # propagate here at the end of capture-fest
+            node.being_processed = False
+            node.propagate_being_processed_up()
+            node.parent.propagate_score(node.score, None, node.color, node.level)
 
     def _read_control_values(self) -> None:
         """"""
@@ -411,40 +439,37 @@ class SearchWorker(ReturningThread, ProfilerMixin):
             self.distributed, self.memory_manager.get_int(DISTRIBUTED)
         )
 
-    def _wait_closed_status(self) -> None:
+    def _wait_all_workers(self) -> None:
         """"""
 
         while True:
-            current_status = self.memory_manager.get_int(STATUS)
-            if current_status == CLOSED:
+            for i in range(CPU_CORES - 1):
+                worker_status = self.memory_manager.get_int(f"{WORKER}_{i}")
+                if not worker_status:
+                    sleep(SLEEP)
+                    break
+            else:
                 return
-            sleep(SLEEP)
-
-        # print("distributor non-responsive")
-        # raise SearchFailed
 
     def handle_candidates(
-        self, distributor_queue: QM, candidates: List[SelectorItem], finished: bool
+        self, distributor_queue: QM, candidates: List[SelectorItem]
     ) -> None:
         """"""
 
-        nodes_to_distribute: List[Node] = self.traverser.get_nodes_to_distribute(
-            candidates, finished
+        nodes_to_distribute: List[Node] = self.traverser.create_nodes_and_autodistribute(
+            candidates
         )
 
         if nodes_to_distribute:
-            if self.finished:
+            if self.finished and self.root.children:
                 top_node = (
                     max(self.root.children, key=lambda node: node.score)
                     if self.root.children
                     else min(self.root.children, key=lambda node: node.score)
                 )
-                if not top_node.being_processed:
+                if not top_node.being_processed or self.distributed > 3 * self.limit:
                     return
 
-            self.distributed += len(nodes_to_distribute)
-
-            self.explored += len(nodes_to_distribute)
             self.queue_for_distribution(
                 distributor_queue, nodes_to_distribute, recaptures=True
             )
@@ -456,13 +481,13 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         top_nodes = self.traverser.get_nodes_to_look_at(iterations)
         if not top_nodes:
-            # print("no top nodes")
+            # if self.distributed > 1 and self.selected == 0:
+            #     print(f"no damn nodes: {len(self.root.children)}")
+            #     for child in self.root.children:
+            #         print(
+            #             child.move, child.leaf_level, child.score, child.being_processed
+            #         )
             return
-
-        n_nodes: int = len(top_nodes)
-        self.selected += n_nodes
-        self.explored += n_nodes
-        self.distributed += n_nodes
 
         self.queue_for_distribution(distributor_queue, top_nodes, recaptures=False)
 
@@ -502,6 +527,12 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 )
             )
 
+        n_nodes: int = len(to_queue)
+        if not recaptures:
+            self.selected += n_nodes
+        self.explored += n_nodes
+        # self.distributed += n_nodes
+
         distributor_queue.put_many(to_queue)
 
     async def harvesting_loop(
@@ -515,7 +546,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         while True:
             self.harvest_queues(
-                selector_queue, distributor_queue, control_queue, queue_throttle, False
+                selector_queue, distributor_queue, control_queue, queue_throttle
             )
             await asyncio_sleep(0)
 
@@ -578,6 +609,10 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         """
 
         if not self.root.children:
+            print(
+                f"distributed: {self.distributed}, evaluated: {self.evaluated}, selected: {self.selected}, finished: {self.finished}"
+            )
+            self.print_tree(0, 2)
             raise SearchFailed("finished without analysis")
 
         sorted_children: List[Node] = sorted(

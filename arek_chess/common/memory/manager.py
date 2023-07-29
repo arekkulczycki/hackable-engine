@@ -68,6 +68,13 @@ class MemoryManager:
     def set_int(self, key: str, value: int, *, new: bool = True) -> None:
         self.memory.set(key, pack("i", value), new=new)
 
+    def get_str(self, key: str) -> str:
+        v: bytes = self.memory.get(key)
+        return v and v.decode()
+
+    def set_str(self, key: str, value: str, *, new: bool = True) -> None:
+        self.memory.set(key, value.encode(), new=new)
+
     def in_last_positions(self, board_bytes: bytes) -> bool:
         """"""
 

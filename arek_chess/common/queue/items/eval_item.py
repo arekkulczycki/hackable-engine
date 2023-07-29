@@ -28,12 +28,11 @@ class EvalItem(BaseItem):
         self.board: bytes = board
 
     @staticmethod
-    def loads(b: memoryview) -> EvalItem:
+    def loads(bytes_: bytes) -> EvalItem:
         """"""
 
-        _bytes = b.tobytes()
-        string_part = _bytes[:-BOARD_BYTES_NUMBER]
-        board = _bytes[-BOARD_BYTES_NUMBER:]
+        string_part = bytes_[:-BOARD_BYTES_NUMBER]
+        board = bytes_[-BOARD_BYTES_NUMBER:]
         values = string_part.decode("utf-8").split(";")
 
         return EvalItem(

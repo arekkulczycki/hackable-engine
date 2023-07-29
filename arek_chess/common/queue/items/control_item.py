@@ -19,10 +19,10 @@ class ControlItem(BaseItem):
         self.control_value: str = control_value
 
     @staticmethod
-    def loads(b: memoryview) -> ControlItem:
+    def loads(bytes_: bytes) -> ControlItem:
         """"""
 
-        return ControlItem(*b.tobytes().decode("utf-8").split(";"))
+        return ControlItem(*bytes_.decode("utf-8").split(";"))
 
     @staticmethod
     def dumps(obj: ControlItem) -> bytes:

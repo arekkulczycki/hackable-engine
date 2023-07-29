@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from functools import reduce
-from typing import Optional, List
+from typing import List, Optional
 
 from numpy import float32
 
@@ -50,8 +50,11 @@ class Node:
         self.captured = captured
         self.color = color
         self.being_processed = being_processed
+
         self.only_captures = only_captures
         self.board = board
+
+        self.propagate_being_processed_up()
 
         self.children = []
         self.leaf_color = color
@@ -61,7 +64,7 @@ class Node:
         """assign last because requires other attributes initiated"""
 
     def __repr__(self):
-        return f"Node({self.level}, {self.name}, {round(self._score, 3)}, ini: {round(self.init_score, 3)})"
+        return f"Node({self.level}, {self.name}, {self.move}, {round(self._score, 3)}, ini: {round(self.init_score, 3)})"
 
     @property
     def name(self) -> str:
@@ -78,7 +81,7 @@ class Node:
 
     @property
     def level(self) -> int:
-        level = 1
+        level = 0
 
         parent = self.parent
         while parent:
@@ -100,16 +103,26 @@ class Node:
 
         parent: Optional[Node] = self.parent
         if parent:
-            # once is no longer processed also propagate it
-            # is important to not reset too early to prevent digging into branch that has a capture-fest analysed
-            # TODO: this potentially will leave some nodes processed forever, harmful or not?
-            # TODO: should do the children iteration just once? (including the one below)
-            # parent.being_processed = any(child.being_processed for child in parent.children)
-            parent.being_processed = self.being_processed if self.only_captures else False
+            # parent.being_processed = self.being_processed if self.only_captures else False
 
             # if not self.being_processed:  # don't propagate until capture-fest finished
-                # TODO: to not propagate is good idea only if we wait all captures to finish which is not the case
+            # TODO: to not propagate is good idea only if we wait all captures to finish which is not the case
             parent.propagate_score(value, old_value, self.leaf_color, self.leaf_level)
+
+    def propagate_being_processed_up(self) -> None:
+        """"""
+
+        if self.parent:
+            # self.parent.being_processed = False
+            self.parent.being_processed = self.being_processed if self.only_captures else False
+            self.parent.propagate_being_processed_up()
+
+    def propagate_being_processed_down(self) -> None:
+        """"""
+
+        self.being_processed = False
+        for child in self.children:
+            child.propagate_being_processed_down()
 
     def propagate_score(
         self, value: float32, old_value: Optional[float32], leaf_color: bool, leaf_level: int

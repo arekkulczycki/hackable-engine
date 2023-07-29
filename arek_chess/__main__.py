@@ -83,7 +83,7 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
 
     if args.clean:
-        Controller.release_memory()
+        Controller().release_memory()
         sys.exit(0)
 
     validate_tree_params(args.tree_params)

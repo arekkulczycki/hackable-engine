@@ -4,6 +4,8 @@ from numpy import float32
 
 from enum import IntEnum
 
+CPU_CORES = 8
+
 INF: float32 = float32(1000000.0)
 DRAW: float32 = float32(0.0)
 SLEEP: float = 0.001
@@ -12,7 +14,11 @@ BREAK_INTERVAL: float = 3.0
 
 ROOT_NODE_NAME: str = "1"
 
+DEBUG: str = "debug"
+ACTION: str = "action"
 STATUS: str = "status"
+RUN_ID: str = "run_id"
+WORKER: str = "worker"
 DISTRIBUTED: str = "distributed"
 
 STARTED: int = 0

@@ -49,11 +49,24 @@ WEAK_ACTION: ActionType = (
 )
 ACTION_SIZE: int = 10
 INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-EQUAL_MIDDLEGAME_FEN = "r3k2r/1ppbqpp1/pb1p1n1p/n3p3/2B1P2B/2PP1N1P/PPQN1PP1/R3K2R w KQkq - 0 12"
+EQUAL_MIDDLEGAME_FEN = (
+    "r3k2r/1ppbqpp1/pb1p1n1p/n3p3/2B1P2B/2PP1N1P/PPQN1PP1/R3K2R w KQkq - 0 12"
+)
 SHARP_MIDDLEGAME_FEN = "rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"
-ADVANTAGE_MIDDLEGAME_FEN = "r2qk2r/pp1nbppp/2p1pn2/5b2/2BP1B2/2N1PN2/PP3PPP/R2Q1RK1 w kq - 3 9"
-DISADVANTAGE_MIDDLEGAME_FEN = "rn1qkb1r/p3pppp/2p5/1p1n1b2/2pP4/2N1PNB1/PP3PPP/R2QKB1R w KQkq - 0 8"
-fens = cycle([EQUAL_MIDDLEGAME_FEN, SHARP_MIDDLEGAME_FEN, ADVANTAGE_MIDDLEGAME_FEN, DISADVANTAGE_MIDDLEGAME_FEN])
+ADVANTAGE_MIDDLEGAME_FEN = (
+    "r2qk2r/pp1nbppp/2p1pn2/5b2/2BP1B2/2N1PN2/PP3PPP/R2Q1RK1 w kq - 3 9"
+)
+DISADVANTAGE_MIDDLEGAME_FEN = (
+    "rn1qkb1r/p3pppp/2p5/1p1n1b2/2pP4/2N1PNB1/PP3PPP/R2QKB1R w KQkq - 0 8"
+)
+fens = cycle(
+    [
+        EQUAL_MIDDLEGAME_FEN,
+        SHARP_MIDDLEGAME_FEN,
+        ADVANTAGE_MIDDLEGAME_FEN,
+        DISADVANTAGE_MIDDLEGAME_FEN,
+    ]
+)
 # fens = cycle([INITIAL_FEN])
 
 
@@ -80,19 +93,9 @@ class SquareControlEnv(gym.Env):
         self.obs = self.observation()
         self.steps_done = 0
 
-    def _set_controller(self, controller: Optional[Controller] = None):
-        if controller is None:
-            self.controller = Controller(
-                fen=next(fens),
-                printing=Print.MOVE,
-                search_limit=9,
-                is_training_run=True,
-                in_thread=False,
-                timeout=3,
-            )
-        else:
-            self.controller = controller
-            self.controller._set_board(next(fens))
+    def _set_controller(self, controller: Controller):
+        self.controller = controller
+        self.controller._set_board(next(fens))
         self.controller.boot_up()
 
     def _get_action_space(self):
@@ -128,7 +131,7 @@ class SquareControlEnv(gym.Env):
         result = self.get_result()  # self.controller.board.result()
         if result == "*":
             # playing against a configured action
-            self._run_action(MEDIUM_ACTION)
+            self._run_action(DEFAULT_ACTION)
 
             result = self.get_result()  # self.controller.board.result()
 
@@ -169,19 +172,25 @@ class SquareControlEnv(gym.Env):
 
         own_king_mobility = float32(board.get_king_mobility(board.turn) / 8.0)
         opp_king_mobility = float32(board.get_king_mobility(not board.turn) / 8.0)
-        square_control_diff = board.get_square_control_map_for_both()
+        square_control_diff, _ = board.get_square_control_map_for_both()
         (
             own_king_proximity_control,
             opp_king_proximity_control,
-        ) = _get_king_proximity_square_control(board, square_control_diff)  # value range from ~ -25 to 25
+        ) = _get_king_proximity_square_control(
+            board, square_control_diff
+        )  # value range from ~ -25 to 25
 
         material = float32(board.get_material_no_pawns_both() / 31.0)
         own_pawns = float32(board.get_pawns_simple_color(board.turn) / 8.0)
         opp_pawns = float32(board.get_pawns_simple_color(not board.turn) / 8.0)
 
         # advanced pawns mean more space
-        own_space = float32(board.get_material_pawns(board.turn) / (8.0 * 3.0))  # 8 times piece value
-        opp_space = float32(board.get_material_pawns(not board.turn) / (8.0 * 3.0))  # 8 times piece value
+        own_space = float32(
+            board.get_material_pawns(board.turn) / (8.0 * 3.0)
+        )  # 8 times piece value
+        opp_space = float32(
+            board.get_material_pawns(not board.turn) / (8.0 * 3.0)
+        )  # 8 times piece value
 
         return [
             own_king_mobility,
@@ -215,9 +224,9 @@ class SquareControlEnv(gym.Env):
 
         # artificially make turn value smaller
         # artificially multiply material value for easier random discovery
-        #return tuple(
+        # return tuple(
         #    v / 2 if i == 9 else v * 2 if i == 3 else v for i, v in enumerate(action)
-        #)
+        # )
 
     @staticmethod
     def action_downgrade(action: ActionType) -> ActionType:
@@ -229,6 +238,8 @@ class SquareControlEnv(gym.Env):
 
 
 ONES_float32 = ones((64,), dtype=float32)
+
+
 def _get_king_proximity_square_control(
     board,
     square_control_diff,

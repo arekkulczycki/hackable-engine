@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 from multiprocessing import set_start_method
 from time import sleep
-from typing import Optional, List, Union
-from weakref import WeakValueDictionary
+from typing import Dict, List, Optional, Tuple, Union
 
 from chess import Move, Termination
 
 from arek_chess.board.board import Board
-from arek_chess.common.constants import Print, ROOT_NODE_NAME
+from arek_chess.common.constants import CPU_CORES, Print
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.common.queue.items.control_item import ControlItem
@@ -21,12 +20,10 @@ from arek_chess.workers.distributor_worker import DistributorWorker
 from arek_chess.workers.eval_worker import EvalWorker
 from arek_chess.workers.search_worker import SearchWorker
 
-CPU_CORES = 8
-
 
 class Controller:
     """
-    Controls all engine flows and communication to outside world.
+    Controls engine setup and its communication to outside world.
     """
 
     distributor_queue: QueueManager
@@ -50,6 +47,8 @@ class Controller:
     ):
         """"""
 
+        # set_start_method("forkserver")
+
         self._set_board(fen)
 
         self.printing = printing
@@ -65,7 +64,6 @@ class Controller:
             self.search_limit if self.search_limit < 12 else (self.search_limit * 3)
         )
 
-        set_start_method("spawn")
         self.create_queues()
         self.search_worker = SearchWorker(
             self.distributor_queue,
@@ -87,12 +85,14 @@ class Controller:
         self.initial_root_color: bool = True
         self.last_white_root: Optional[Node] = None
         self.last_black_root: Optional[Node] = None
-        self.last_white_nodes_dict: WeakValueDictionary[
-            str, Node
-        ] = WeakValueDictionary({})
-        self.last_black_nodes_dict: WeakValueDictionary[
-            str, Node
-        ] = WeakValueDictionary({})
+        self.last_white_nodes_dict: Dict[str, Node] = {}  # WeakValueDictionary({})
+        self.last_black_nodes_dict: Dict[str, Node] = {}  # WeakValueDictionary({})
+        # self.last_white_transposition_dict: Dict[
+        #     bytes, Node
+        # ] = {}  # WeakValueDictionary({})
+        # self.last_black_transposition_dict: Dict[
+        #     bytes, Node
+        # ] = {}  # WeakValueDictionary({})
 
     def boot_up(self) -> None:
         """"""
@@ -125,11 +125,12 @@ class Controller:
 
         from arek_chess.training.envs.square_control_env import SquareControlEnv
 
-        for _ in range(num_eval_workers):
+        for i in range(num_eval_workers):
             evaluator = EvalWorker(
                 self.eval_queue,
                 self.selector_queue,
                 (self.queue_throttle // num_eval_workers),
+                i + 1,
                 is_training_run=self.is_training_run,
                 env=self.model_version and SquareControlEnv(controller=self),
                 model_version=self.model_version,
@@ -176,48 +177,93 @@ class Controller:
         if self.search_worker.root is None:
             reuse = False
 
-        # cache previous run tree if there was a move
         next_root = None
-        next_nodes_dict = None
-        if reuse:
-            if self.is_training_run:
-                # make sure it re-uses old tree every full move, not sharing tree with the opponent
-                if self.search_worker.root.color and self.last_black_root:
-                    next_root = self._get_next_grandroot(self.last_black_root)
-                    if next_root:
-                        next_nodes_dict = self._remap_nodes_dict(
-                            self.last_black_nodes_dict, next_root.name
-                        )
-                elif not self.search_worker.root.color and self.last_white_root:
-                    next_root = self._get_next_grandroot(self.last_white_root)
-                    if next_root:
-                        next_nodes_dict = self._remap_nodes_dict(
-                            self.last_white_nodes_dict, next_root.name
-                        )
+        next_nodes_dict = {}
 
-            else:
-                next_root = self._get_next_root()
-                next_nodes_dict = self._remap_nodes_dict(
-                    self.search_worker.nodes_dict, next_root.name
-                )
+        if reuse:
+            next_root, next_nodes_dict = self._get_cached_tree()
+
+        # cache color-based previous run tree if is in training (separate white and black trees)
+        if reuse and self.is_training_run:
+            self._cache_color_based_tree()
 
         if reuse and next_root:
             self.search_worker.reset(
                 self.board.copy(),
                 next_root,
                 next_nodes_dict,
-                run_iteration,
+                run_iteration=run_iteration,
+                should_use_transposition=False,
             )
         else:
-            self.search_worker.reset(self.board.copy(), run_iteration=run_iteration)
+            should_use_transposition = not self.is_training_run and not reuse
+            self.search_worker.reset(
+                self.board.copy(),
+                run_iteration=run_iteration,
+                should_use_transposition=should_use_transposition,
+            )
 
-        if reuse and self.is_training_run:
-            if self.search_worker.root.color:
-                self.last_white_root = self.search_worker.root
-                self.last_white_nodes_dict = self.search_worker.nodes_dict
-            else:
-                self.last_black_root = self.search_worker.root
-                self.last_black_nodes_dict = self.search_worker.nodes_dict
+    def _get_cached_tree(self) -> Tuple[Optional[Node], Dict]:
+        """"""
+
+        next_root = None
+        next_nodes_dict = {}
+
+        if self.is_training_run:
+            # make sure it re-uses old tree every full move, not sharing tree with the opponent
+            if self.board.turn and self.last_white_root:
+                # white to move, therefore reusing tree created within last white move
+                next_root = self._get_next_grandroot(self.last_white_root)
+                if next_root and next_root.children:
+                    next_nodes_dict = self._remap_nodes_dict(
+                        self.last_white_nodes_dict, next_root, grand=True
+                    )
+                    # next_transposition_dict = self.last_white_transposition_dict
+                else:
+                    next_root = None
+                # elif next_root:
+                #     next_nodes_dict = {ROOT_NODE_NAME: next_root}
+
+            elif not self.board.turn and self.last_black_root:
+                # black to move, therefore reusing tree created within last black move
+                next_root = self._get_next_grandroot(self.last_black_root)
+                if next_root and next_root.children:
+                    next_nodes_dict = self._remap_nodes_dict(
+                        self.last_black_nodes_dict, next_root, grand=True
+                    )
+                    # next_transposition_dict = self.last_black_transposition_dict
+                else:
+                    next_root = None
+                # elif next_root:
+                #     next_nodes_dict = {ROOT_NODE_NAME: next_root}
+
+        else:
+            next_root = self._get_next_root()
+            next_nodes_dict = self._remap_nodes_dict(
+                self.search_worker.nodes_dict, next_root
+            )
+            # next_transposition_dict = self.search_worker.transposition_dict  # TODO: shouldn't some keys be cleared?
+
+        return next_root, next_nodes_dict
+
+    def _cache_color_based_tree(self) -> None:
+        """
+        Cache color-based previous run tree and maps to nodes.
+        """
+
+        if self.board.turn:
+            # white to move, therefore last move was black, tree prepared for a next black move
+            self.last_black_root = self.search_worker.root
+            self.last_black_nodes_dict = self.search_worker.nodes_dict.copy()
+            # self.last_black_transposition_dict = (
+            #     self.search_worker.transposition_dict.copy()
+            # )
+        else:
+            self.last_white_root = self.search_worker.root
+            self.last_white_nodes_dict = self.search_worker.nodes_dict.copy()
+            # self.last_white_transposition_dict = (
+            #     self.search_worker.transposition_dict.copy()
+            # )
 
     def _get_next_root(self) -> Node:
         chosen_move = self.board.move_stack[-1].uci()
@@ -263,21 +309,38 @@ class Controller:
 
         return chosen_grandchild
 
+    @staticmethod
     def _remap_nodes_dict(
-        self, nodes_dict: WeakValueDictionary, root_name: str
-    ) -> WeakValueDictionary:
+        nodes_dict: Dict, next_root: Node, grand: bool = False
+    ) -> Dict:
         """
         Clean hashmap of discarded moves and rename remaining keys.
         """
 
-        for key in list(nodes_dict.keys()):
-            if key.startswith(root_name):  # TODO: not needed for the weakref stuff ??
-                new_key = key.replace(root_name, ROOT_NODE_NAME)
-                nodes_dict[new_key] = nodes_dict.pop(key)
-            else:
-                del nodes_dict[key]  # TODO: not needed for the weakref stuff ??
+        cut = 3 if grand else 2
 
-        return nodes_dict
+        new_nodes_dict = {}
+        for key, value in nodes_dict.items():
+            key_split = key.split(".")
+            if key == "1":
+                continue
+            elif grand and (
+                key_split[1] != next_root.parent.move
+                or (len(key_split) < 3 or key_split[2] != next_root.move)
+            ):
+                continue
+            elif not grand and key_split[1] != next_root.move:
+                continue
+
+            alt_key = ".".join(["1"] + key_split[cut:])
+            new_nodes_dict[alt_key] = value
+
+        print(
+            f"reused node by {'white' if next_root.color else 'black'}: "
+            f"{next_root.name}, depth: {next_root.leaf_level - 2}"
+        )
+
+        return new_nodes_dict
 
     def make_move(self, memory_action: Optional[ActionType] = None) -> None:
         """"""
@@ -287,9 +350,7 @@ class Controller:
             print(self.get_pgn())
             raise ValueError("asked for a move in checkmate position")
 
-        self._setup_search_worker(
-            reuse=True
-        )  # TODO: set True when branch reusing works
+        self._setup_search_worker(reuse=True)
 
         if memory_action is not None:
             self.memory_manager.set_action(memory_action, len(memory_action))
@@ -302,14 +363,16 @@ class Controller:
             elif fails > 2:
                 print("restarting all workers...")
                 sleep(3 * fails)
-                self.reset()
+                self.last_white_root = None
+                self.last_black_root = None
+                self.reset(fails)
                 # self.restart()
                 sleep(fails)
                 self.restart_child_processes()
             elif fails > 0:
                 print("restarting search worker...")
                 # self.release_memory(silent=self.printing in [Print.MOVE, Print.MOVE])
-                self.reset()
+                self.reset(fails)
 
             try:
                 move = self._search()
@@ -331,8 +394,6 @@ class Controller:
             print("found illegal move, restarting...")
             self.reset()
             self.make_move()
-
-        self.clear_queues()
 
     def get_move(self) -> str:
         # TODO: rework to be an internal part of the make_move
@@ -376,30 +437,30 @@ class Controller:
     def get_pgn(self) -> str:
         """"""
 
-        fen = self.board.fen()
-        board = Board(self.initial_fen)
         try:
-            pgn = board.variation_san(self.board.move_stack)
+            pgn = Board(self.initial_fen).variation_san(self.board.move_stack)
         except ValueError:
             print("ValueError getting pgn for")
-            print(board.fen())
+            print(self.board.fen())
             return ".".join([move.uci() for move in self.board.move_stack])
 
-        return f'[FEN "{fen}"]\n\n{pgn}'
+        return f'[FEN "{self.initial_fen}"]\n\n{pgn}'
 
-    def reset(self) -> None:
+    def reset(self, run_iteration: int = 0) -> None:
         """"""
 
         self.last_white_root: Optional[Node] = None
         self.last_black_root: Optional[Node] = None
-        self.last_white_nodes_dict: WeakValueDictionary[
-            str, Node
-        ] = WeakValueDictionary({})
-        self.last_black_nodes_dict: WeakValueDictionary[
-            str, Node
-        ] = WeakValueDictionary({})
+        self.last_white_nodes_dict: Dict[str, Node] = {}  # WeakValueDictionary({})
+        self.last_black_nodes_dict: Dict[str, Node] = {}  # WeakValueDictionary({})
+        # self.last_white_transposition_dict: Dict[
+        #     bytes, Node
+        # ] = {}  # WeakValueDictionary({})
+        # self.last_black_transposition_dict: Dict[
+        #     bytes, Node
+        # ] = {}  # WeakValueDictionary({})
 
-        self._reset_search_worker()
+        self._reset_search_worker(run_iteration)
 
         # MemoryManager().set_action(self.evaluator_class.DEFAULT_ACTION, self.evaluator_class.DEFAULT_ACTION)
 

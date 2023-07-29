@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-
 from functools import partial
 from queue import Empty, Full
 from typing import Callable, List, Optional
 
 from faster_fifo import Queue
-from larch.pickle.pickle import dumps, loads
 
 from arek_chess.common.queue.base_queue import BaseQueue
 from arek_chess.common.queue.items.base_item import BaseItem
+# from larch.pickle.pickle import dumps, loads
 
 
 class FasterFifoAdapter(BaseQueue):
@@ -16,17 +15,36 @@ class FasterFifoAdapter(BaseQueue):
     Queue provided by external FasterFifo library.
     """
 
-    def __init__(self, name: str, loader: Optional[Callable] = None, dumper: Optional[Callable] = None):
+    def __init__(
+        self,
+        name: str,
+        loader: Optional[Callable] = None,
+        dumper: Optional[Callable] = None,
+    ):
         """
-        Initialize a queue of a chosen queuing class.
+        Initialize a faster-fifo queue with given (de)serializers.
         """
 
         super().__init__(name)
         self.queue = Queue(
             max_size_bytes=1024 * 1024 * 100,
-            loads=loader or (lambda _bytes: loads(_bytes.tobytes())),
-            dumps=dumper or partial(dumps, protocol=5, with_refs=False),
+            loads=partial(self.memoryview_loader, loader),
+            dumps=dumper,
+            # loads=partial(self.memoryview_loader, loader)
+            # if loader
+            # else (lambda _bytes: loads(_bytes.tobytes())),
+            # dumps=dumper or partial(dumps, protocol=5, with_refs=False),
         )
+
+    @staticmethod
+    def memoryview_loader(loader: Callable, memview: memoryview) -> BaseItem:
+        item: BaseItem = loader(memview.tobytes())
+        memview.release()
+        return item
+
+    @staticmethod
+    def memoryview_dumper(dumper: Callable, memview: memoryview) -> Callable:
+        return dumper(memview.tobytes())
 
     def put(self, item: BaseItem) -> None:
         """"""
@@ -63,7 +81,9 @@ class FasterFifoAdapter(BaseQueue):
         except Empty:
             return []
 
-    def _get_many_blocking(self, max_messages_to_get: int, timeout: float) -> List[BaseItem]:
+    def _get_many_blocking(
+        self, max_messages_to_get: int, timeout: float
+    ) -> List[BaseItem]:
         """"""
 
         try:

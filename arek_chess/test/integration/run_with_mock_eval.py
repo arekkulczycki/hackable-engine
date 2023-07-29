@@ -1,8 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Module_docstring.
-"""
-
 from random import random
 from typing import Type
 from unittest import TestCase
@@ -110,7 +106,7 @@ class RunWithMockEval(TestCase):
 
     @staticmethod
     def search(mock_worker_class: Type[EvalWorker]):
-        controller = Controller(Print.LOGS, "1,3,", 17, in_thread=False)
+        controller = Controller(printing=Print.LOGS, tree_params="1,3,", search_limit=17, in_thread=False)
         with patch("arek_chess.controller.EvalWorker", mock_worker_class):
             controller.boot_up()
 

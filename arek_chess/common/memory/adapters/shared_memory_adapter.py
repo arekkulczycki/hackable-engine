@@ -1,22 +1,17 @@
 # -*- coding: utf-8 -*-
-
 import os
+import string
 import traceback
 from multiprocessing import resource_tracker
-from os import O_RDWR, O_EXCL, ftruncate, close, fstat, O_CREAT
-from typing import List, Tuple, Optional
+from os import O_CREAT, O_EXCL, O_RDWR, close, fstat, ftruncate
+from typing import List, Optional, Tuple
 
 import _posixshmem
 import mmap
 import numpy
-from chess import Move
-from larch.pickle.pickle import dumps, loads
 
-from arek_chess.board.board import Board
-from arek_chess.common.constants import ROOT_NODE_NAME
+from arek_chess.common.constants import ACTION, DISTRIBUTED, STATUS
 from arek_chess.common.memory.base_memory import BaseMemory
-
-import string
 
 PARAM_MEMORY_SIZE = 5  # TODO: this should be custom for each criteria/evaluator
 MAX_LENGTH = 253
@@ -40,7 +35,7 @@ def _convert(filename, from_chars, to_chars):
     if x == 0:
         res = to_chars[0]
     else:
-        res = ''
+        res = ""
         k = 0
         while x > 0:
             digit = x % len(to_chars)
@@ -230,7 +225,9 @@ class SharedMemoryAdapter(BaseMemory):
                     # print(f"File {path} not found")
                     pass
         try:
-            os.unlink(os.path.join("/dev/shm", "action"))
+            os.unlink(os.path.join("/dev/shm", ACTION))
+            os.unlink(os.path.join("/dev/shm", DISTRIBUTED))
+            os.unlink(os.path.join("/dev/shm", STATUS))
         except:
             pass
 

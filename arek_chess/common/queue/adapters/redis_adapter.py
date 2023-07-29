@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-from functools import partial
 from typing import List, Optional, Callable
 
-from larch.pickle.pickle import dumps, loads
+# from larch.pickle.pickle import dumps, loads
 from redis import Redis
 from redis.exceptions import ResponseError
 
@@ -26,8 +25,8 @@ class RedisAdapter(BaseQueue):
         self.broker = Redis("localhost", db=1)
         self.result_backend = Redis("localhost", db=2)
 
-        self.loads: Callable = loader or (lambda _bytes: loads(_bytes.tobytes()))
-        self.dumps: Callable = dumper or partial(dumps, protocol=5, with_refs=False)
+        self.loads: Callable = loader  # or (lambda _bytes: loads(_bytes))
+        self.dumps: Callable = dumper  # or partial(dumps, protocol=5, with_refs=False)
 
     def put(self, item: BaseItem) -> None:
         """"""

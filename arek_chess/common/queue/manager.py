@@ -2,6 +2,7 @@
 from typing import Callable, List, Optional
 
 from arek_chess.common.queue.adapters.faster_fifo_adapter import FasterFifoAdapter
+from arek_chess.common.queue.adapters.redis_adapter import RedisAdapter
 from arek_chess.common.queue.items.base_item import BaseItem
 
 
@@ -16,7 +17,7 @@ class QueueManager:
         """
 
         self.queue = FasterFifoAdapter(name, loader, dumper)
-        # self.queue = RedisQueue(name)
+        # self.queue = RedisAdapter(name, loader, dumper)
         # self.queue = RabbitmqQueue(name)
 
     @property

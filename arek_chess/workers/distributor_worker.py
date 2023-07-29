@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
 from os import getpid
-from typing import List, Optional, Tuple
+from typing import List
 
-from chess import Move, KNIGHT, BISHOP
+from chess import Move
 
 from arek_chess.board.board import Board
 from arek_chess.common.constants import (
+    DISTRIBUTED,
     FINISHED,
     ROOT_NODE_NAME,
+    RUN_ID,
     SLEEP,
-    DISTRIBUTED,
+    STARTED,
     STATUS,
-    CLOSED, STARTED,
+    WORKER,
 )
 from arek_chess.common.queue.items.control_item import ControlItem
 from arek_chess.common.queue.items.distributor_item import DistributorItem
@@ -45,9 +47,6 @@ class DistributorWorker(BaseWorker):
 
         self.board: Board = Board()
 
-        self.node_name_cache: Optional[str] = None
-        self.board_cache: Optional[Board] = None
-
     def setup(self):
         """"""
 
@@ -66,15 +65,18 @@ class DistributorWorker(BaseWorker):
         distribute_items = self.distribute_items
 
         self.memory_manager.set_int(str(getpid()), 1)
+
         while True:
             # throttle has to be larger than value for putting from search worker
             items: List[DistributorItem] = get_items(queue_throttle * 2)
             status: int = memory_manager.get_int(STATUS)
 
             if items and status == STARTED:
-                distribute_items(items)
+                run_id: str = memory_manager.get_str(RUN_ID)
+                distribute_items(items, run_id)
+
             elif status == FINISHED:
-                memory_manager.set_int(STATUS, CLOSED, new=False)
+                memory_manager.set_int(f"{WORKER}_0", 1, new=False)
                 memory_manager.set_int(DISTRIBUTED, 0, new=False)
                 self.distributed = 0
 
@@ -83,7 +85,7 @@ class DistributorWorker(BaseWorker):
 
         return self.distributor_queue.get_many(queue_throttle, SLEEP)
 
-    def distribute_items(self, items: List[DistributorItem]) -> None:
+    def distribute_items(self, items: List[DistributorItem], run_id: str) -> None:
         """
         Queue all legal moves for evaluation.
 
@@ -92,7 +94,10 @@ class DistributorWorker(BaseWorker):
 
         queue_items = []
 
-        for item in items:  # TODO: get_many_boards ?
+        for item in items:
+            if item.run_id != run_id:
+                continue
+
             eval_items = self._get_eval_items(item)
 
             if item.node_name == ROOT_NODE_NAME and len(eval_items) == 1:
@@ -108,16 +113,12 @@ class DistributorWorker(BaseWorker):
             self.distributed += len(queue_items)
             self.eval_queue.put_many(queue_items)
 
-        if items:
-            # self.control_queue.put(ControlItem(str(self.distributed)))
-            try:
-                self.memory_manager.set_int(DISTRIBUTED, self.distributed, new=False)
-            except ValueError as e:  # `Cannot mmap an empty file` randomly occurring sometimes
-                # doesn't matter, will set in next iteration - probably is because SearchWorker accesses concurrently
-                print(f"Setting distributed number error: {e}")
+            self.memory_manager.set_int(DISTRIBUTED, self.distributed, new=False)
 
     def _get_eval_items(self, item: DistributorItem) -> List[EvalItem]:
-        """"""
+        """
+        Get all legal moves, starting from the node given in `item`, to be evaluated.
+        """
 
         self.board.deserialize_position(item.board)
 
@@ -150,37 +151,15 @@ class DistributorWorker(BaseWorker):
         """"""
 
         captured = self.board.get_captured_piece_type(move)
-        state = self.board.light_push(move)
+        # state = self.board.light_push(move)
+        self.board.push(move)
         eval_item = EvalItem(
-            item.run_id, item.node_name, move.uci(), captured, self.board.serialize_position()
+            item.run_id,
+            item.node_name,
+            move.uci(),
+            captured,
+            self.board.serialize_position(),
         )
-        self.board.lighter_pop(state)
+        # self.board.lighter_pop(state)
+        self.board.pop()
         return eval_item
-
-    def create_node_board(
-        self, parent_node_name: str, node_name: str, node_move: str
-    ) -> Board:
-        """"""
-
-        if parent_node_name == self.node_name_cache:
-            board = self.board_cache
-            board.pop()
-        else:
-            board: Optional[Board] = self.memory_manager.get_node_board(
-                parent_node_name, self.board
-            )
-
-        if board is None:
-            raise ValueError(f"board not found for parent of: {node_name}")
-
-        self.node_name_cache = parent_node_name
-        self.board_cache = board
-
-        try:
-            board.push(Move.from_uci(node_move))
-        except AssertionError:
-            raise ValueError(f"illegal move played")
-        # print(f"setting {node_name}")
-        self.memory_manager.set_node_board(node_name, board)
-
-        return board
