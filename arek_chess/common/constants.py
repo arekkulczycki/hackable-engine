@@ -35,3 +35,14 @@ class Print(IntEnum):
     TREE: int = 2
     MOVE: int = 3
     LOGS: int = 4
+
+
+class QueueHandler(IntEnum):
+    """"""
+
+    FASTER_FIFO: int = 0
+    REDIS: int = 1
+    RABBITMQ: int = 2
+
+
+QUEUE_HANDLER = QueueHandler.FASTER_FIFO

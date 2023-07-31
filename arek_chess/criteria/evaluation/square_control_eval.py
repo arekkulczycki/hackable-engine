@@ -190,9 +190,6 @@ class SquareControlEval(BaseEval):
 
         return self.calculate_score(action, params)
 
-        # n = len(board.move_stack)
-        # return self.calculate_score(action[:-1], params, board.turn, n)
-
     @staticmethod
     def _get_empty_square_control(
         board: Board, square_control_diff: NDArray[Shape["64"], Int]
@@ -237,43 +234,3 @@ class SquareControlEval(BaseEval):
             black_king_proximity_map * square_control_diff, ONES_float32
         )
         return white_king_proximity_square_control, black_king_proximity_square_control
-
-    # own_occupied_square_control: float32 = (
-    #     matmul(white_king_proximity_map * square_control_diff, ONES_float32)
-    #     if board.turn  # board after the move
-    #     else matmul(black_king_proximity_map * square_control_diff, ONES_float32)
-    # )
-    # opp_occupied_square_control: float32 = (
-    #     matmul(white_king_proximity_map * square_control_diff, ONES_float32)
-    #     if not board.turn
-    #     else matmul(black_king_proximity_map * square_control_diff, ONES_float32)
-    # )
-    # return own_occupied_square_control, opp_occupied_square_control
-
-
-# def _get_king_proximity_square_control(
-#     board: Board,
-#     square_control_diff: NDArray[Shape["64"], Int],
-#     action: ActionType,
-# ) -> float32:
-#     """"""
-#
-#     white_king_proximity_map: NDArray[
-#         Shape["64"], Single
-#     ] = board.get_king_proximity_map_normalized(True)
-#     black_king_proximity_map: NDArray[
-#         Shape["64"], Single
-#     ] = board.get_king_proximity_map_normalized(False)
-#
-#     k: int = 1  # 4
-#     exponent: float32 = action[-1]
-#     return matmul(
-#         (
-#             (
-#                 white_king_proximity_map ** (1 + k * exponent)
-#                 - black_king_proximity_map ** (1 + k * exponent)
-#             )
-#             * square_control_diff
-#         ),
-#         ONES_float32,
-#     )

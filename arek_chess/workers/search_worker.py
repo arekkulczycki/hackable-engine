@@ -7,8 +7,22 @@ from typing import Dict, List, Optional, Tuple
 from numpy import abs, float32
 
 from arek_chess.board.board import Board
-from arek_chess.common.constants import (CLOSED, CPU_CORES, DEBUG, DISTRIBUTED, FINISHED, INF, LOG_INTERVAL, Print,
-                                         ROOT_NODE_NAME, RUN_ID, SLEEP, STARTED, STATUS, WORKER)
+from arek_chess.common.constants import (
+    CLOSED,
+    CPU_CORES,
+    DEBUG,
+    DISTRIBUTED,
+    FINISHED,
+    INF,
+    LOG_INTERVAL,
+    Print,
+    ROOT_NODE_NAME,
+    RUN_ID,
+    SLEEP,
+    STARTED,
+    STATUS,
+    WORKER,
+)
 from arek_chess.common.custom_threads import ReturningThread
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory.manager import MemoryManager
@@ -71,7 +85,9 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         self.root: Optional[Node] = None
         # self.nodes_dict: Dict[str, Node] = {}
         self.nodes_dict: Dict[str, Node] = {}  # WeakValueDictionary({})
-        self.transposition_dict: Optional[Dict[bytes, Node]] = None  # WeakValueDictionary({})
+        self.transposition_dict: Optional[
+            Dict[bytes, Node]
+        ] = None  # WeakValueDictionary({})
         self.memory_manager = MemoryManager()
 
         self._reset_counters()
@@ -163,7 +179,9 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         )
 
         self.nodes_dict = {ROOT_NODE_NAME: self.root}
-        self.transposition_dict = {serialized_board: self.root} if should_use_transposition else None
+        self.transposition_dict = (
+            {serialized_board: self.root} if should_use_transposition else None
+        )
 
         if should_use_transposition:
             print("****** TRANSPOSITIONS ON ********")
@@ -456,9 +474,9 @@ class SearchWorker(ReturningThread, ProfilerMixin):
     ) -> None:
         """"""
 
-        nodes_to_distribute: List[Node] = self.traverser.create_nodes_and_autodistribute(
-            candidates
-        )
+        nodes_to_distribute: List[
+            Node
+        ] = self.traverser.create_nodes_and_autodistribute(candidates)
 
         if nodes_to_distribute:
             if self.finished and self.root.children:
@@ -481,12 +499,6 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         top_nodes = self.traverser.get_nodes_to_look_at(iterations)
         if not top_nodes:
-            # if self.distributed > 1 and self.selected == 0:
-            #     print(f"no damn nodes: {len(self.root.children)}")
-            #     for child in self.root.children:
-            #         print(
-            #             child.move, child.leaf_level, child.score, child.being_processed
-            #         )
             return
 
         self.queue_for_distribution(distributor_queue, top_nodes, recaptures=False)

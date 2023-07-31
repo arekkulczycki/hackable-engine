@@ -94,8 +94,6 @@ class EvalWorker(BaseWorker):
 
         self.setup()
 
-        # import memray
-        # with memray.Tracker(f"eval_{self.pid}.bin"):
         eval_queue = self.eval_queue
         selector_queue = self.selector_queue
         queue_throttle = self.queue_throttle
@@ -124,15 +122,11 @@ class EvalWorker(BaseWorker):
 
                 if items_to_eval:
                     run_id: str = memory_manager.get_str(RUN_ID)
-                    selector_queue.put_many(
-                        eval_items(items_to_eval, run_id, action)
-                    )
+                    selector_queue.put_many(eval_items(items_to_eval, run_id, action))
 
             elif status == FINISHED:
                 action_set = False
-                memory_manager.set_int(
-                    f"{WORKER}_{self.worker_number}", 1, new=False
-                )
+                memory_manager.set_int(f"{WORKER}_{self.worker_number}", 1, new=False)
 
     def _set_loop_timeout(self) -> None:
         signal.setitimer(
@@ -165,6 +159,7 @@ class EvalWorker(BaseWorker):
         else:
             result = self.evaluate(self.board, is_check, action)
 
+        # print("eval: ", id(item.board))
         return SelectorItem(
             item.run_id,
             item.node_name,

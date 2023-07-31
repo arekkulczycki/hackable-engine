@@ -12,6 +12,8 @@ from arek_chess.common.queue.items.base_item import BaseItem
 class RedisAdapter(BaseQueue):
     """
     Queue provided by external Redis service.
+
+    Reliable for long-running processes when cannot afford memory leaks.
     """
 
     def __init__(
@@ -36,8 +38,6 @@ class RedisAdapter(BaseQueue):
     def put_many(self, items: List[BaseItem]) -> None:
         """"""
 
-        # for item in items:
-        #     self.put(item)
         if not items:
             return
 

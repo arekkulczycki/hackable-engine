@@ -13,6 +13,8 @@ from arek_chess.common.queue.items.base_item import BaseItem
 class FasterFifoAdapter(BaseQueue):
     """
     Queue provided by external FasterFifo library.
+
+    Is the fastest queue implementation, but leaks memory which becomes significant with heavy items being passed.
     """
 
     def __init__(
@@ -39,7 +41,6 @@ class FasterFifoAdapter(BaseQueue):
     @staticmethod
     def memoryview_loader(loader: Callable, memview: memoryview) -> BaseItem:
         item: BaseItem = loader(memview.tobytes())
-        memview.release()
         return item
 
     @staticmethod
