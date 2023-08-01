@@ -3,12 +3,12 @@ import os
 import string
 import traceback
 from multiprocessing import resource_tracker
+from multiprocessing.shared_memory import SharedMemory
 from os import O_CREAT, O_EXCL, O_RDWR, close, fstat, ftruncate
 from typing import List, Optional, Tuple
 
 import _posixshmem
 import mmap
-import numpy
 
 from arek_chess.common.constants import ACTION, DISTRIBUTED, STATUS
 from arek_chess.common.memory.base_memory import BaseMemory
@@ -67,6 +67,7 @@ class SharedMemoryAdapter(BaseMemory):
         key = self.parse_key(key)
 
         try:
+            # shm = SharedMemory(name=key)
             shm = DangerousSharedMemory(name=key)
             return shm.buf.tobytes()
         except:
@@ -87,11 +88,12 @@ class SharedMemoryAdapter(BaseMemory):
         if size == 0:
             raise ValueError(f"Empty value given for: {key}")
         try:
-            shm = DangerousSharedMemory(
+            # shm = DangerousSharedMemory(
+            shm = SharedMemory(
                 name=key,
                 create=new,
                 size=size,
-                write=True,
+                # write=True,
             )
             shm.buf[:] = value
         except FileExistsError:
@@ -103,11 +105,12 @@ class SharedMemoryAdapter(BaseMemory):
         except Exception as e:
             print(f"Error! Cannot set: {key}. {e}")
             try:
-                shm = DangerousSharedMemory(
+                # shm = DangerousSharedMemory(
+                shm = SharedMemory(
                     name=key,
                     create=new,
                     size=size,
-                    write=True,
+                    # write=True,
                 )
                 shm.buf[:] = value
                 print("second time worked...")
@@ -121,7 +124,8 @@ class SharedMemoryAdapter(BaseMemory):
 
     def remove(self, key: str) -> None:
         try:
-            shm = DangerousSharedMemory(name=key, create=False, write=True)
+            # shm = DangerousSharedMemory(name=key, create=False, write=True)
+            shm = SharedMemory(name=key, create=False)
         except FileNotFoundError:
             pass
         else:
@@ -130,76 +134,6 @@ class SharedMemoryAdapter(BaseMemory):
 
     def get_action(self):
         return self.get("action")
-
-    @classmethod
-    def get_node_params(cls, node_name: str) -> List[float]:
-        return cls.get_node_memory(f"{node_name}.params")
-
-    @staticmethod
-    def set_node_params(node_name: str, *args: float) -> None:
-        size = numpy.dtype(numpy.float16).itemsize * PARAM_MEMORY_SIZE
-        try:
-            shm = DangerousSharedMemory(
-                name=f"{node_name}.params", create=True, size=size
-            )
-        except FileExistsError:
-            # FIXME: raises a lot of times
-            # print(f"params not erased... {node_name}")
-            shm = DangerousSharedMemory(
-                name=f"{node_name}.params", create=False, size=size
-            )
-            shm.close()
-            shm.unlink()
-
-            shm = DangerousSharedMemory(
-                name=f"{node_name}.params", create=True, size=size
-            )
-        data = numpy.ndarray(
-            shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
-        )
-        data[:] = (*args,)
-
-    @staticmethod
-    def remove_node_memory(node_name: str) -> None:
-        shm_board = DangerousSharedMemory(name=f"{node_name}.board", create=False)
-        shm_params = DangerousSharedMemory(name=f"{node_name}.params", create=False)
-
-        for shm in (shm_board, shm_params):
-            shm.close()
-            shm.unlink()
-
-    @staticmethod
-    def remove_node_params_memory(node_name: str) -> None:
-        try:
-            shm = DangerousSharedMemory(name=f"{node_name}.params", create=False)
-        except FileNotFoundError:
-            pass
-            # print(traceback.format_exc())
-        else:
-            shm.close()
-            shm.unlink()
-
-    @staticmethod
-    def remove_node_board_memory(node_name: str) -> None:
-        try:
-            shm = DangerousSharedMemory(name=f"{node_name}.board", create=False)
-        except FileNotFoundError:
-            raise
-        else:
-            shm.close()
-            shm.unlink()
-
-    @staticmethod
-    def get_node_memory(node_name: str) -> List[float]:
-        try:
-            shm = DangerousSharedMemory(name=node_name)
-        except FileNotFoundError:  # TODO: any else errors?
-            print(traceback.format_exc())
-            raise
-
-        return numpy.ndarray(
-            shape=(PARAM_MEMORY_SIZE,), dtype=numpy.float16, buffer=shm.buf
-        ).tolist()
 
     def clean(self, except_prefix: str = "", silent: bool = False) -> None:
         """"""

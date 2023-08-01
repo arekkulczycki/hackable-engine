@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import signal
 import typing
+from multiprocessing import Lock
 from typing import List, Optional, Tuple
 
 from numpy import float32
@@ -10,7 +11,6 @@ from numpy import float32
 from arek_chess.board.board import Board
 from arek_chess.common.constants import (
     DRAW,
-    FINISHED,
     INF,
     LOG_INTERVAL,
     RUN_ID,
@@ -38,6 +38,8 @@ class EvalWorker(BaseWorker):
 
     def __init__(
         self,
+        status_lock: Lock,
+        action_lock: Lock,
         eval_queue: QueueManager,
         selector_queue: QueueManager,
         queue_throttle: int,
@@ -49,6 +51,9 @@ class EvalWorker(BaseWorker):
         model_version: Optional[str] = None,
     ) -> None:
         super().__init__()
+
+        self.status_lock = status_lock
+        self.action_lock = action_lock
 
         self.eval_queue: QueueManager = eval_queue
         self.selector_queue: QueueManager = selector_queue
@@ -109,11 +114,14 @@ class EvalWorker(BaseWorker):
         while True:
             self._set_loop_timeout()
 
-            status: int = memory_manager.get_int(STATUS)
+            with self.status_lock:
+                status: int = memory_manager.get_int(STATUS)
+
             if status == STARTED:
                 if self.is_training_run and not action_set:
                     # in training the action will be constant across the entire search, contrary to play analysis
-                    action = self.get_memory_action(self.evaluator.ACTION_SIZE)
+                    with self.action_lock:
+                        action = self.get_memory_action(self.evaluator.ACTION_SIZE)
                     action_set = True
 
                 items_to_eval: List[EvalItem] = eval_queue.get_many(
@@ -124,7 +132,7 @@ class EvalWorker(BaseWorker):
                     run_id: str = memory_manager.get_str(RUN_ID)
                     selector_queue.put_many(eval_items(items_to_eval, run_id, action))
 
-            elif status == FINISHED:
+            else:
                 action_set = False
                 memory_manager.set_int(f"{WORKER}_{self.worker_number}", 1, new=False)
 

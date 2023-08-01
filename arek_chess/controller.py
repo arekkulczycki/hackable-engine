@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-from multiprocessing import set_start_method
+from multiprocessing import Lock, Manager, RLock, Semaphore
 from time import sleep
 from typing import Dict, List, Optional, Tuple, Union
 
 from chess import Move, Termination
 
 from arek_chess.board.board import Board
-from arek_chess.common.constants import CPU_CORES, Print
+from arek_chess.common.constants import CPU_CORES, FINISHED, Print, STATUS
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.common.queue.items.control_item import ControlItem
@@ -65,7 +65,10 @@ class Controller:
         )
 
         self.create_queues()
+        self.status_lock = Lock()
+        self.action_lock = Lock()
         self.search_worker = SearchWorker(
+            self.status_lock,
             self.distributor_queue,
             self.selector_queue,
             self.control_queue,
@@ -119,14 +122,21 @@ class Controller:
     def start_child_processes(self) -> None:
         """"""
 
+        print("starting processes")
+
         num_eval_workers = max(
             1, CPU_CORES - 2
         )  # one process required for the tree search and one for the distributor worker
 
         from arek_chess.training.envs.square_control_env import SquareControlEnv
 
+        # with Manager() as manager:
+        #     self.semaphore = manager.Semaphore(num_eval_workers)
+
         for i in range(num_eval_workers):
             evaluator = EvalWorker(
+                self.status_lock,
+                self.action_lock,
                 self.eval_queue,
                 self.selector_queue,
                 (self.queue_throttle // num_eval_workers),
@@ -150,6 +160,8 @@ class Controller:
             process.start()
 
         self._wait_child_processes_ready()
+
+        print("all processes started")
 
     def _wait_child_processes_ready(self) -> None:
         """"""
@@ -353,7 +365,8 @@ class Controller:
         self._setup_search_worker(reuse=True)
 
         if memory_action is not None:
-            self.memory_manager.set_action(memory_action, len(memory_action))
+            with self.action_lock:
+                self.memory_manager.set_action(memory_action, len(memory_action))
 
         fails = 0
         while True:

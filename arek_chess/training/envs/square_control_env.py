@@ -131,7 +131,7 @@ class SquareControlEnv(gym.Env):
         result = self.get_result()  # self.controller.board.result()
         if result == "*":
             # playing against a configured action
-            self._run_action(DEFAULT_ACTION)
+            self._run_action(WEAK_ACTION)
 
             result = self.get_result()  # self.controller.board.result()
 

@@ -6,6 +6,7 @@ from typing import List, Optional
 from numpy import float32, ndarray
 
 from arek_chess.board.board import Board
+# from arek_chess.common.memory.adapters.redis_adapter import RedisAdapter
 from arek_chess.common.memory.adapters.shared_memory_adapter import SharedMemoryAdapter
 from arek_chess.common.memory.base_memory import BaseMemory
 from arek_chess.common.queue.items.base_item import BaseItem

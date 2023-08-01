@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 from asyncio import sleep as asyncio_sleep
+from multiprocessing import Lock
 from time import sleep, time
 from typing import Dict, List, Optional, Tuple
 
@@ -64,6 +65,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
     def __init__(
         self,
+        status_lock: Lock,
         distributor_queue: QM,
         selector_queue: QM,
         control_queue: QM,
@@ -89,6 +91,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
             Dict[bytes, Node]
         ] = None  # WeakValueDictionary({})
         self.memory_manager = MemoryManager()
+        self.status_lock: Lock = status_lock
 
         self._reset_counters()
 
@@ -98,6 +101,9 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         self.should_profile: bool = False
 
         self.debug = False
+
+        with self.status_lock:
+            self.memory_manager.set_int(STATUS, CLOSED)
 
     def _reset_counters(self) -> None:
         """"""
@@ -109,9 +115,10 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         self.finished = False
 
-        self.memory_manager.set_int(STATUS, CLOSED)
-        self.memory_manager.set_int(DEBUG, 0)
-        self.memory_manager.set_int(DISTRIBUTED, 0)
+        with self.status_lock:
+            self.memory_manager.set_int(STATUS, CLOSED)
+            self.memory_manager.set_int(DEBUG, 0)
+            self.memory_manager.set_int(DISTRIBUTED, 0)
 
         for i in range(CPU_CORES - 1):
             self.memory_manager.set_int(f"{WORKER}_{i}", 0)
@@ -205,7 +212,9 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         """"""
 
         # must set status started before putting the element on queue or else will be discarded
-        self.memory_manager.set_int(STATUS, STARTED)
+        with self.status_lock:
+            self.memory_manager.set_int(STATUS, STARTED)
+
         if not self.root.children or self.root.only_captures:
             self.distributor_queue.put(
                 DistributorItem(
