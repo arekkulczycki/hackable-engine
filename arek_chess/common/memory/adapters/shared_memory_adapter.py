@@ -67,8 +67,8 @@ class SharedMemoryAdapter(BaseMemory):
         key = self.parse_key(key)
 
         try:
-            # shm = SharedMemory(name=key)
             shm = DangerousSharedMemory(name=key)
+            # shm = SharedMemory(name=key)
             return shm.buf.tobytes()
         except:
             if default is not None:
@@ -88,12 +88,12 @@ class SharedMemoryAdapter(BaseMemory):
         if size == 0:
             raise ValueError(f"Empty value given for: {key}")
         try:
-            # shm = DangerousSharedMemory(
-            shm = SharedMemory(
+            shm = DangerousSharedMemory(
+            # shm = SharedMemory(
                 name=key,
                 create=new,
                 size=size,
-                # write=True,
+                write=True,
             )
             shm.buf[:] = value
         except FileExistsError:
@@ -105,12 +105,12 @@ class SharedMemoryAdapter(BaseMemory):
         except Exception as e:
             print(f"Error! Cannot set: {key}. {e}")
             try:
-                # shm = DangerousSharedMemory(
-                shm = SharedMemory(
+                shm = DangerousSharedMemory(
+                # shm = SharedMemory(
                     name=key,
                     create=new,
                     size=size,
-                    # write=True,
+                    write=True,
                 )
                 shm.buf[:] = value
                 print("second time worked...")
@@ -124,8 +124,8 @@ class SharedMemoryAdapter(BaseMemory):
 
     def remove(self, key: str) -> None:
         try:
-            # shm = DangerousSharedMemory(name=key, create=False, write=True)
-            shm = SharedMemory(name=key, create=False)
+            shm = DangerousSharedMemory(name=key, create=False, write=True)
+            # shm = SharedMemory(name=key, create=False)
         except FileNotFoundError:
             pass
         else:
