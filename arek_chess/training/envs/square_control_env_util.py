@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-from typing import List
+from typing import List, Tuple
 
+from nptyping import Int, NDArray, Shape
 from numpy import (
     float32,
     matmul,
@@ -12,12 +13,14 @@ from arek_chess.board.chess.chess_board import ChessBoard
 ONES_float32 = ones((64,), dtype=float32)
 HALFS_float32 = ones((64,), dtype=float32) / 2
 ONES_INT = ones((64,), dtype=float32)
+_25 = float32(25)
+_50 = float32(50)
 
 
 def _get_king_proximity_square_control(
-    board,
-    square_control_diff,
-):
+    board: ChessBoard,
+    square_control_diff: NDArray[Shape["64"], Int],
+) -> Tuple[float32, float32]:
     """"""
 
     white_king_proximity_map = board.get_king_proximity_map_normalized(True)
@@ -39,6 +42,8 @@ def _get_king_proximity_square_control(
 def _board_to_obs(board: ChessBoard) -> List[float32]:
     own_king_mobility = float32(board.get_king_mobility(board.turn) / 8.0)
     opp_king_mobility = float32(board.get_king_mobility(not board.turn) / 8.0)
+
+    square_control_diff: NDArray[Shape["64"], Int]
     square_control_diff, _ = board.get_square_control_map_for_both()
     (
         own_king_proximity_control,
@@ -62,8 +67,8 @@ def _board_to_obs(board: ChessBoard) -> List[float32]:
     return [
         own_king_mobility,
         opp_king_mobility,
-        (own_king_proximity_control + 25) / 50.0,
-        (opp_king_proximity_control + 25) / 50.0,
+        (own_king_proximity_control + _25) / _50,
+        (opp_king_proximity_control + _25) / _50,
         material,
         own_pawns,
         opp_pawns,

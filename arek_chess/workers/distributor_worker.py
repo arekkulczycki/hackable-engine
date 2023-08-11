@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from multiprocessing import Lock
 from os import getpid
 from typing import List, Type
 
@@ -29,6 +30,7 @@ class DistributorWorker(BaseWorker):
 
     def __init__(
         self,
+        status_lock: Lock,
         distributor_queue: QM,
         eval_queue: QM,
         selector_queue: QM,
@@ -39,6 +41,8 @@ class DistributorWorker(BaseWorker):
         """"""
 
         super().__init__()
+
+        self.status_lock = status_lock
 
         self.distributor_queue = distributor_queue
         self.eval_queue = eval_queue
@@ -70,7 +74,8 @@ class DistributorWorker(BaseWorker):
         while True:
             # throttle has to be larger than value for putting from search worker
             items: List[DistributorItem] = get_items(queue_throttle * 2)
-            status: int = memory_manager.get_int(STATUS)
+            with self.status_lock:
+                status: int = memory_manager.get_int(STATUS)
 
             if items and status == STARTED:
                 run_id: str = memory_manager.get_str(RUN_ID)

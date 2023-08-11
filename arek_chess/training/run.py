@@ -108,6 +108,7 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
     env: DummyVecEnv = get_env(env_name, version)
 
     for _ in range(loops):
+        print("setting up model...")
         t0 = perf_counter()
         if version >= 0:
             # custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
@@ -126,7 +127,6 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
                 device=device,
             )
         else:
-            print("setting up model...")
             model = PPO(
                 "MlpPolicy",
                 env=env,
@@ -146,6 +146,9 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
         try:
             model.learn(total_timesteps=TOTAL_TIMESTEPS)  # progress_bar=True
         except:
+            print("learning crashed")
+            import traceback
+            traceback.print_exc()
             # start over with new env
             env.envs[0].controller.tear_down()
             env = get_env(env_name, version)
@@ -153,6 +156,10 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
             # on success increment the version and keep learning
             version += 1
             model.save(f"./{env_name}.v{version}")
+
+            # shouldn't be necessary but seems to be
+            env.envs[0].controller.tear_down()
+            env = get_env(env_name, version)
         finally:
             print(f"training finished in: {perf_counter() - t0}")
 

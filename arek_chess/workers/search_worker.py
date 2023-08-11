@@ -323,7 +323,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 else 0
             )
 
-            if self.evaluated == self.last_evaluated and self.distributed > self.evaluated:
+            if self.evaluated == self.last_evaluated:  # and self.distributed > self.evaluated:
                 # TODO: use signal for this?
                 if not self.finished or progress < 95:
                     print(
@@ -331,7 +331,8 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                     )
                     print(PrunedTreeRenderer(self.root, depth=1, maxlevel=3))
                     self.memory_manager.set_int(DEBUG, 1)
-                    self.memory_manager.set_int(STATUS, FINISHED, new=False)
+                    with self.status_lock:
+                        self.memory_manager.set_int(STATUS, FINISHED, new=False)
                     raise SearchFailed("nodes not delivered on queues")
                 else:
                     # TODO: should be gone when queues handling is fixed and all items are consumed the right time
@@ -373,7 +374,8 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         Send msg to distributor so that it resets counters.
         """
 
-        self.memory_manager.set_int(STATUS, FINISHED, new=False)
+        with self.status_lock:
+            self.memory_manager.set_int(STATUS, FINISHED, new=False)
         # self.distributor_queue.put(DistributorItem("finished", "", float32(0), 0))
 
     def _run_validation_loop(self, distributor_queue: QM) -> None:

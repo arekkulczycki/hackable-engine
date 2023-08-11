@@ -115,7 +115,7 @@ class SquareControlEval(BaseEval[ChessBoard]):
 
         # how many attacks on each of 64 squares, number of white minus number of black attacks
         square_control_diff: NDArray[Shape["64"], Int]
-        square_control_diff_mod_turn: NDArray[Shape["64"], Single]
+        square_control_diff_mod_turn: NDArray[Shape["64"], Int]
         (
             square_control_diff,
             square_control_diff_mod_turn,

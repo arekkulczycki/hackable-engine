@@ -8,6 +8,7 @@ from numpy import float32, matmul, ones
 
 from arek_chess.controller import Controller
 from arek_chess.criteria.evaluation.base_eval import ActionType
+from arek_chess.training.envs.square_control_env_util import _board_to_obs
 
 if TYPE_CHECKING:
     from arek_chess.board.chess.chess_board import ChessBoard

@@ -155,6 +155,7 @@ class Controller:
             self.child_processes.append(evaluator)
 
         distributor = DistributorWorker(
+            self.status_lock,
             self.distributor_queue,
             self.eval_queue,
             self.selector_queue,
