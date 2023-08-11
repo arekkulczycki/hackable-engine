@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
 import sys
 from multiprocessing import Process
-from typing import Tuple, Dict, Optional
 
-from chess import Move
-
-from arek_chess.board.board import Board, SQUARE_NAMES, PIECE_SYMBOLS
 from arek_chess.common.memory.adapters.shared_memory_adapter import remove_shm_from_resource_tracker
 from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.common.profiler_mixin import ProfilerMixin
@@ -16,10 +12,6 @@ class BaseWorker(Process, ProfilerMixin):
     """
     Base for the worker process.
     """
-
-    recycled_move: Move = Move.from_uci("a2a3")
-    prev_board: Optional[Board]
-    prev_state: Optional[Dict]
 
     def run(self) -> None:
         """"""
@@ -36,30 +28,6 @@ class BaseWorker(Process, ProfilerMixin):
         """"""
 
         raise NotImplementedError
-
-    def get_move(self, move_str: str) -> Move:
-        """"""
-
-        recycled_move = self.recycled_move
-
-        recycled_move.from_square = SQUARE_NAMES.index(move_str[0:2])
-        recycled_move.to_square = SQUARE_NAMES.index(move_str[2:4])
-        recycled_move.promotion = PIECE_SYMBOLS.index(move_str[4]) if len(move_str) == 5 else None
-
-        return recycled_move
-
-    def get_board_data(self, board: Board, move_str: str) -> Tuple[Board, int]:
-        """"""
-
-        move = self.get_move(move_str)
-
-        captured_piece_type = board.get_captured_piece_type(move)
-        # moved_piece_type = board.get_moving_piece_type(move)
-
-        # board.light_push(move, state_required=True)
-        self.prev_state = board.lighter_push(move)
-
-        return board, captured_piece_type
 
     def get_memory_action(self, size: int) -> ActionType:
         """"""

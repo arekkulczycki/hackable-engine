@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
-from multiprocessing import Lock, Manager, RLock, Semaphore
+from multiprocessing import Lock
 from time import sleep
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Type, Union
 
-from chess import Move, Termination
-
-from arek_chess.board.board import Board
-from arek_chess.common.constants import CPU_CORES, FINISHED, Print, STATUS
+from arek_chess.board import GameBoardBase
+from arek_chess.board.chess.chess_board import ChessBoard
+from arek_chess.common.constants import CPU_CORES, Print
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.common.queue.items.control_item import ControlItem
@@ -26,17 +25,19 @@ class Controller:
     Controls engine setup and its communication to outside world.
     """
 
+    board_class: Type[GameBoardBase]
+    board: GameBoardBase
+
     distributor_queue: QueueManager
     eval_queue: QueueManager
     selector_queue: QueueManager
     control_queue: QueueManager
-    board: Board
     search_worker: SearchWorker
 
     def __init__(
         self,
         *,
-        fen: Optional[str] = None,
+        position: Optional[str] = None,
         printing: Union[Print, int] = Print.LOGS,
         tree_params: str = "",
         search_limit: Optional[int] = None,
@@ -49,7 +50,8 @@ class Controller:
 
         # set_start_method("forkserver")
 
-        self._set_board(fen)
+        self.board_class = ChessBoard
+        self._setup_board(position)
 
         self.printing = printing
         self.tree_params = tree_params
@@ -78,7 +80,7 @@ class Controller:
             self.search_limit,
         )
 
-        self.initial_fen: Optional[str] = None
+        self.initial_position: Optional[str] = None
         self.child_processes: List = []
 
         self.model_version = model_version
@@ -102,22 +104,26 @@ class Controller:
 
         self.start_child_processes()
 
-    def reset_board(self, fen: Optional[str] = None) -> None:
+    def reset_board(self, position: Optional[str] = None) -> None:
         """"""
 
-        self._set_board(fen)
+        self._setup_board(position)
 
         self.reset()
 
-    def _set_board(self, fen: Optional[str] = None) -> None:
-        """"""
+    def _setup_board(self, position: Optional[str] = None) -> None:
+        """
+        Initialize the board with an optionally preset position.
 
-        if fen:
-            self.initial_fen = fen
-            self.board = Board(fen)
+        :param position: string representation, for instance fen for chess
+        """
+
+        if position:
+            self.initial_position = position
+            self.board = self.board_class(position)
         else:
-            self.board = Board()
-            self.initial_fen = self.board.fen()
+            self.board = self.board_class()
+            self.initial_position = self.board.position()
 
     def start_child_processes(self) -> None:
         """"""
@@ -141,6 +147,7 @@ class Controller:
                 self.selector_queue,
                 (self.queue_throttle // num_eval_workers),
                 i + 1,
+                self.board_class,
                 is_training_run=self.is_training_run,
                 env=self.model_version and SquareControlEnv(controller=self),
                 model_version=self.model_version,
@@ -152,6 +159,7 @@ class Controller:
             self.eval_queue,
             self.selector_queue,
             self.control_queue,
+            self.board_class,
             self.queue_throttle,
         )
         self.child_processes.append(distributor)
@@ -357,10 +365,10 @@ class Controller:
     def make_move(self, memory_action: Optional[ActionType] = None) -> None:
         """"""
 
-        if self.board.is_checkmate():
-            print("asked for a move in checkmate position")
-            print(self.get_pgn())
-            raise ValueError("asked for a move in checkmate position")
+        if self.board.is_game_over():
+            msg = "asked for a move in a game over position"
+            print(msg)
+            raise ValueError(msg)
 
         self._setup_search_worker(reuse=True)
 
@@ -388,12 +396,11 @@ class Controller:
                 self.reset(fails)
 
             try:
-                move = self._search()
+                move_uci = self._search()
                 # self.timeout = self.original_timeout
                 break
             except SearchFailed as e:
                 print(e)
-                print(self.get_pgn())
                 fails += 1
             except TimeoutError as e:
                 fails += 1
@@ -401,7 +408,7 @@ class Controller:
                 sleep(fails)
 
         try:
-            self.board.push(Move.from_uci(move))
+            self.board.push_uci(move_uci)
         except AssertionError:
             # move illegal ???
             print("found illegal move, restarting...")
@@ -431,33 +438,33 @@ class Controller:
     def play(self) -> None:
         """"""
 
-        while not self.board.is_game_over() and self.board.outcome() is None:
+        while not self.board.is_game_over():
             self.make_move()
-            print(self.board.fen())
-            sleep(0.05)
+            print(self.board.position())
 
         self.tear_down()
 
-        outcome = self.board.outcome()
+        # termination = ""  # chess termination reason
+        # outcome = self.board.outcome()
+        # for key, value in Termination.__dict__.items():
+        #     if value == outcome.termination:
+        #         termination = key
 
-        termination = ""
-        for key, value in Termination.__dict__.items():
-            if value == outcome.termination:
-                termination = key
+        winner = self.board.winner()
+        result = "draw" if winner is None else "white won" if winner else "black won"
+        print(f"game over, result: {result}")
 
-        print(f"game over, result: {self.board.result()}, {termination}")
-
-    def get_pgn(self) -> str:
-        """"""
-
-        try:
-            pgn = Board(self.initial_fen).variation_san(self.board.move_stack)
-        except ValueError:
-            print("ValueError getting pgn for")
-            print(self.board.fen())
-            return ".".join([move.uci() for move in self.board.move_stack])
-
-        return f'[FEN "{self.initial_fen}"]\n\n{pgn}'
+    # def get_pgn(self) -> str:
+    #     """"""
+    #
+    #     try:
+    #         pgn = Board(self.initial_position).variation_san(self.board.move_stack)
+    #     except ValueError:
+    #         print("ValueError getting pgn for")
+    #         print(self.board.position())
+    #         return ".".join([move.uci() for move in self.board.move_stack])
+    #
+    #     return f'[FEN "{self.initial_position}"]\n\n{pgn}'
 
     def reset(self, run_iteration: int = 0) -> None:
         """"""

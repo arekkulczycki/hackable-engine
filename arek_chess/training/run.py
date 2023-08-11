@@ -29,11 +29,11 @@ register(
 LOG_PATH = "./arek_chess/training/logs/"
 
 TOTAL_TIMESTEPS = int(2**13)  # keeps failing before finish on 2**14
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1e-3
 N_EPOCHS = 10
 N_STEPS = 512
 BATCH_SIZE = 128  # recommended to be a factor of (N_STEPS * N_ENVS)
-CLIP_RANGE = 0.2
+CLIP_RANGE = 0.3
 
 SEARCH_LIMIT = 9
 

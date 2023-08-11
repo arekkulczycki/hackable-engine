@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-.
 from __future__ import annotations
 
-from arek_chess.board.mixins.board_serializer_mixin import BOARD_BYTES_NUMBER
+from arek_chess.board.chess.mixins.chess_board_serializer_mixin import (
+    BOARD_BYTES_NUMBER,
+)
 from arek_chess.common.queue.items.base_item import BaseItem
 
 
@@ -19,12 +21,12 @@ class EvalItem(BaseItem):
     # board: bytes
 
     def __init__(
-        self, run_id: str, node_name: str, move_str: str, captured: int, board: bytes
+        self, run_id: str, node_name: str, move_str: str, is_forcing: int, board: bytes
     ) -> None:
         self.run_id: str = run_id
         self.node_name: str = node_name
         self.move_str: str = move_str
-        self.captured: int = captured
+        self.is_forcing: int = is_forcing
         self.board: bytes = board
 
     @staticmethod
@@ -48,6 +50,6 @@ class EvalItem(BaseItem):
         """"""
 
         return (
-            f"{obj.run_id};{obj.node_name};{obj.move_str};{obj.captured}".encode()
+            f"{obj.run_id};{obj.node_name};{obj.move_str};{obj.is_forcing}".encode()
             + obj.board
         )

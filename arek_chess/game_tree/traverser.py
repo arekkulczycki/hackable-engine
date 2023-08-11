@@ -68,7 +68,7 @@ class Traverser:
         k = 0
         while True:
             children = best_node.children
-            if not children or best_node.only_captures:
+            if not children or best_node.only_forcing:
                 if best_node is self.root:
                     # haven't received child nodes evaluations yet
                     return None
@@ -141,7 +141,7 @@ class Traverser:
             if parent.level < 1:
                 should_search = True
             else:
-                should_search = candidate.captured > 0 and (
+                should_search = candidate.is_forcing > 0 and (
                     (self.root.color and bool(candidate.score > self.root.score))
                     or (not self.root.color and bool(self.root.score > candidate.score))
                 )
@@ -160,7 +160,7 @@ class Traverser:
                     parent,
                     candidate.move_str,
                     candidate.score,
-                    candidate.captured,
+                    candidate.is_forcing,
                     not parent.color,
                     bool(should_search),
                     candidate.board,
@@ -172,29 +172,12 @@ class Traverser:
 
         return nodes_to_distribute
 
-    def _is_good_recapture(self, parent: Node, captured: int, score: float32) -> bool:
-        """"""
-
-        if (
-            captured > parent.captured
-            and not (
-                captured == BISHOP and parent.captured == KNIGHT  # not bishop vs knight
-            )
-            and (
-                (score > self.root.score and self.root.color)
-                or (score < self.root.score and not self.root.color)
-            )
-        ):
-            return True
-
-        return False
-
     def create_node(
         self,
         parent: Node,
         move: str,
         score: float32,
-        captured: int,
+        is_forcing: int,
         color: bool,
         should_search: bool,
         board: bytes,
@@ -205,10 +188,10 @@ class Traverser:
             parent=parent,
             move=move,
             score=score,
-            captured=captured,
+            is_forcing=is_forcing,
             color=color,
             being_processed=should_search,
-            only_captures=should_search and bool(captured),
+            only_forcing=should_search and bool(is_forcing),
             board=board,
         )
 

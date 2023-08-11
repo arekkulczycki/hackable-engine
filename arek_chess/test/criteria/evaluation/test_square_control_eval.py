@@ -5,8 +5,8 @@ from unittest import TestCase
 
 from parameterized import parameterized
 
-from arek_chess.board.board import Board
-from arek_chess.criteria.evaluation.square_control_eval import SquareControlEval
+from arek_chess.board.chess.chess_board import ChessBoard as Board
+from arek_chess.criteria.evaluation.chess.square_control_eval import SquareControlEval
 
 
 class TestSquareControlEval(TestCase):

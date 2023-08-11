@@ -88,7 +88,7 @@ if __name__ == "__main__":
 
     validate_tree_params(args.tree_params)
     controller = Controller(
-        fen=args.fen,
+        position=args.fen,
         printing=args.printing,
         tree_params=args.tree_params,
         search_limit=args.search_limit,
@@ -123,8 +123,8 @@ if __name__ == "__main__":
                 controller.make_move()
             elif key == "play":
                 controller.play()
-            elif key == "pgn":
-                print(controller.get_pgn())
+            # elif key == "pgn":
+            #     print(controller.get_pgn())
             try:
                 n = int(key)
                 for i in range(n):

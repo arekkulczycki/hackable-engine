@@ -1,16 +1,15 @@
+# -*- coding: utf-8 -*-
 import sys
 from itertools import cycle
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, Optional
 
 import gym
 import numpy
-from numpy import float32, matmul, ones
+from numpy import float32
 
 from arek_chess.controller import Controller
 from arek_chess.criteria.evaluation.base_eval import ActionType
-
-if TYPE_CHECKING:
-    from arek_chess.board.chess.chess_board import ChessBoard
+from arek_chess.training.envs.square_control_env_single_action_util import _board_to_obs
 
 DEFAULT_ACTION: ActionType = (
     float32(-0.05),  # king_mobility
@@ -101,12 +100,7 @@ class SquareControlEnv(gym.Env):
         self.controller.boot_up()
 
     def _get_action_space(self):
-        return gym.spaces.Box(
-            numpy.array(
-                [-1 if i == 0 else 0 for i in range(ACTION_SIZE)], dtype=float32
-            ),
-            numpy.array([1 for _ in range(ACTION_SIZE)], dtype=float32),
-        )
+        return gym.spaces.Box(-1, 1, (1,))  # float32 is the default
 
     def _get_observation_space(self):
         """
@@ -121,9 +115,18 @@ class SquareControlEnv(gym.Env):
         [ ] bishops on board (color)
         """
 
-        return gym.spaces.Box(
-            numpy.array([0 for _ in range(9)], dtype=numpy.float32),
-            numpy.array([1 for _ in range(9)], dtype=numpy.float32),
+        return gym.spaces.Tuple(
+            [
+                gym.spaces.Discrete(2),
+                gym.spaces.Discrete(2),
+                gym.spaces.Discrete(2),
+                gym.spaces.Box(
+                    numpy.array(
+                        [-1 if i <= 1 else 0 for i in range(12)], dtype=numpy.float32
+                    ),
+                    numpy.array([1 for _ in range(12)], dtype=numpy.float32),
+                ),
+            ]
         )
 
     def step(self, action: ActionType):
@@ -200,6 +203,3 @@ class SquareControlEnv(gym.Env):
         #     (v / 2 + 0.5) if i == 1 else v / 2 if i == 3 else v
         #     for i, v in enumerate(action)
         # )
-
-
-ONES_float32 = ones((64,), dtype=float32)

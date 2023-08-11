@@ -1,68 +1,21 @@
 # -*- coding: utf-8 -*-
-
 from __future__ import annotations
 
 import collections
 import sys
 from functools import reduce
-from typing import (
-    List,
-    Optional,
-    Counter,
-    Hashable,
-    cast,
-    Iterator,
-    Literal,
-    Union,
-    Dict,
-    Tuple,
-)
-from nptyping import Single
+from typing import (Counter, Dict, Hashable, Iterator, List, Literal, Optional, Tuple, Union, cast)
 
-from chess import (
-    Board as ChessBoard,
-    Bitboard,
-    PAWN,
-    KNIGHT,
-    BISHOP,
-    ROOK,
-    QUEEN,
-    KING,
-    square_rank,
-    Square,
-    Color,
-    BB_KING_ATTACKS,
-    BB_KNIGHT_ATTACKS,
-    BB_RANK_ATTACKS,
-    BB_FILE_ATTACKS,
-    BB_DIAG_ATTACKS,
-    BB_PAWN_ATTACKS,
-    BB_LIGHT_SQUARES,
-    BB_DARK_SQUARES,
-    Move,
-    Outcome,
-    Termination,
-    BoardT,
-    _BoardState,
-    square_file,
-    BB_DIAG_MASKS,
-    BB_RANK_MASKS,
-    BB_FILE_MASKS,
-    PieceType,
-    square_distance,
-    scan_reversed,
-    BB_ALL,
-    BB_RANK_3,
-    BB_RANK_4,
-    BB_RANK_5,
-    BB_RANK_6,
-    BB_RANK_1,
-    BB_RANK_8,
-)
-from nptyping import NDArray, Shape, Int
-from numpy import float32, empty, zeros
+from chess import (BB_ALL, BB_DARK_SQUARES, BB_DIAG_ATTACKS, BB_DIAG_MASKS, BB_FILE_ATTACKS, BB_FILE_MASKS,
+                   BB_KING_ATTACKS, BB_KNIGHT_ATTACKS, BB_LIGHT_SQUARES, BB_PAWN_ATTACKS, BB_RANK_1, BB_RANK_3,
+                   BB_RANK_4, BB_RANK_5, BB_RANK_6, BB_RANK_8, BB_RANK_ATTACKS, BB_RANK_MASKS, BISHOP, Bitboard, Board,
+                   Color, KING, KNIGHT, Move, Outcome, PAWN, PieceType, QUEEN, ROOK, Square, Termination, _BoardState,
+                   scan_reversed, square_distance, square_file, square_rank)
+from nptyping import Int, NDArray, Shape, Single
+from numpy import empty, float32, zeros
 
-from arek_chess.board.mixins.board_serializer_mixin import BoardSerializerMixin
+from arek_chess.board import GameBoardBase
+from arek_chess.board.chess.mixins.chess_board_serializer_mixin import ChessBoardSerializerMixin
 
 # fmt: off
 SQUARES = [
@@ -114,7 +67,7 @@ else:
         return bb.bit_count()
 
 
-class Board(ChessBoard, BoardSerializerMixin):
+class ChessBoard(Board, ChessBoardSerializerMixin, GameBoardBase):
     """
     Handling the chessboard and calculating features of a position.
     """
@@ -722,6 +675,11 @@ class Board(ChessBoard, BoardSerializerMixin):
 
         return False
 
+    def push_coord(self, coord: str) -> None:
+        """"""
+
+        self.push(Move.from_uci(coord))
+
     def light_push(self, move: Move) -> Dict[str, Bitboard]:
         """
         Updates the position with the given *move* and puts it onto the move stack.
@@ -1037,9 +995,24 @@ class Board(ChessBoard, BoardSerializerMixin):
             from_square = to_square + (16 if not self.turn else -16)
             yield Move(from_square, to_square)
 
+    def position(self) -> str:
+        """"""
+
+        return self.fen()
+
+    def winner(self) -> Optional[bool]:
+        """"""
+
+        outcome = self.outcome()
+        return outcome.winner if outcome else None
+
+    def get_forcing_level(self, move: Move) -> int:
+        """"""
+
+        return self.get_captured_piece_type(move)
 
 KING_PROXIMITY_MAPS_NORMALIZED: Dict[Bitboard, NDArray[Shape["64"], Single]] = {
-    mask: Board.generate_king_proximity_map_normalized(square)
+    mask: ChessBoard.generate_king_proximity_map_normalized(square)
     for mask, square in zip(BB_SQUARES, SQUARES)
 }
 """"""

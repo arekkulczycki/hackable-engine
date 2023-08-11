@@ -37,6 +37,9 @@ class Print(IntEnum):
     LOGS: int = 4
 
 
+PRINT_CANDIDATES = 10
+
+
 class QueueHandler(IntEnum):
     """"""
 

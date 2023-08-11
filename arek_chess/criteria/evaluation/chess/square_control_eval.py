@@ -20,12 +20,19 @@ Observation:
 [ ] better openness of the position (many pawns locked > ... > many pawns gone)
 """
 
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 from nptyping import Int, NDArray, Shape, Single
-from numpy import float32, ones, minimum as np_min, maximum as np_max, sign as np_sign, matmul
+from numpy import (
+    float32,
+    matmul,
+    maximum as np_max,
+    minimum as np_min,
+    ones,
+    sign as np_sign,
+)
 
-from arek_chess.board.board import Board
+from arek_chess.board.chess.chess_board import ChessBoard
 from arek_chess.criteria.evaluation.base_eval import ActionType, BaseEval
 
 ACTION_TYPE = Tuple[
@@ -48,7 +55,7 @@ TWO: float32 = float32(2)
 FOUR: float32 = float32(4)
 
 
-class SquareControlEval(BaseEval):
+class SquareControlEval(BaseEval[ChessBoard]):
     """"""
 
     DEFAULT_ACTION: ActionType = (
@@ -68,7 +75,7 @@ class SquareControlEval(BaseEval):
 
     def get_score(
         self,
-        board: Board,
+        board: ChessBoard,
         is_check: bool,
         action: Optional[ActionType] = None,
     ) -> float32:
@@ -107,13 +114,12 @@ class SquareControlEval(BaseEval):
         # pawn_material: float32 = board.get_material_pawns(True) - board.get_material_pawns(False)
 
         # how many attacks on each of 64 squares, number of white minus number of black attacks
-        square_control_diff: NDArray[
-            Shape["64"], Int
-        ]
-        square_control_diff_mod_turn: NDArray[
-            Shape["64"], Single
-        ]
-        square_control_diff, square_control_diff_mod_turn = board.get_square_control_map_for_both()
+        square_control_diff: NDArray[Shape["64"], Int]
+        square_control_diff_mod_turn: NDArray[Shape["64"], Single]
+        (
+            square_control_diff,
+            square_control_diff_mod_turn,
+        ) = board.get_square_control_map_for_both()
         # square_control_diff_sign: NDArray[
         #     Shape["64"], Int
         # ] = np_sign(square_control_diff)
@@ -142,15 +148,16 @@ class SquareControlEval(BaseEval):
             -HALFS_float32,  # defending considered half
         )
 
-        white_occupied_square_control = matmul(
+        white_occupied_square_control: float32 = matmul(
             white_material_square_control, ONES_float32
         )
-        black_occupied_square_control = matmul(
+        black_occupied_square_control: float32 = matmul(
             black_material_square_control, ONES_float32
         )
         empty_square_control: float32 = self._get_empty_square_control(
-        # empty_square_control, empty_square_control_nominal = self._get_empty_square_controls(
-            board, square_control_diff  # , square_control_diff_sign
+            # empty_square_control, empty_square_control_nominal = self._get_empty_square_controls(
+            board,
+            square_control_diff,  # , square_control_diff_sign
         )
 
         white_king_proximity_square_control: float32
@@ -192,7 +199,7 @@ class SquareControlEval(BaseEval):
 
     @staticmethod
     def _get_empty_square_control(
-        board: Board, square_control_diff: NDArray[Shape["64"], Int]
+        board: ChessBoard, square_control_diff: NDArray[Shape["64"], Int]
     ) -> float32:
         empty_square_map: NDArray[Shape["64"], Int] = board.get_empty_square_map()
 
@@ -200,11 +207,13 @@ class SquareControlEval(BaseEval):
 
     @staticmethod
     def _get_empty_square_controls(
-        board: Board, square_control_diff: NDArray[Shape["64"], Int]
+        board: ChessBoard, square_control_diff: NDArray[Shape["64"], Int]
     ) -> Tuple[float32, float32]:
         empty_square_map: NDArray[Shape["64"], Int] = board.get_empty_square_map()
 
-        square_control_diff_nominal: NDArray[Shape["64"], Int] = np_sign(square_control_diff)
+        square_control_diff_nominal: NDArray[Shape["64"], Int] = np_sign(
+            square_control_diff
+        )
 
         return matmul(square_control_diff * empty_square_map, ONES_INT), matmul(
             square_control_diff_nominal * empty_square_map, ONES_INT
@@ -212,7 +221,7 @@ class SquareControlEval(BaseEval):
 
     @staticmethod
     def _get_king_proximity_square_control(
-        board: Board,
+        board: ChessBoard,
         square_control_diff: NDArray[Shape["64"], Int],
     ) -> Tuple[float32, float32]:
         """

@@ -19,10 +19,10 @@ class Node:
 
     parent: Optional[Node]
     move: str
-    captured: int
+    is_forcing: int
     color: bool
     being_processed: bool
-    only_captures: bool
+    only_forcing: bool
     board: bytes
 
     children: List[Node]
@@ -34,10 +34,10 @@ class Node:
         parent: Optional[Node],
         move: str,
         score: float32,
-        captured: int,
+        is_forcing: int,
         color: bool,
         being_processed: bool,
-        only_captures: bool,
+        only_forcing: bool,
         board: bytes,
     ):
         self.parent = parent
@@ -47,11 +47,11 @@ class Node:
         self.move = move
 
         self.init_score = score
-        self.captured = captured
+        self.is_forcing = is_forcing
         self.color = color
         self.being_processed = being_processed
 
-        self.only_captures = only_captures
+        self.only_forcing = only_forcing
         self.board = board
 
         self.propagate_being_processed_up()
@@ -103,7 +103,7 @@ class Node:
 
         parent: Optional[Node] = self.parent
         if parent:
-            # parent.being_processed = self.being_processed if self.only_captures else False
+            # parent.being_processed = self.being_processed if self.only_forcing else False
 
             # if not self.being_processed:  # don't propagate until capture-fest finished
             # TODO: to not propagate is good idea only if we wait all captures to finish which is not the case
@@ -114,7 +114,7 @@ class Node:
 
         if self.parent:
             # self.parent.being_processed = False
-            self.parent.being_processed = self.being_processed if self.only_captures else False
+            self.parent.being_processed = self.being_processed if self.only_forcing else False
             self.parent.propagate_being_processed_up()
 
     def propagate_being_processed_down(self) -> None:
@@ -136,7 +136,7 @@ class Node:
         if not children:
             self.set_score(value, leaf_color, leaf_level)
 
-        elif self.only_captures and self.parent is not None:
+        elif self.only_forcing and self.parent is not None:
             if not self.color:
                 recapture_score = reduce(self.minimal, children)._score
                 if recapture_score >= self.init_score:

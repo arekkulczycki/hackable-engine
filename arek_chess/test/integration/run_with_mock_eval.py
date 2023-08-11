@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 from random import random
-from typing import Type
+from time import sleep
+from typing import Optional, Type
 from unittest import TestCase
 from unittest.mock import patch
 
 from numpy import float32
 
-from arek_chess.board.board import Board
+from arek_chess.board import GameBoardBase
 from arek_chess.common.constants import Print
 from arek_chess.controller import Controller
+from arek_chess.criteria.evaluation.base_eval import ActionType
 from arek_chess.workers.eval_worker import EvalWorker
 
 evaluated = 0
@@ -16,7 +18,7 @@ evaluated = 0
 
 class MockEvalWorker(EvalWorker):
     def evaluate(
-        self, board: Board, move_str: str, captured_piece_type: int, is_check: bool
+        self, board: GameBoardBase, move_str: str, captured_piece_type: int, is_check: bool
     ) -> float32:
         """"""
 
@@ -57,7 +59,7 @@ class EvalWorkerFixedOverLevel(EvalWorker):
     eval = float32(1.5)
 
     def evaluate(
-        self, board: Board, move_str: str, captured_piece_type: int, is_check: bool
+        self, board: GameBoardBase, move_str: str, captured_piece_type: int, is_check: bool
     ) -> float32:
         """"""
 
@@ -83,7 +85,7 @@ class EvalWorkerSpecificPath(EvalWorker):
     eval = float32(1.5)
 
     def evaluate(
-        self, board: Board, is_check: bool
+        self, board: GameBoardBase, is_check: bool, action: Optional[ActionType]
     ) -> float32:
         """"""
 
@@ -96,6 +98,7 @@ class EvalWorkerSpecificPath(EvalWorker):
         #     else:
         #         return - self.eval
 
+        # sleep(0.0001)
         return float32(random() * 2 - 1)
 
 

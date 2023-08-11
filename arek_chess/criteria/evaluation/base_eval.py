@@ -1,22 +1,19 @@
-"""
-Base class for node evaluation.
-"""
+# -*- coding: utf-8 -*-
+from abc import ABC, abstractmethod
+from typing import Callable, Generic, Optional, Tuple, TypeVar
 
-from abc import ABC
-from typing import Tuple, Callable, Optional
+from numpy import dot, float32
 
-from numpy import float32
-
-from arek_chess.board.board import Board
-from numpy import dot
+from arek_chess.board import GameBoardBase
 
 PENALIZER: float32 = float32(0.99)
 REVERSE_PENALIZER: float32 = float32(1.01)
 
 ActionType = Tuple[float32, ...]
+T = TypeVar('T', bound=GameBoardBase)
 
 
-class BaseEval(ABC):
+class BaseEval(ABC, Generic[T]):
     """
     Inherit from this class to implement your own evaluator.
 
@@ -29,9 +26,10 @@ class BaseEval(ABC):
     Any eval model should be designed for a specific training observation method.
     """
 
+    @abstractmethod
     def get_score(
         self,
-        board: Board,
+        board: T,
         is_check: bool,
         action: Optional[ActionType] = None,
     ) -> float32:
@@ -46,15 +44,15 @@ class BaseEval(ABC):
         raise NotImplementedError
 
     @staticmethod
-    def get_for_both_players(function: Callable[[bool], ActionType]) -> Tuple[float32, ...]:
+    def get_for_both_players(
+        function: Callable[[bool], ActionType]
+    ) -> Tuple[float32, ...]:
         """"""
 
         return tuple(float32(a - b) for a, b in zip(function(True), function(False)))
 
     @staticmethod
-    def calculate_score(
-        action: ActionType, params: ActionType
-    ) -> float32:
+    def calculate_score(action: ActionType, params: ActionType) -> float32:
         score = dot(action, params)
 
         return score

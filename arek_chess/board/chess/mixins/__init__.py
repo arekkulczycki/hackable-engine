@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-
 from typing import List, Protocol
 
 
-class BoardProtocol(Protocol):
+class ChessBoardProtocol(Protocol):
     turn: bool
     pawns: int
     knights: int

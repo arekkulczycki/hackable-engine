@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 from os import getpid
-from typing import List
+from typing import List, Type
 
 from chess import Move
 
-from arek_chess.board.board import Board
+from arek_chess.board import GameBoardBase
 from arek_chess.common.constants import (
     DISTRIBUTED,
     FINISHED,
@@ -33,6 +33,7 @@ class DistributorWorker(BaseWorker):
         eval_queue: QM,
         selector_queue: QM,
         control_queue: QM,
+        board_class: Type[GameBoardBase],
         throttle: int,
     ):
         """"""
@@ -45,7 +46,7 @@ class DistributorWorker(BaseWorker):
         self.control_queue = control_queue
         self.queue_throttle = throttle
 
-        self.board: Board = Board()
+        self.board: GameBoardBase = board_class()
 
     def setup(self):
         """"""
@@ -124,40 +125,42 @@ class DistributorWorker(BaseWorker):
 
         # TODO: if it could be done efficiently, would be beneficial to check game over here
 
-        recaptures = []
+        only_forcing_moves = []
         eval_items = []
         for move in self.board.legal_moves:
             eval_item = self._get_eval_item(item, move)
 
-            # captured == -1 means that recaptures were already taken care of before
-            # captured > 0 means that only recaptures should be returned
-            if item.captured != 0:
-                recaptured = self.board.get_captured_piece_type(move)
-                if item.captured > 0 and recaptured:
-                    recaptures.append(eval_item)
+            # is_forcing == -1 means that forcing moves were already taken care of before
+            # is_forcing > 0 means that only forcing moves should be returned
+            if item.is_forcing != 0:
+                if item.is_forcing > 0 and eval_item.is_forcing:
+                    only_forcing_moves.append(eval_item)
 
                 # if captures were analysed already then not adding to eval_items
-                if not recaptured:
+                if not eval_item.is_forcing:
                     eval_items.append(eval_item)
 
             else:
                 eval_items.append(eval_item)
 
-        if item.captured > 0:
-            return recaptures
+        if item.is_forcing > 0:
+            return only_forcing_moves
+
         return eval_items
 
     def _get_eval_item(self, item: DistributorItem, move: Move) -> EvalItem:
         """"""
 
-        captured = self.board.get_captured_piece_type(move)
+        # checking before the move is pushed, because it will change after
+        is_forcing = self.board.get_forcing_level(move)
+
         # state = self.board.light_push(move)
         self.board.push(move)
         eval_item = EvalItem(
             item.run_id,
             item.node_name,
             move.uci(),
-            captured,
+            is_forcing,
             self.board.serialize_position(),
         )
         # self.board.lighter_pop(state)

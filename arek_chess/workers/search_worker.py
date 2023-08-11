@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 
 from numpy import abs, float32
 
-from arek_chess.board.board import Board
+from arek_chess.board import GameBoardBase
 from arek_chess.common.constants import (
     CLOSED,
     CPU_CORES,
@@ -16,6 +16,7 @@ from arek_chess.common.constants import (
     FINISHED,
     INF,
     LOG_INTERVAL,
+    PRINT_CANDIDATES,
     Print,
     ROOT_NODE_NAME,
     RUN_ID,
@@ -36,15 +37,13 @@ from arek_chess.game_tree.node import Node
 from arek_chess.game_tree.renderer import PrunedTreeRenderer
 from arek_chess.game_tree.traverser import Traverser
 
-N_CANDIDATES = 10
-
 
 class SearchWorker(ReturningThread, ProfilerMixin):
     """
     Handles the in-memory game tree and controls all tree expansion logic and progress logging.
     """
 
-    board: Board
+    board: GameBoardBase
     root: Node
     run_id: str
 
@@ -125,7 +124,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
     def reset(
         self,
-        board: Board,
+        board: GameBoardBase,
         new_root: Optional[Node] = None,
         nodes_dict: Dict[str, Node] = None,
         run_iteration: int = 0,
@@ -178,10 +177,10 @@ class SearchWorker(ReturningThread, ProfilerMixin):
             parent=None,
             move=move,
             score=score / 2,  # divided by 2 to differentiate from checkmate
-            captured=0,
+            is_forcing=0,
             color=self.board.turn,
             being_processed=True,
-            only_captures=False,
+            only_forcing=False,
             board=serialized_board,
         )
 
@@ -215,13 +214,13 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         with self.status_lock:
             self.memory_manager.set_int(STATUS, STARTED)
 
-        if not self.root.children or self.root.only_captures:
+        if not self.root.children or self.root.only_forcing:
             self.distributor_queue.put(
                 DistributorItem(
                     self.run_id,
                     ROOT_NODE_NAME,
                     self.root.move,
-                    -1 if self.root.only_captures else 0,
+                    -1 if self.root.only_forcing else 0,
                     self.root.score,
                     self.board.serialize_position(),
                 )
@@ -324,7 +323,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                 else 0
             )
 
-            if self.evaluated == self.last_evaluated:
+            if self.evaluated == self.last_evaluated and self.distributed > self.evaluated:
                 # TODO: use signal for this?
                 if not self.finished or progress < 95:
                     print(
@@ -347,12 +346,12 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
             if self.printing in [Print.CANDIDATES, Print.TREE]:
                 sorted_children: List[Node] = sorted(
-                    [child for child in self.root.children if not child.only_captures],
+                    [child for child in self.root.children if not child.only_forcing],
                     key=lambda node: node.score,
                     reverse=self.root.color,
                 )
 
-                for child in sorted_children[:N_CANDIDATES]:
+                for child in sorted_children[:PRINT_CANDIDATES]:
                     print(
                         child.move, child.leaf_level, child.score, child.being_processed
                     )
@@ -498,7 +497,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
                     return
 
             self.queue_for_distribution(
-                distributor_queue, nodes_to_distribute, recaptures=True
+                distributor_queue, nodes_to_distribute, forcing_moves_only=True
             )
 
     def select_from_tree(self, distributor_queue: QM, iterations: int = 1) -> None:
@@ -510,10 +509,10 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         if not top_nodes:
             return
 
-        self.queue_for_distribution(distributor_queue, top_nodes, recaptures=False)
+        self.queue_for_distribution(distributor_queue, top_nodes, forcing_moves_only=False)
 
     def queue_for_distribution(
-        self, distributor_queue: QM, nodes: List[Node], *, recaptures: bool
+        self, distributor_queue: QM, nodes: List[Node], *, forcing_moves_only: bool
     ) -> None:
         """"""
 
@@ -523,7 +522,7 @@ class SearchWorker(ReturningThread, ProfilerMixin):
         #             self.run_id,
         #             node.name,
         #             node.move,
-        #             node.captured if recaptures else -1 if node.only_captures else 0,
+        #             node.captured if recaptures else -1 if node.only_forcing else 0,
         #             node.score,
         #             node.board
         #         )
@@ -533,23 +532,23 @@ class SearchWorker(ReturningThread, ProfilerMixin):
 
         to_queue: List[DistributorItem] = []
         for node in nodes:
-            captured: int
-            if recaptures:
-                captured = node.captured
-            elif node.only_captures:
-                captured = -1
-                node.only_captures = False
+            is_forcing: int
+            if forcing_moves_only:
+                is_forcing = node.is_forcing
+            elif node.only_forcing:
+                is_forcing = -1
+                node.only_forcing = False
             else:
-                captured = 0
+                is_forcing = 0
 
             to_queue.append(
                 DistributorItem(
-                    self.run_id, node.name, node.move, captured, node.score, node.board
+                    self.run_id, node.name, node.move, is_forcing, node.score, node.board
                 )
             )
 
         n_nodes: int = len(to_queue)
-        if not recaptures:
+        if not forcing_moves_only:
             self.selected += n_nodes
         self.explored += n_nodes
         # self.distributed += n_nodes

@@ -1,18 +1,16 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import signal
 import typing
 from multiprocessing import Lock
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Type
 
 from numpy import float32
 
-from arek_chess.board.board import Board
+from arek_chess.board import GameBoardBase
 from arek_chess.common.constants import (
     DRAW,
     INF,
-    LOG_INTERVAL,
     RUN_ID,
     SLEEP,
     STARTED,
@@ -23,7 +21,7 @@ from arek_chess.common.queue.items.eval_item import EvalItem
 from arek_chess.common.queue.items.selector_item import SelectorItem
 from arek_chess.common.queue.manager import QueueManager
 from arek_chess.criteria.evaluation.base_eval import ActionType
-from arek_chess.criteria.evaluation.square_control_eval import SquareControlEval
+from arek_chess.criteria.evaluation.chess.square_control_eval import SquareControlEval
 from arek_chess.workers.base_worker import BaseWorker
 
 if typing.TYPE_CHECKING:
@@ -44,6 +42,7 @@ class EvalWorker(BaseWorker):
         selector_queue: QueueManager,
         queue_throttle: int,
         worker_number: int,
+        board_class: Type[GameBoardBase],
         *,
         evaluator_name: Optional[str] = None,
         is_training_run: bool = False,
@@ -75,7 +74,7 @@ class EvalWorker(BaseWorker):
                 env=self.env,
             )
 
-        self.board: Board = Board()
+        self.board: GameBoardBase = board_class()
 
     def setup(self) -> None:
         """"""
@@ -105,15 +104,12 @@ class EvalWorker(BaseWorker):
         eval_items = self.eval_items
         memory_manager = self.memory_manager
 
-        signal.signal(signal.SIGALRM, self._handle_timeout)
         memory_manager.set_int(str(self.pid), 1)
 
         action: Optional[ActionType] = None
         action_set: bool = False
 
         while True:
-            self._set_loop_timeout()
-
             with self.status_lock:
                 status: int = memory_manager.get_int(STATUS)
 
@@ -135,14 +131,6 @@ class EvalWorker(BaseWorker):
             else:
                 action_set = False
                 memory_manager.set_int(f"{WORKER}_{self.worker_number}", 1, new=False)
-
-    def _set_loop_timeout(self) -> None:
-        signal.setitimer(
-            signal.ITIMER_REAL, LOG_INTERVAL, 0
-        )  # use constants.BREAK_INTERVAL maybe
-
-    def _handle_timeout(self, sig, frame) -> None:
-        print(f"eval timed out: {self.pid}")
 
     def eval_items(
         self, eval_items: List[EvalItem], run_id: str, action: Optional[ActionType]
@@ -172,13 +160,13 @@ class EvalWorker(BaseWorker):
             item.run_id,
             item.node_name,
             item.move_str,
-            -1 if finished else item.captured,
+            -1 if finished else item.is_forcing,
             result,
             item.board,
         )
 
     def get_quick_result(
-        self, board: Board, node_name: str, move_str: str
+        self, board: GameBoardBase, node_name: str, move_str: str
     ) -> Tuple[Optional[float32], bool]:
         """"""
 
@@ -187,9 +175,7 @@ class EvalWorker(BaseWorker):
             return DRAW, False
 
         is_check = board.is_check()
-        if not any(
-            board.generate_legal_moves()
-        ):  # TODO: optimize and do on distributor?
+        if not any(board.legal_moves):  # TODO: optimize and do on distributor?
             if is_check:
                 return -INF if board.turn else INF, True
             else:
@@ -214,7 +200,7 @@ class EvalWorker(BaseWorker):
         return (last_6[0], last_6[1]) == (last_6[4], last_6[5])
 
     def evaluate(
-        self, board: Board, is_check: bool, action: Optional[ActionType]
+        self, board: GameBoardBase, is_check: bool, action: Optional[ActionType]
     ) -> float32:
         """"""
 

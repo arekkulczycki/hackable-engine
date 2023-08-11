@@ -1,20 +1,19 @@
 # -*- coding: utf-8 -*-
-
 from struct import pack, unpack
 from typing import Optional
 
-from arek_chess.board.mixins import BoardProtocol
+from arek_chess.board.chess.mixins import ChessBoardProtocol
 
 BOARD_BYTES_NUMBER = 75
 NONE_EP_SQUARE = 64
 
 
-class BoardSerializerMixin:
+class ChessBoardSerializerMixin:
     """
     Serialize positions into byte arrays and back.
     """
 
-    def serialize_position(self: BoardProtocol) -> bytes:
+    def serialize_position(self: ChessBoardProtocol) -> bytes:
         """
         :return: bytes array of length 73
         """
@@ -49,7 +48,7 @@ class BoardSerializerMixin:
             )
         )
 
-    def deserialize_position(self: BoardProtocol, bytes_: bytes) -> None:
+    def deserialize_position(self: ChessBoardProtocol, bytes_: bytes) -> None:
         """"""
 
         pawns_bytes = bytes_[:8]

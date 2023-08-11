@@ -5,7 +5,9 @@ from struct import pack, unpack
 
 from numpy import float32
 
-from arek_chess.board.mixins.board_serializer_mixin import BOARD_BYTES_NUMBER
+from arek_chess.board.chess.mixins.chess_board_serializer_mixin import (
+    BOARD_BYTES_NUMBER,
+)
 from arek_chess.common.queue.items.base_item import BaseItem
 
 BOARD_AND_FLOAT_BYTES_NUMBER = BOARD_BYTES_NUMBER + 4
@@ -30,7 +32,7 @@ class DistributorItem(BaseItem):
         run_id: str,
         node_name: str,
         move_str: str,
-        captured: int,
+        is_forcing: int,
         score: float32,
         board: bytes,
     ) -> None:
@@ -38,7 +40,7 @@ class DistributorItem(BaseItem):
         self.node_name: str = node_name
         self.move_str: str = move_str
         self.score: float32 = score
-        self.captured: int = captured
+        self.is_forcing: int = is_forcing
         self.board: bytes = board
 
     @staticmethod
@@ -66,7 +68,7 @@ class DistributorItem(BaseItem):
         score_bytes = pack("f", obj.score)
 
         return (
-            f"{obj.run_id};{obj.node_name};{obj.move_str};{obj.captured}".encode()
+            f"{obj.run_id};{obj.node_name};{obj.move_str};{obj.is_forcing}".encode()
             + score_bytes
             + obj.board
         )

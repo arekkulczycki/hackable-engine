@@ -5,7 +5,8 @@ from typing import List, Optional
 # from larch.pickle.pickle import dumps, loads
 from numpy import float32, ndarray
 
-from arek_chess.board.board import Board
+from arek_chess.board import GameBoardBase
+
 # from arek_chess.common.memory.adapters.redis_adapter import RedisAdapter
 from arek_chess.common.memory.adapters.shared_memory_adapter import SharedMemoryAdapter
 from arek_chess.common.memory.base_memory import BaseMemory
@@ -41,20 +42,20 @@ class MemoryManager:
         self.memory.set("action", data.tobytes())
 
     def get_node_board(
-        self, node_name: str, board: Optional[Board] = None
-    ) -> Optional[Board]:
+        self, node_name: str, board: Optional[GameBoardBase] = None
+    ) -> Optional[GameBoardBase]:
         board_bytes: Optional[bytes] = self.memory.get(node_name)
         if board_bytes is None:
             return None
         # print(len(board_bytes))
 
-        board = board or Board(fen=None)
+        board = board or GameBoardBase()
         board.deserialize_position(board_bytes)
         return board
 
         # return loads(board_bytes) if board_bytes is not None else None
 
-    def set_node_board(self, node_name: str, board: Board) -> None:
+    def set_node_board(self, node_name: str, board: GameBoardBase) -> None:
         # self.memory.set(
         #     node_name, dumps(board, protocol=5, with_refs=False)
         # )
@@ -87,7 +88,7 @@ class MemoryManager:
         positions_bytes = self.memory.get("positions")
         return positions_bytes.split(BaseItem.SEPARATOR) if positions_bytes else []
 
-    def set_last_positions(self, board: Board) -> None:
+    def set_last_positions(self, board: GameBoardBase) -> None:
         """"""
 
         positions: bytes = self.memory.get("positions")
