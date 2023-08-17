@@ -1,10 +1,12 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
 import sys
 from itertools import cycle
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, Optional, TYPE_CHECKING
 
 import gym
 import numpy
-from numpy import float32, matmul, ones
+from numpy import asarray, float32, ones
 
 from arek_chess.controller import Controller
 from arek_chess.criteria.evaluation.base_eval import ActionType
@@ -13,7 +15,7 @@ from arek_chess.training.envs.square_control_env_util import _board_to_obs
 if TYPE_CHECKING:
     from arek_chess.board.chess.chess_board import ChessBoard
 
-DEFAULT_ACTION: ActionType = (
+DEFAULT_ACTION: ActionType = asarray((
     float32(-0.05),  # king_mobility
     float32(0.05),  # castling_rights
     float32(0.1),  # is_check
@@ -25,8 +27,8 @@ DEFAULT_ACTION: ActionType = (
     float32(0.015),  # own king proximity square control
     float32(0.01),  # opp king proximity square control
     float32(0.15),  # turn
-)
-MEDIUM_ACTION: ActionType = (
+), dtype=float32)
+MEDIUM_ACTION: ActionType = asarray((
     float32(-0.05),  # king_mobility
     float32(0.1),  # castling_rights
     float32(0.1),  # is_check
@@ -37,8 +39,8 @@ MEDIUM_ACTION: ActionType = (
     float32(0.0),  # own king proximity square control
     float32(0.0),  # opp king proximity square control
     float32(0.1),  # turn
-)
-WEAK_ACTION: ActionType = (
+), dtype=float32)
+WEAK_ACTION: ActionType = asarray((
     float32(0.0),  # king_mobility
     float32(0.0),  # castling_rights
     float32(0.1),  # is_check
@@ -49,7 +51,7 @@ WEAK_ACTION: ActionType = (
     float32(0.0),  # own king proximity square control
     float32(0.0),  # opp king proximity square control
     float32(0.1),  # turn
-)
+), dtype=float32)
 ACTION_SIZE: int = 10
 INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 EQUAL_MIDDLEGAME_FEN = (
@@ -91,12 +93,13 @@ class SquareControlEnv(gym.Env):
         self.action_space = self._get_action_space()
         self.observation_space = self._get_observation_space()
 
-        self._set_controller(controller)
+        if controller:
+            self._setup_controller(controller)
+            self.obs = self.observation()
 
-        self.obs = self.observation()
         self.steps_done = 0
 
-    def _set_controller(self, controller: Controller):
+    def _setup_controller(self, controller: Controller):
         self.controller = controller
         self.controller._setup_board(next(fens))
         self.controller.boot_up()
@@ -170,12 +173,15 @@ class SquareControlEnv(gym.Env):
     def observation(self):
         return _board_to_obs(self.controller.board)
 
+    def observation_from_board(self, board: ChessBoard):
+        return _board_to_obs(board)
+
     def _run_action(self, action: ActionType) -> None:
         try:
             self.controller.make_move(action)
         except RuntimeError:
             sys.exit()
-            # self._set_controller()
+            # self._setup_controller()
             # self._run_action(action)
 
     def _get_reward(self, result):

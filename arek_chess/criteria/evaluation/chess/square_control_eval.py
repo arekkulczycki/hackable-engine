@@ -24,6 +24,7 @@ from typing import Optional, Tuple
 
 from nptyping import Int, NDArray, Shape, Single
 from numpy import (
+    asarray,
     float32,
     matmul,
     maximum as np_max,
@@ -33,20 +34,10 @@ from numpy import (
 )
 
 from arek_chess.board.chess.chess_board import ChessBoard
-from arek_chess.criteria.evaluation.base_eval import ActionType, BaseEval
+from arek_chess.criteria.evaluation.base_eval import BaseEval
 
-ACTION_TYPE = Tuple[
-    float32,
-    float32,
-    float32,
-    float32,
-    float32,
-    float32,
-    float32,
-    float32,
-    float32,
-    float32,
-]
+ActionType = NDArray[Shape["10"], Single]
+
 ONES_float32: NDArray[Shape["64"], Single] = ones((64,), dtype=float32)
 HALFS_float32: NDArray[Shape["64"], Single] = ones((64,), dtype=float32) / 2
 ONES_INT: NDArray[Shape["64"], Single] = ones((64,), dtype=float32)
@@ -58,7 +49,7 @@ FOUR: float32 = float32(4)
 class SquareControlEval(BaseEval[ChessBoard]):
     """"""
 
-    DEFAULT_ACTION: ActionType = (
+    DEFAULT_ACTION: ActionType = asarray((
         float32(-0.05),  # king_mobility
         float32(0.05),  # castling_rights
         float32(0.1),  # is_check
@@ -70,7 +61,7 @@ class SquareControlEval(BaseEval[ChessBoard]):
         float32(0.02),  # own king proximity square control
         float32(0.025),  # opp king proximity square control
         float32(0.15),  # turn
-    )
+    ), dtype=float32)
     ACTION_SIZE: int = 10
 
     def get_score(
@@ -182,7 +173,7 @@ class SquareControlEval(BaseEval[ChessBoard]):
             own_king_proximity_square_control = white_king_proximity_square_control
             opp_king_proximity_square_control = black_king_proximity_square_control
 
-        params = (
+        params = asarray((
             float32(king_mobility_int),
             castling_rights_value,
             is_check_value,
@@ -193,7 +184,7 @@ class SquareControlEval(BaseEval[ChessBoard]):
             own_king_proximity_square_control / FOUR,
             opp_king_proximity_square_control / FOUR,
             turn_bonus,
-        )
+        ), dtype=float32)
 
         return self.calculate_score(action, params)
 

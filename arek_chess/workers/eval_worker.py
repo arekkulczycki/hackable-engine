@@ -206,11 +206,11 @@ class EvalWorker(BaseWorker):
 
         # unless a constant action is used then predict action from the configured env
         if action is None:
-            action = self.env and self.get_action()
+            action = self.env and self.get_action(board)
 
         return self.evaluator.get_score(board, is_check, action=action)
 
-    def get_action(self) -> ActionType:
-        obs = self.env.observation()
+    def get_action(self, board: GameBoardBase) -> ActionType:
+        obs = self.env.observation_from_board(board)
         # return self.env.action_downgrade(self.model.predict(obs, deterministic=True)[0])
         return self.model.predict(obs, deterministic=True)[0]

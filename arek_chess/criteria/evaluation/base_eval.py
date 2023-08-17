@@ -2,6 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import Callable, Generic, Optional, Tuple, TypeVar
 
+from nptyping import NDArray, Shape, Single
 from numpy import dot, float32
 
 from arek_chess.board import GameBoardBase
@@ -9,7 +10,8 @@ from arek_chess.board import GameBoardBase
 PENALIZER: float32 = float32(0.99)
 REVERSE_PENALIZER: float32 = float32(1.01)
 
-ActionType = Tuple[float32, ...]
+# ActionType = Tuple[float32, ...]
+ActionType = NDArray[Shape, Single]
 T = TypeVar('T', bound=GameBoardBase)
 
 
