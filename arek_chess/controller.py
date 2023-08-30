@@ -18,9 +18,10 @@ from arek_chess.game_tree.node import Node
 from arek_chess.workers.distributor_worker import DistributorWorker
 from arek_chess.workers.eval_worker import EvalWorker
 from arek_chess.workers.search_worker import SearchWorker
+from chess.engine import UciProtocol
 
 
-class Controller:
+class Controller(UciProtocol):
     """
     Controls engine setup and its communication to outside world.
     """

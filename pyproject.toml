@@ -1,0 +1,35 @@
+[project]
+name = "hackable-bot"
+description = "board game playing bot easy to hack in order to change playing approach"
+version = "0.0.2"
+authors = [
+    { name = "Arek Kulczycki" }
+]
+dependencies = [
+    "chess==1.9.*",
+    "nptyping==2.5.*",
+    "anytree==2.8.*"
+]
+
+[options]
+package_dir = "arek_chess"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "arek_chess.board.chess",
+    "arek_chess.board.chess.mixins",
+    "arek_chess.common",
+    "arek_chess.common.memory",
+    "arek_chess.common.queue",
+    "arek_chess.common.queue.items",
+    "arek_chess.criteria",
+    "arek_chess.criteria.evaluation",
+    "arek_chess.criteria.evaluation.chess",
+    "arek_chess.game_tree",
+    "arek_chess.workers",
+]
+#py-modules = ["arek_chess.controller"]

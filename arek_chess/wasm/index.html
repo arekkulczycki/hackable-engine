@@ -4,28 +4,80 @@
     <meta charset="UTF-8">
     <title>hackable-bot-wasm</title>
   <script src="https://cdn.jsdelivr.net/pyodide/v0.23.2/full/pyodide.js"></script>
+<!--  <script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.14.1/ort.js"></script>-->
+  <script src="onnxruntime/ort.js"></script>>
 </head>
 <body>
     <button onclick="startWorker()">Run</button>
     <textarea id="output" rows="25" cols="120"></textarea>
 
     <script>
-      const output = document.getElementById("output");
+      const output = document.getElementById('output');
 
       function showOutput(s) {
         output.value = s;
       }
 
+      async function modelPredict() {
+        ort.env.wasm.wasmPaths = window.location + '/onnxruntime/';
+        ort.env.wasm.proxy = true;
+        const sessionOption = { executionProviders: ['wasm'] };
+
+        // const sessionOption = { executionProviders: ['webgl'] };
+        const session = await ort.InferenceSession.create('./my_ppo_model.onnx', sessionOption);
+        input = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+        feeds = [];
+        for (i=0; i<10000; i++)
+            feeds.push({"input": new ort.Tensor("float32", input, [1, 9])});
+        console.log('feeds built')
+        console.time("test_timer");
+        for (let i=0; i<10000; i++) {
+            await session.run(feeds[i]);
+        }
+        console.timeEnd("test_timer");
+      }
+
       // init Pyodide
       async function main() {
         let pyodide = await loadPyodide();
-        output.value = "Ready!\n";
+        output.value = 'Ready!\n';
         return pyodide;
       }
       let pyodideReadyPromise = main();
 
+      async function loadHackableBot() {
+        self.pyodide = await loadPyodide();
+        await self.pyodide.loadPackage("micropip");
+        self.micropip = pyodide.pyimport("micropip");
+        await self.micropip.install("./hackable_bot-0.0.2-py3-none-any.whl")
+
+        // chess_board_module = pyodide.pyimport("arek_chess.board.chess.chess_board");
+        // sqc_eval_module = pyodide.pyimport("arek_chess.criteria.evaluation.chess.square_control_eval");
+        //   let board = chess_board_module.ChessBoard();
+        //   let sqc_eval = sqc_eval_module.SquareControlEval();
+        //   console.log(sqc_eval.get_score(board, false));
+
+          let results = await self.pyodide.runPythonAsync(`
+            from arek_chess.board.chess.chess_board import ChessBoard
+            from arek_chess.criteria.evaluation.chess.square_control_eval import SquareControlEval
+
+            board = ChessBoard()
+            evaluator = SquareControlEval()
+            float(evaluator.get_score(board, False))
+        `);
+          console.log(results)
+      }
+      loadHackableBot();
+
+    //   let results = await self.pyodide.runPythonAsync(`
+    //     from controller import Controller
+    //     controller = Controller()
+    //     controller.boot_up()
+    //     0
+    // `);
+
       async function startWorker() {
-          const pyodideWorker = new Worker("./worker.js");
+          const pyodideWorker = new Worker('./js/worker.js');
 
           let startTime = null;
 

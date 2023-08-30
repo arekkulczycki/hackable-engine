@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from functools import reduce
 from itertools import groupby
 from operator import ior
-from typing import Dict, Generator, Iterable, Iterator, List, Optional, Tuple
+from typing import Callable, Dict, Generator, Iterable, Iterator, List, Optional, Tuple
 
 from arek_chess.board import BitBoard, GameBoardBase
 from arek_chess.board.hex.mixins import BoardShapeError
@@ -13,6 +14,7 @@ from arek_chess.board.hex.mixins.bitboard_utils import generate_masks
 from arek_chess.board.hex.mixins.hex_board_serializer_mixin import (
     HexBoardSerializerMixin,
 )
+from numpy import mean
 
 Cell = int
 
@@ -52,6 +54,14 @@ BB_CELLS_13 = [
 # fmt: on
 
 VEC_1: BitBoard = 2**13 - 1
+
+
+@dataclass
+class CWCounter:
+    black_connectedness: int
+    white_connectedness: int
+    black_wingspan: int
+    white_wingspan: int
 
 
 @dataclass
@@ -596,7 +606,108 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
     def is_check(self) -> bool:
         """
         Get if is check.
-        TODO: do something about it
+        TODO: do something about it (should not be required in base class)
         """
 
         return False
+
+    def get_connectedness_and_wingspan(self) -> Tuple[int, int]:
+        """
+        Scan in every of 3 dimensions of the board, in each aggregating series of stones of same color.
+
+        If no stone of opposition color is in-between then stones are considered "connected" and their wingspan is
+        equal to distance between them.
+        """
+
+        cw_counter: CWCounter = CWCounter(0, 0, 0, 0)
+
+        self._loop_all_cells(cw_counter, lambda mask, i: mask << 1)
+        self._loop_all_cells(
+            cw_counter,
+            lambda mask, i: mask << self.size
+            if i % self.size == self.size - 1
+            else mask >> (self.size - 1),
+        )
+        self._loop_all_cells(
+            cw_counter,
+            lambda mask, i: mask << (self.size - 1)
+            if self._x(mask) != 0
+            else mask >> (self._y(mask) * (self.size - 1) - 1),
+        )
+
+        return (
+            cw_counter.white_connectedness - cw_counter.black_connectedness,
+            cw_counter.white_wingspan - cw_counter.black_wingspan,
+        )
+
+    def _loop_all_cells(self, cw_counter: CWCounter, mask_shift: Callable) -> None:
+        """"""
+
+        mask: int = 1
+        last_occupied: Optional[bool] = None
+        wingspan_counter: int = 0
+
+        # iterate over each column, moving cell by cell from left to right
+        for i in range(self.size**2):
+            if i % self.size == 0:
+                wingspan_counter = 0
+                last_occupied = None
+
+            else:
+                if mask & self.occupied_co[False]:
+                    if last_occupied is False:
+                        cw_counter.black_connectedness += 1
+                        cw_counter.black_wingspan += wingspan_counter
+
+                    last_occupied = False
+                    wingspan_counter = 0
+
+                elif mask & self.occupied_co[True]:
+                    if last_occupied is True:
+                        cw_counter.white_connectedness += 1
+                        cw_counter.white_wingspan += wingspan_counter
+
+                    last_occupied = True
+                    wingspan_counter = 0
+
+            mask = mask_shift(mask)
+            wingspan_counter += 1
+
+    def get_imbalance(self, color: bool) -> float:
+        """
+        Sum up if stones are distributed in a balanced way across:
+            - left/right
+            - top/left
+            - center/edge
+        """
+
+        half_size: float = self.size / 2
+
+        occupied = self.occupied_co[color]
+
+        xs: List[int] = []
+        ys: List[int] = []
+        center_distances: List[float] = []
+
+        for mask in generate_masks(occupied):
+            x = self._x(mask)
+            y = self._y(mask)
+            xs.append(x)
+            ys.append(y)
+            center_distances.append((half_size - x) ** 2 + (half_size - y) ** 2)
+
+        imbalance_x = abs(half_size - mean(xs))
+        imbalance_y = abs(half_size - mean(ys))
+        imbalance_center = abs((self.size / 4) ** 2 - mean(center_distances))
+
+        return imbalance_x + imbalance_y + imbalance_center
+
+    def _x(self, mask: BitBoard) -> int:
+        """"""
+
+        return (mask - 1).bit_length() % self.size
+
+    def _y(self, mask: BitBoard) -> int:
+        """"""
+
+        return mask.bit_length() // self.size
