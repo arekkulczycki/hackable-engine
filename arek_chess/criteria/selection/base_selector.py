@@ -22,7 +22,7 @@ class BaseSelector(ABC):
         :param nodes: list of nodes to be selected from  # TODO: in future probably generator instead of list
         :param color: color for which the scores are decided (white needs higher scores, black - lower)
 
-        :return: return index to be selected
+        :returns: return index to be selected
         """
 
         raise NotImplementedError

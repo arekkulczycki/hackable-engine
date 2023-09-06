@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import math
+from copy import copy
 from dataclasses import dataclass
 from functools import reduce
-from itertools import groupby
+from itertools import groupby, permutations, product
 from operator import ior
 from typing import Callable, Dict, Generator, Iterable, Iterator, List, Optional, Tuple
+
+from nptyping import Int8, NDArray, Shape
+from numpy import empty, float32, int8, mean, zeros
 
 from arek_chess.board import BitBoard, GameBoardBase
 from arek_chess.board.hex.mixins import BoardShapeError
@@ -14,46 +18,18 @@ from arek_chess.board.hex.mixins.bitboard_utils import generate_masks
 from arek_chess.board.hex.mixins.hex_board_serializer_mixin import (
     HexBoardSerializerMixin,
 )
-from numpy import mean
+from arek_chess.common.constants import DEFAULT_HEX_BOARD_SIZE
+from astar import find_path
 
 Cell = int
 
 SIZE = 13
 
-# fmt: off
-CELLS_13 = [
-    A1,B1,C1,D1,E1,F1,G1,H1,I1,J1,K1,L1,M1,
-    A2,B2,C2,D2,E2,F2,G2,H2,I2,J2,K2,L2,M2,
-    A3,B3,C3,D3,E3,F3,G3,H3,I3,J3,K3,L3,M3,
-    A4,B4,C4,D4,E4,F4,G4,H4,I4,J4,K4,L4,M4,
-    A5,B5,C5,D5,E5,F5,G5,H5,I5,J5,K5,L5,M5,
-    A6,B6,C6,D6,E6,F6,G6,H6,I6,J6,K6,L6,M6,
-    A7,B7,C7,D7,E7,F7,G7,H7,I7,J7,K7,L7,M7,
-    A8,B8,C8,D8,E8,F8,G8,H8,I8,J8,K8,L8,M8,
-    A9,B9,C9,D9,E9,F9,G9,H9,I9,J9,K9,L9,M9,
-    A10,B10,C10,D10,E10,F10,G10,H10,I10,J10,K10,L10,M10,
-    A11,B11,C11,D11,E11,F11,G11,H11,I11,J11,K11,L11,M11,
-    A12,B12,C12,D12,E12,F12,G12,H12,I12,J12,K12,L12,M12,
-    A13,B13,C13,D13,E13,F13,G13,H13,I13,J13,K13,L13,M13,
-] = range(SIZE*SIZE)
-BB_CELLS_13 = [
-    BB_A1,BB_B1,BB_C1,BB_D1,BB_E1,BB_F1,BB_G1,BB_H1,BB_I1,BB_J1,BB_K1,BB_L1,BB_M1,
-    BB_A2,BB_B2,BB_C2,BB_D2,BB_E2,BB_F2,BB_G2,BB_H2,BB_I2,BB_J2,BB_K2,BB_L2,BB_M2,
-    BB_A3,BB_B3,BB_C3,BB_D3,BB_E3,BB_F3,BB_G3,BB_H3,BB_I3,BB_J3,BB_K3,BB_L3,BB_M3,
-    BB_A4,BB_B4,BB_C4,BB_D4,BB_E4,BB_F4,BB_G4,BB_H4,BB_I4,BB_J4,BB_K4,BB_L4,BB_M4,
-    BB_A5,BB_B5,BB_C5,BB_D5,BB_E5,BB_F5,BB_G5,BB_H5,BB_I5,BB_J5,BB_K5,BB_L5,BB_M5,
-    BB_A6,BB_B6,BB_C6,BB_D6,BB_E6,BB_F6,BB_G6,BB_H6,BB_I6,BB_J6,BB_K6,BB_L6,BB_M6,
-    BB_A7,BB_B7,BB_C7,BB_D7,BB_E7,BB_F7,BB_G7,BB_H7,BB_I7,BB_J7,BB_K7,BB_L7,BB_M7,
-    BB_A8,BB_B8,BB_C8,BB_D8,BB_E8,BB_F8,BB_G8,BB_H8,BB_I8,BB_J8,BB_K8,BB_L8,BB_M8,
-    BB_A9,BB_B9,BB_C9,BB_D9,BB_E9,BB_F9,BB_G9,BB_H9,BB_I9,BB_J9,BB_K9,BB_L9,BB_M9,
-    BB_A10,BB_B10,BB_C10,BB_D10,BB_E10,BB_F10,BB_G10,BB_H10,BB_I10,BB_J10,BB_K10,BB_L10,BB_M10,
-    BB_A11,BB_B11,BB_C11,BB_D11,BB_E11,BB_F11,BB_G11,BB_H11,BB_I11,BB_J11,BB_K11,BB_L11,BB_M11,
-    BB_A12,BB_B12,BB_C12,BB_D12,BB_E12,BB_F12,BB_G12,BB_H12,BB_I12,BB_J12,BB_K12,BB_L12,BB_M12,
-    BB_A13,BB_B13,BB_C13,BB_D13,BB_E13,BB_F13,BB_G13,BB_H13,BB_I13,BB_J13,BB_K13,BB_L13,BB_M13,
-] = [1 << sq for sq in CELLS_13]
-# fmt: on
-
 VEC_1: BitBoard = 2**13 - 1
+NEIGHBOURHOOD_DIAMETER: int = 7
+ZERO: int8 = int8(0)
+ONE: int8 = int8(1)
+TWO: int8 = int8(2)
 
 
 @dataclass
@@ -67,14 +43,40 @@ class CWCounter:
 @dataclass
 class Move:
     mask: BitBoard
+    size: int
+
+    def __str__(self) -> str:
+        """"""
+
+        return self.get_coord()
+
+    def uci(self) -> str:
+        """"""
+
+        return self.get_coord()
 
     def get_coord(self) -> str:
         """"""
 
-        raise NotImplementedError
+        bl: int = self.mask.bit_length() - 1
+        x = bl % self.size
+        y = bl // self.size
+        return f"{chr(x + 97)}{y + 1}"
 
     @classmethod
-    def from_cord(cls, coord: str, size: int) -> Move:
+    def from_coord(cls, coord: str, size: int) -> Move:
+        """"""
+
+        return cls(cls.mask_from_coord(coord, size), size)
+
+    @classmethod
+    def from_xy(cls, x: int, y: int, size: int) -> Move:
+        """"""
+
+        return cls(cls.mask_from_xy(x, y, size), size)
+
+    @staticmethod
+    def mask_from_coord(coord: str, size: int) -> BitBoard:
         """"""
 
         col_str: str
@@ -82,13 +84,47 @@ class Move:
         g: Tuple[bool, Iterable]
 
         groups = groupby(coord, str.isalpha)
-        row_str, col_str = ("".join(g[1]) for g in groups)
+        col_str, row_str = ("".join(g[1]) for g in groups)
+
+        col = ord(col_str) - 97
+        row = int(row_str)
+
+        if col > size or row > size:
+            raise ValueError(f"Move coordinate {coord} is outside of given size bounds")
 
         # a1 => (0, 0) => 0b1
-        return cls(1 << ((int(col_str) - 1) + (ord(row_str) - 97) * size))
+        return 1 << (col + size * (row - 1))
+
+    @staticmethod
+    def mask_from_xy(x: int, y: int, size: int) -> BitBoard:
+        """"""
+
+        return 1 << (x + size * y)
+
+    def x(self) -> int:
+        """"""
+
+        return self._x(self.mask, self.size)
+
+    @staticmethod
+    def _x(mask: BitBoard, size: int):
+        """"""
+
+        return (mask.bit_length() - 1) % size
+
+    def y(self) -> int:
+        """"""
+
+        return self._y(self.mask, self.size)
+
+    @staticmethod
+    def _y(mask: BitBoard, size: int) -> int:
+        """"""
+
+        return (mask.bit_length() - 1) // size
 
 
-class HexBoard(GameBoardBase, HexBoardSerializerMixin):
+class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     """
     Handling the hex board and calculating features of a position.
     """
@@ -102,12 +138,24 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
     occupied_co: Dict[bool, BitBoard]
     unoccupied: BitBoard
 
-    def __init__(self, size=13) -> None:
+    has_move_limit: bool = True
+
+    initial_notation: str
+
+    def __init__(
+        self,
+        notation: Optional[str] = None,
+        *,
+        size: int = DEFAULT_HEX_BOARD_SIZE,
+        init_move_stack: bool = False,
+    ) -> None:
         """"""
 
         super().__init__()
 
+        self.initial_notation = notation
         self.size = size
+        self.size_square = size**2
         self.bb_rows: List[BitBoard] = [
             reduce(ior, [1 << (col + row * size) for col in range(size)])
             for row in range(size)
@@ -118,20 +166,64 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
         ]
         self.vertical_coeff = 2**self.size
         self.diagonal_coeff = 2 ** (self.size - 1)
-        self.reset_board()
+        self.reset()
 
-    def reset_board(self) -> None:
+        if notation:
+            self.initialize_notation(notation, init_move_stack)
+
+        self.short_diagonal_mask = self._get_short_diagonal_mask()
+        self.long_diagonal_mask = self._get_long_diagonal_mask()
+
+    def initialize_notation(self, notation: str, init_move_stack: bool = False) -> None:
+        """"""
+
+        move_str: str = ""
+        color: bool = False
+        for is_letter, value in groupby(notation, str.isalpha):
+            move_str += "".join(value)
+            if not is_letter:
+                mask = Move.mask_from_coord(move_str, self.size)
+                self.occupied_co[color] |= mask
+                if init_move_stack:
+                    self.move_stack.append(Move(mask, self.size))
+
+                move_str = ""
+                color = not color
+
+        self.unoccupied ^= self.occupied_co[True] | self.occupied_co[False]
+
+        self.turn = color
+
+    def get_notation(self) -> str:
+        """"""
+
+        notation: str = self.initial_notation or ""
+
+        for move in self.move_stack:
+            notation += move.get_coord()
+
+        return notation
+
+    def reset(self) -> None:
         """"""
 
         self.turn = False
         self.occupied_co = {False: 0, True: 0}
-        self.unoccupied = 0
+        self.unoccupied = self.get_all_mask()
+        self.move_stack = []
 
-    def color_at(self, cell: Cell) -> Optional[bool]:
+    def get_all_mask(self) -> BitBoard:
         """"""
 
-        mask = BB_CELLS_13[cell]
+        return (1 << self.size_square) - 1
+
+    def color_at(self, mask: BitBoard) -> Optional[bool]:
+        """"""
+
         return self.color_at_mask(mask)
+
+    def mask_at(self, x: int, y: int) -> BitBoard:
+        """"""
 
     def color_at_mask(self, mask: BitBoard) -> Optional[bool]:
         """"""
@@ -149,13 +241,13 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
 
         return self.occupied_co[False] | self.occupied_co[True]
 
-    def is_adjacent(self, cell_1: Cell, cell_2: Cell):
+    def is_adjacent(self, mask_1: BitBoard, mask_2: BitBoard):
         """"""
 
-        if cell_1 is cell_2:
+        if mask_1 is mask_2:
             return False
 
-        return self.is_adjacent_mask(BB_CELLS_13[cell_1], BB_CELLS_13[cell_2])
+        return self.is_adjacent_mask(mask_1, mask_2)
 
     def is_adjacent_mask(self, mask_1: BitBoard, mask_2: BitBoard) -> bool:
         """"""
@@ -397,8 +489,7 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
     def generate_adjacent_cells(
         self,
         mask: BitBoard,
-        visited: BitBoard = 0,
-        empty_only: bool = False,
+        among: Optional[BitBoard] = None,
         direction: Optional[bool] = None,
     ) -> Generator[BitBoard, None, None]:
         """
@@ -433,14 +524,15 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
                 self.cell_up,
             )
 
-        among: BitBoard = ~self.occupied & ~visited if empty_only else ~visited
         for f in functions:
             try:
                 neighbour_cell = f(mask)
             except BoardShapeError:
                 continue
             else:
-                if neighbour_cell & among:
+                if (among is not None and neighbour_cell & among) or (
+                    among is None and neighbour_cell
+                ):
                     yield neighbour_cell
 
     def generate_local_moves(
@@ -451,7 +543,7 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
         """
 
         for adjacent_mask in self.generate_adjacent_cells(
-            last_move_mask, visited=0, empty_only=True
+            last_move_mask, among=self.unoccupied
         ):
             yield adjacent_mask
 
@@ -489,30 +581,41 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
                         yield neighbour_cell
 
     @property
-    def legal_moves(self) -> Generator[BitBoard, None, None]:
+    def legal_moves(self) -> Generator[Move, None, None]:
         """"""
+
+        if self.winner() is not None:
+            return self.generate_nothing()
 
         return self.generate_moves()
 
-    def generate_moves(self) -> Generator[BitBoard, None, None]:
+    @staticmethod
+    def generate_nothing() -> Generator[Move, None, None]:
+        """"""
+
+        yield from ()
+
+    def generate_moves(self) -> Generator[Move, None, None]:
         """
         Generating all moves, but adjacent (local) first.
         """
 
         visited: BitBoard = yield from self.generate_adjacent_moves()
 
+        visited = yield from self.generate_diagonal_moves(visited)
+
         yield from self.generate_remaining_moves(visited)
 
     def generate_adjacent_moves(
         self, visited: BitBoard = 0
-    ) -> Generator[BitBoard, None, BitBoard]:
+    ) -> Generator[Move, None, BitBoard]:
         """"""
 
         for mask in self.generate_occupied():
             for adjacent_mask in self.generate_adjacent_cells(
-                mask, visited, empty_only=True
+                mask, among=self.unoccupied & ~visited
             ):
-                yield adjacent_mask
+                yield Move(adjacent_mask, self.size)
                 visited |= adjacent_mask
 
         return visited
@@ -539,52 +642,80 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
 
         yield from generate_masks(self.occupied_co[True])
 
-    def generate_remaining_moves(
+    def generate_diagonal_moves(
         self, visited: BitBoard
-    ) -> Generator[BitBoard, None, None]:
+    ) -> Generator[Move, None, BitBoard]:
         """"""
 
-        yield from generate_masks(self.unoccupied & ~visited)
+        to_visit: BitBoard = (
+            (self.short_diagonal_mask | self.long_diagonal_mask)
+            & self.unoccupied
+            & ~visited
+        )
+        for mask in generate_masks(to_visit):
+            yield Move(mask, self.size)
+
+        return visited | to_visit
+
+    def generate_remaining_moves(
+        self, visited: BitBoard
+    ) -> Generator[Move, None, None]:
+        """"""
+
+        yield from (
+            Move(mask, self.size) for mask in generate_masks(self.unoccupied & ~visited)
+        )
 
     def position(self) -> str:
         """"""
 
+        return self.get_notation()  # TODO: was it meant to return bitboard maybe?
+
     def copy(self) -> HexBoard:
         """"""
+
+        return copy(self)
 
     def push_coord(self, coord: str) -> None:
         """"""
 
-        self.push(Move.from_cord(coord, self.size).mask)
+        self.push(Move.from_coord(coord, self.size))
 
-    def push(self, move: BitBoard) -> None:
+    def push(self, move: Move) -> None:
         """"""
 
-        self.occupied_co[self.turn] |= move
+        if move.mask & self.unoccupied == 0:
+            print("board", bin(self.unoccupied), bin(self.occupied))
+            raise ValueError(f"the move is occupied: {move.uci()}")
 
-        self.move_stack.append(Move(move))
+        self.occupied_co[self.turn] |= move.mask
+        self.unoccupied ^= move.mask
+
+        self.move_stack.append(move)
 
         self.turn = not self.turn
 
     def pop(self) -> None:
         """"""
 
-        self.occupied_co[not self.turn] &= ~self.move_stack.pop().mask
+        self.occupied_co[not self.turn] ^= self.move_stack.pop().mask
 
         self.turn = not self.turn
 
-    def get_forcing_level(self, move: BitBoard) -> int:
+    def get_forcing_level(self, move: Move) -> int:
         """
-        Get how forcing is the hypothetical move (should be empty at the moment).
+        Get how forcing is the move.
 
         Considered forcing when adjacent to both own and opponent stone *or* when adjacent to lone opponent stone.
         """
+
+        return 0
 
         adjacent_black: Optional[BitBoard] = None
         adjacent_white: Optional[BitBoard] = None
 
         # adjacent to both colors
-        for mask in self.generate_adjacent_cells(move):
+        for mask in self.generate_adjacent_cells(move.mask):
             if not adjacent_black and mask & self.occupied_co[False]:
                 adjacent_black = mask
             if not adjacent_white and mask & self.occupied_co[True]:
@@ -595,10 +726,14 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
 
         # adjacent to a lone stone
         if self.turn and adjacent_black:
-            if not any(self.generate_adjacent_cells(adjacent_black, empty_only=True)):
+            if not any(
+                self.generate_adjacent_cells(adjacent_black, among=self.unoccupied)
+            ):
                 return 1
         elif not self.turn and adjacent_white:
-            if not any(self.generate_adjacent_cells(adjacent_white, empty_only=True)):
+            if not any(
+                self.generate_adjacent_cells(adjacent_white, among=self.unoccupied)
+            ):
                 return 1
 
         return 0
@@ -606,12 +741,13 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
     def is_check(self) -> bool:
         """
         Get if is check.
-        TODO: do something about it (should not be required in base class)
+        TODO: do something about it (should not be required in base class),
+         !!! currently always True to indicate no draw in evaluator !!!
         """
 
-        return False
+        return True
 
-    def get_connectedness_and_wingspan(self) -> Tuple[int, int]:
+    def get_connectedness_and_wingspan(self) -> Tuple[int, int, int, int]:
         """
         Scan in every of 3 dimensions of the board, in each aggregating series of stones of same color.
 
@@ -621,59 +757,143 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
 
         cw_counter: CWCounter = CWCounter(0, 0, 0, 0)
 
-        self._loop_all_cells(cw_counter, lambda mask, i: mask << 1)
-        self._loop_all_cells(
+        self._walk_all_cells(
+            cw_counter, True, lambda mask, i: mask << 1
+        )  # left to right
+        self._walk_all_cells(  # top to bottom
             cw_counter,
-            lambda mask, i: mask << self.size
-            if i % self.size == self.size - 1
-            else mask >> (self.size - 1),
+            False,
+            lambda mask, i: (
+                y := self._y(mask),
+                mask << self.size
+                if y != self.size - 1
+                else mask >> self.size * (self.size - 1) - 1,
+            )[1],
         )
-        self._loop_all_cells(
+        self._walk_all_cells(  # top-right to bottom-left, along short diagonal
             cw_counter,
-            lambda mask, i: mask << (self.size - 1)
-            if self._x(mask) != 0
-            else mask >> (self._y(mask) * (self.size - 1) - 1),
+            None,
+            lambda mask, i: (
+                x := self._x(mask),
+                y := self._y(mask),
+                mask << 1
+                if mask == 1 or i >= self.size_square - 2
+                else mask << (self.size - 1)
+                if x != 0 and y != self.size - 1
+                else mask >> (y * (self.size - 1) - 1)
+                if x == 0 and y != self.size - 1
+                else mask >> (self.size * (self.size - x - 2) - (self.size - x - 1)),
+            )[2],
         )
 
         return (
-            cw_counter.white_connectedness - cw_counter.black_connectedness,
-            cw_counter.white_wingspan - cw_counter.black_wingspan,
+            cw_counter.white_connectedness,
+            cw_counter.black_connectedness,
+            cw_counter.white_wingspan,
+            cw_counter.black_wingspan,
         )
 
-    def _loop_all_cells(self, cw_counter: CWCounter, mask_shift: Callable) -> None:
-        """"""
+    def _walk_all_cells(
+        self, cw_counter: CWCounter, edge_color: Optional[bool], mask_shift: Callable
+    ) -> None:
+        """
+        Walk over all cells using given shift from cell to cell.
+
+        :param cw_counter: connectedness and wingspan counter object
+        :param edge_color: color of the edge (point on start and finish)
+        :param mask_shift: function that shifts the mask on every iteration
+        """
 
         mask: int = 1
         last_occupied: Optional[bool] = None
         wingspan_counter: int = 0
+        ec: Optional[bool]
+        """Edge color at the end of iteration."""
 
         # iterate over each column, moving cell by cell from left to right
-        for i in range(self.size**2):
-            if i % self.size == 0:
+        for i in range(self.size_square):
+            x = self._x(mask)
+            y = self._y(mask)
+            if (edge_color is not None and i % self.size == 0) or (
+                edge_color is None and (x == self.size - 1 or y == 0)
+            ):
+                ec = self._increment_on_finished_column(
+                    cw_counter, edge_color, i, wingspan_counter, last_occupied
+                )
+
+                wingspan_counter = 1
+                last_occupied = (
+                    edge_color if edge_color is not None else not ec
+                )  # first edge opposite to final edge
+
+            if mask & self.occupied_co[False]:
+                if not last_occupied:  # None or False
+                    cw_counter.black_connectedness += 1
+                    cw_counter.black_wingspan += wingspan_counter
+
+                last_occupied = False
                 wingspan_counter = 0
-                last_occupied = None
 
-            else:
-                if mask & self.occupied_co[False]:
-                    if last_occupied is False:
-                        cw_counter.black_connectedness += 1
-                        cw_counter.black_wingspan += wingspan_counter
+            elif mask & self.occupied_co[True]:
+                if last_occupied is None or last_occupied is True:
+                    cw_counter.white_connectedness += 1
+                    cw_counter.white_wingspan += wingspan_counter
 
-                    last_occupied = False
-                    wingspan_counter = 0
+                last_occupied = True
+                wingspan_counter = 0
 
-                elif mask & self.occupied_co[True]:
-                    if last_occupied is True:
-                        cw_counter.white_connectedness += 1
-                        cw_counter.white_wingspan += wingspan_counter
-
-                    last_occupied = True
-                    wingspan_counter = 0
-
-            mask = mask_shift(mask)
+            mask = mask_shift(mask, i)
             wingspan_counter += 1
 
-    def get_imbalance(self, color: bool) -> float:
+        self._increment_on_finished_column(
+            cw_counter, edge_color, i, wingspan_counter, last_occupied
+        )
+
+    def _increment_on_finished_column(
+        self,
+        cw_counter: CWCounter,
+        edge_color: Optional[bool],
+        i: int,
+        wingspan_counter: int,
+        last_occupied: Optional[bool],
+    ) -> Optional[bool]:
+        """"""
+
+        ec = edge_color if edge_color is not None else self._get_final_edge_color(i)
+
+        # increment counters for the connection with the edge at the end of iteration (first iteration excluded)
+        if i != 0 and wingspan_counter <= self.size:
+            if last_occupied is False and not ec:  # None or False
+                cw_counter.black_connectedness += 1
+                cw_counter.black_wingspan += wingspan_counter
+            if last_occupied is True and (ec is None or ec is True):
+                cw_counter.white_connectedness += 1
+                cw_counter.white_wingspan += wingspan_counter
+
+        return ec
+
+    def _get_final_edge_color(self, i: int) -> Optional[bool]:
+        """
+        Get closing edge of the board on last cell of column/row.
+
+        This returns the edge color for iterating along short diagonal from top-right towards bottom-left.
+
+        :param i: iteration counter
+
+        :returns: None on short diagonal, white in the top-left triangle-half of the board, otherwise black.
+        """
+
+        half_number_of_cells: int = (self.size_square - self.size) // 2
+        """Half of cells except the short diagonal."""
+
+        if i <= half_number_of_cells:
+            return True
+        elif i <= half_number_of_cells + self.size:
+            return None
+        else:
+            return False
+
+    def get_imbalance(self, color: bool) -> Tuple[float32, float32]:
         """
         Sum up if stones are distributed in a balanced way across:
             - left/right
@@ -681,9 +901,11 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
             - center/edge
         """
 
-        half_size: float = self.size / 2
+        half_size: float = self.size / 2 - 0.5
 
         occupied = self.occupied_co[color]
+        if not occupied:
+            return float32(0), float32(0)
 
         xs: List[int] = []
         ys: List[int] = []
@@ -696,18 +918,248 @@ class HexBoard(GameBoardBase, HexBoardSerializerMixin):
             ys.append(y)
             center_distances.append((half_size - x) ** 2 + (half_size - y) ** 2)
 
-        imbalance_x = abs(half_size - mean(xs))
-        imbalance_y = abs(half_size - mean(ys))
-        imbalance_center = abs((self.size / 4) ** 2 - mean(center_distances))
+        imbalance_x = float32(abs(half_size - mean(xs)))
+        imbalance_y = float32(abs(half_size - mean(ys)))
+        imbalance_center = float32(
+            abs((self.size / 4) - math.sqrt(mean(center_distances)))
+        )
 
-        return imbalance_x + imbalance_y + imbalance_center
+        return imbalance_x + imbalance_y, imbalance_center
+
+    def get_neighbourhood(
+        self, diameter: int = NEIGHBOURHOOD_DIAMETER, should_suppress: bool = False
+    ) -> NDArray[Shape, Int8]:
+        """
+        Return a collection of states of cells around the cell that was played last.
+
+        If the move is on the border then
+
+        The order in the collection should be subsequent rows top to bottom, each row from left to right.
+        """
+
+        if self.size < diameter:
+            raise ValueError("Cannot get neighbourhood larger than board size")
+
+        shift = (diameter - 1) // 2
+
+        if not self.occupied_co[True] | self.occupied_co[False]:
+            return zeros((diameter ** 2,), dtype=int8)
+
+        if not self.move_stack:
+            if should_suppress:
+                return zeros((diameter ** 2,), dtype=int8)
+
+            raise ValueError("Cannot get neighbourhood of `None`")
+            # print("empty board")
+
+        move: Move = self.move_stack[-1]
+        move_x: int = move.x()
+        move_y: int = move.y()
+
+        top_left_mask_x = (
+            move_x - shift
+            if shift <= move_x <= self.size - shift - 1
+            else 0
+            if move_x < shift
+            else self.size - 1
+        )
+        top_left_mask_y = (
+            move_y - shift
+            if shift <= move_y <= self.size - shift - 1
+            else 0
+            if move_y < shift
+            else self.size - 1
+        )
+
+        mask: BitBoard = Move.mask_from_xy(top_left_mask_x, top_left_mask_y, self.size)
+        """Top-left mask at start, then shifted."""
+
+        array = empty((diameter, diameter), dtype=int8)
+        for row in range(diameter):
+            for col in range(diameter):
+                occupied_white = mask & self.occupied_co[True]
+                occupied_black = mask & self.occupied_co[False]
+                array[row][col] = (
+                    TWO if occupied_black else ONE if occupied_white else ZERO
+                )
+
+                if col != diameter - 1:  # last iteration
+                    mask <<= 1
+
+            if row != diameter - 1:  # last iteration
+                mask <<= self.size - diameter + 1
+
+        return array.flatten()
 
     def _x(self, mask: BitBoard) -> int:
         """"""
 
-        return (mask - 1).bit_length() % self.size
+        return Move._x(mask, self.size)
 
     def _y(self, mask: BitBoard) -> int:
         """"""
 
-        return mask.bit_length() // self.size
+        return Move._y(mask, self.size)
+
+    def _get_short_diagonal_mask(self) -> BitBoard:
+        """"""
+
+        mask = 0
+
+        pointer = 1 << (self.size - 1)
+        for i in range(self.size):
+            mask |= pointer
+            if i < self.size - 1:
+                pointer = self.cell_downleft(pointer)
+
+        pointer = 1 << (self.size - 1)
+        for i in range(self.size - 1):
+            mask |= pointer
+            if i < self.size - 2:
+                pointer = self.cell_downleft(pointer)
+
+        pointer = 1 << (2 * self.size - 1)
+        for i in range(self.size - 1):
+            mask |= pointer
+            if i < self.size - 2:
+                pointer = self.cell_downleft(pointer)
+
+        return mask
+
+    def _get_long_diagonal_mask(self) -> BitBoard:
+        """"""
+
+        mask = 0
+
+        pointer = 1
+        for i in range(self.size):
+            mask |= pointer
+            if i < self.size - 1:
+                pointer = self.bridge_diag_right(pointer)
+
+        pointer = 1 << 1
+        for i in range(self.size - 1):
+            mask |= pointer
+            if i < self.size - 2:
+                pointer = self.bridge_diag_right(pointer)
+
+        pointer = 1 << self.size
+        for i in range(self.size - 1):
+            mask |= pointer
+            if i < self.size - 2:
+                pointer = self.bridge_diag_right(pointer)
+
+        return mask
+
+    def get_move_limit(self) -> int:
+        """
+        :returns: number of permutations how the board can be filled
+        """
+
+        unoccupied_count = self.unoccupied.bit_count()
+        return math.factorial(unoccupied_count)
+
+    def distance(self, m1: BitBoard, m2: BitBoard, color: bool) -> int:
+        """
+        Calculate distance from one cell to another, assuming that stepping on opposition stones is prohibited.
+        """
+
+        path = find_path(
+            m1,
+            m2,
+            neighbors_fnct=lambda m: self.generate_adjacent_cells(
+                m, among=self.unoccupied | self.occupied_co[color]
+            ),
+        )
+        if path is None:
+            raise ValueError("Path does not exist between the given points")
+        return len(path) - 1
+
+    def distance_missing(self, m1: BitBoard, m2: BitBoard, color: bool) -> int:
+        """
+        Calculate how many stones are missing to finish the connection from one cell to another.
+        """
+
+        path = find_path(
+            m1,
+            m2,
+            neighbors_fnct=lambda m: self.generate_adjacent_cells(
+                m, among=self.unoccupied | self.occupied_co[color]
+            ),
+            distance_between_fnct=lambda m1, m2: 1
+            if self.unoccupied
+            & (m1 | m2)  # additional cost so that it avoids stepping on empty
+            else 0,
+            heuristic_cost_estimate_fnct=lambda a, b: 0,
+        )
+
+        if path is None:
+            return self.size
+
+        return len([mask for mask in path if mask & self.unoccupied])
+
+    def get_shortest_missing_distance(self, color: bool) -> int:
+        """
+        Calculate how many stones are missing to finish the connection between two sides.
+        """
+
+        connection_points_start: List[BitBoard] = self._get_start_points(color)
+        connection_points_finish: List[BitBoard] = self._get_finish_points(color)
+
+        if not (connection_points_start and connection_points_finish):
+            raise ValueError("searching shortest missing distance on game over")
+
+        connection_points_pairs: product[Tuple[BitBoard, BitBoard]] = product(
+            connection_points_start, connection_points_finish
+        )
+        return min([self.distance_missing(*pair, color) for pair in connection_points_pairs])
+
+    def _get_start_points(self, color: bool) -> List[BitBoard]:
+        """"""
+
+        own = self.occupied_co[color]
+
+        if color:
+            # all own cells at first column
+            points = own & self.bb_cols[0]
+            if points:
+                return list(generate_masks(points))
+            else:
+                opp = self.occupied_co[not color]
+                masks = list(generate_masks(self.bb_cols[0] & ~opp))
+                return [masks[len(masks)//2]]  # take a single point in the middle of an edge
+
+        else:
+            # all own cells at first row
+            points = own & self.bb_rows[0]
+            if points:
+                return list(generate_masks(points))
+            else:
+                opp = self.occupied_co[not color]
+                masks = list(generate_masks(self.bb_rows[0] & ~opp))
+                return [masks[len(masks)//2]]  # take a single point in the middle of an edge
+
+    def _get_finish_points(self, color: bool) -> List[BitBoard]:
+        """"""
+
+        own = self.occupied_co[color]
+
+        if color:
+            # all own cells at first column
+            points = own & self.bb_cols[-1]
+            if points:
+                return list(generate_masks(points))
+            else:
+                opp = self.occupied_co[not color]
+                masks = list(generate_masks(self.bb_cols[-1] & ~opp))
+                return [masks[len(masks)//2]]  # take a single point in the middle of an edge
+
+        else:
+            # all own cells at first row
+            points = own & self.bb_rows[-1]
+            if points:
+                return list(generate_masks(points))
+            else:
+                opp = self.occupied_co[not color]
+                masks = list(generate_masks(self.bb_rows[-1] & ~opp))
+                return [masks[len(masks)//2]]  # take a single point in the middle of an edge

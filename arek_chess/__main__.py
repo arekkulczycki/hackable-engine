@@ -79,6 +79,13 @@ if __name__ == "__main__":
         help="Runs in a new thread.",
         action="store_true",
     )
+    arg_parser.add_argument("-G", "--game-played", type=str, choices=["chess", "hex"], help="Game to be played")
+    arg_parser.add_argument(
+        "-bs",
+        "--board-size",
+        type=int,
+        help="Size of the board to be played on.",
+    )
 
     args = arg_parser.parse_args()
 
@@ -94,6 +101,8 @@ if __name__ == "__main__":
         search_limit=args.search_limit,
         model_version=args.model_version,
         timeout=args.timeout,
+        game=args.game_played,
+        board_size=args.board_size
     )
     controller.boot_up()
 

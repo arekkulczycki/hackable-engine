@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-.
 from __future__ import annotations
 
+from typing import ClassVar
+
 from arek_chess.board.chess.mixins.chess_board_serializer_mixin import (
-    BOARD_BYTES_NUMBER,
+    CHESS_BOARD_BYTES_NUMBER,
 )
 from arek_chess.common.queue.items.base_item import BaseItem
 
@@ -19,22 +21,23 @@ class EvalItem(BaseItem):
     # move_str: str
     # captured: int
     # board: bytes
+    board_bytes_number: ClassVar[int] = CHESS_BOARD_BYTES_NUMBER
 
     def __init__(
-        self, run_id: str, node_name: str, move_str: str, is_forcing: int, board: bytes
+        self, run_id: str, parent_node_name: str, move_str: str, forcing_level: int, board: bytes
     ) -> None:
         self.run_id: str = run_id
-        self.node_name: str = node_name
+        self.parent_node_name: str = parent_node_name
         self.move_str: str = move_str
-        self.is_forcing: int = is_forcing
+        self.forcing_level: int = forcing_level
         self.board: bytes = board
 
     @staticmethod
     def loads(bytes_: bytes) -> EvalItem:
         """"""
 
-        string_part = bytes_[:-BOARD_BYTES_NUMBER]
-        board = bytes_[-BOARD_BYTES_NUMBER:]
+        string_part = bytes_[:-EvalItem.board_bytes_number]
+        board = bytes_[-EvalItem.board_bytes_number:]
         values = string_part.decode("utf-8").split(";")
 
         return EvalItem(
@@ -50,6 +53,6 @@ class EvalItem(BaseItem):
         """"""
 
         return (
-            f"{obj.run_id};{obj.node_name};{obj.move_str};{obj.is_forcing}".encode()
+            f"{obj.run_id};{obj.parent_node_name};{obj.move_str};{obj.forcing_level}".encode()
             + obj.board
         )

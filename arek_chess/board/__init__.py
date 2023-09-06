@@ -8,12 +8,18 @@ BitBoard = int
 AnyMove = Any
 
 
+class GameMoveBase(ABC):
+    """"""
+
+
 class GameBoardBase(ABC):
     """"""
 
     turn: bool
     move_stack: List
     legal_moves: Any
+    has_move_limit: False
+    """Some games can be played forever, others are limited like for instance Hex: up until the board is filled."""
 
     def __init__(self, *args, **kwargs) -> None:
         """"""
@@ -69,6 +75,11 @@ class GameBoardBase(ABC):
         raise NotImplementedError
 
     def deserialize_position(self, bytes_: bytes) -> None:
+        """"""
+
+        raise NotImplementedError
+
+    def get_notation(self) -> str:
         """"""
 
         raise NotImplementedError

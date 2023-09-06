@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from typing import Callable, List, Optional
+from typing import Callable, Generic, List, Optional, TypeVar
 
 from arek_chess.common.constants import QUEUE_HANDLER, QueueHandler
 from arek_chess.common.queue.base_queue import BaseQueue
@@ -13,11 +13,11 @@ elif QUEUE_HANDLER == QueueHandler.RABBITMQ:
 
 from arek_chess.common.queue.items.base_item import BaseItem
 
+TItem = TypeVar("TItem", bound=BaseItem)
 
-class QueueManager:
-    """
-    Class_docstring
-    """
+
+class QueueManager(Generic[TItem]):
+    """"""
 
     def __init__(
         self,
@@ -42,29 +42,29 @@ class QueueManager:
     def name(self) -> str:
         return self.queue.name
 
-    def put(self, item: BaseItem) -> None:
+    def put(self, item: TItem) -> None:
         """"""
 
         self.queue.put(item)
 
-    def put_many(self, items: List[BaseItem]) -> None:
+    def put_many(self, items: List[TItem]) -> None:
         """"""
 
         self.queue.put_many(items)
 
-    def get(self) -> Optional[BaseItem]:
+    def get(self) -> Optional[TItem]:
         """"""
 
         return self.queue.get()
 
     def get_many(
-        self, max_messages_to_get: int = 10, timeout: float = 0
-    ) -> List[BaseItem]:
+        self, max_messages_to_get: int = 10, timeout: float = 0.0
+    ) -> List[TItem]:
         """"""
 
         return self.queue.get_many(max_messages_to_get, timeout)
 
-    def get_all(self) -> List[BaseItem]:
+    def get_all(self) -> List[TItem]:
         """"""
 
         return self.queue.get_all()

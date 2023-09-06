@@ -4,7 +4,7 @@ from typing import Optional
 
 from arek_chess.board.chess.mixins import ChessBoardProtocol
 
-BOARD_BYTES_NUMBER = 75
+CHESS_BOARD_BYTES_NUMBER = 75
 NONE_EP_SQUARE = 64
 
 
@@ -15,7 +15,7 @@ class ChessBoardSerializerMixin:
 
     def serialize_position(self: ChessBoardProtocol) -> bytes:
         """
-        :return: bytes array of length 73
+        :return: bytes array of length 75
         """
 
         ep_square_: Optional[int] = self.ep_square

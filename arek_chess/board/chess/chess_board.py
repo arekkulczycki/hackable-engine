@@ -1011,6 +1011,12 @@ class ChessBoard(Board, ChessBoardSerializerMixin, GameBoardBase):
 
         return self.get_captured_piece_type(move)
 
+    def get_notation(self) -> str:
+        """"""
+
+        return ",".join([move.uci() for move in self.move_stack])
+
+
 KING_PROXIMITY_MAPS_NORMALIZED: Dict[Bitboard, NDArray[Shape["64"], Single]] = {
     mask: ChessBoard.generate_king_proximity_map_normalized(square)
     for mask, square in zip(BB_SQUARES, SQUARES)

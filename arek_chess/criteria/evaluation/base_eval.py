@@ -40,7 +40,7 @@ class BaseEval(ABC, Generic[T]):
         :param is_check:
         :param action:
 
-        :return: score given to the candidate move in the current position
+        :returns: score given to the candidate move in the current position
         """
 
         raise NotImplementedError

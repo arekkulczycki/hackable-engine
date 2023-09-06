@@ -18,7 +18,11 @@ evaluated = 0
 
 class MockEvalWorker(EvalWorker):
     def evaluate(
-        self, board: GameBoardBase, move_str: str, captured_piece_type: int, is_check: bool
+        self,
+        board: GameBoardBase,
+        move_str: str,
+        captured_piece_type: int,
+        is_check: bool,
     ) -> float32:
         """"""
 
@@ -59,7 +63,11 @@ class EvalWorkerFixedOverLevel(EvalWorker):
     eval = float32(1.5)
 
     def evaluate(
-        self, board: GameBoardBase, move_str: str, captured_piece_type: int, is_check: bool
+        self,
+        board: GameBoardBase,
+        move_str: str,
+        captured_piece_type: int,
+        is_check: bool,
     ) -> float32:
         """"""
 
@@ -109,15 +117,24 @@ class RunWithMockEval(TestCase):
 
     @staticmethod
     def search(mock_worker_class: Type[EvalWorker]):
-        controller = Controller(printing=Print.LOGS, tree_params="1,3,", search_limit=17, in_thread=False)
+        controller = Controller(
+            printing=Print.LOGS,
+            tree_params="1,3,",
+            search_limit=9,
+            in_thread=False,
+            is_training_run=True,
+        )
         with patch("arek_chess.controller.EvalWorker", mock_worker_class):
             controller.boot_up()
 
-        controller.make_move()
-        root_node = controller.search_worker.root
+        # controller.get_move(reuse_node=False)
+        for _ in range(10):
+            controller.make_move(reuse_node=False)
+            # controller.get_move(reuse_node=False)
+        # root_node = controller.search_worker.root
 
-        controller.stop_child_processes()
-        return root_node
+        controller.tear_down()
+        # return root_node
 
     def test_propagation(self):
         eval = float32(1.5)

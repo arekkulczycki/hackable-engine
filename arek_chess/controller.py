@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
-from multiprocessing import Lock
+from multiprocessing import Lock, cpu_count
 from time import sleep
-from typing import Dict, List, Optional, Tuple, Type, Union
+from typing import Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 from arek_chess.board import GameBoardBase
 from arek_chess.board.chess.chess_board import ChessBoard
-from arek_chess.common.constants import CPU_CORES, Print
+from arek_chess.board.chess.mixins.chess_board_serializer_mixin import (
+    CHESS_BOARD_BYTES_NUMBER,
+)
+from arek_chess.board.hex.hex_board import HexBoard
+from arek_chess.common.constants import Game, Print
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.common.queue.items.control_item import ControlItem
@@ -18,21 +22,23 @@ from arek_chess.game_tree.node import Node
 from arek_chess.workers.distributor_worker import DistributorWorker
 from arek_chess.workers.eval_worker import EvalWorker
 from arek_chess.workers.search_worker import SearchWorker
-from chess.engine import UciProtocol
+
+TGameBoard = TypeVar("TGameBoard", bound=GameBoardBase)
 
 
-class Controller(UciProtocol):
+class Controller:
     """
     Controls engine setup and its communication to outside world.
     """
 
-    board_class: Type[GameBoardBase]
-    board: GameBoardBase
+    board_class: Type[TGameBoard]
+    board_size: Optional[int] = None
+    board: TGameBoard
 
-    distributor_queue: QueueManager
-    eval_queue: QueueManager
-    selector_queue: QueueManager
-    control_queue: QueueManager
+    distributor_queue: QueueManager[DistributorItem]
+    eval_queue: QueueManager[EvalItem]
+    selector_queue: QueueManager[SelectorItem]
+    control_queue: QueueManager[ControlItem]
     search_worker: SearchWorker
 
     def __init__(
@@ -46,39 +52,55 @@ class Controller(UciProtocol):
         is_training_run: bool = False,
         in_thread: bool = False,
         timeout: Optional[float] = None,
+        game: Game = Game.CHESS,
+        board_size: Optional[int] = None,
     ):
         """"""
 
         # set_start_method("forkserver")
 
-        self.board_class = ChessBoard
-        self._setup_board(position)
+        print("starting a game of", game)
+        self.game = game
+        if game == Game.CHESS:
+            self.board_class = ChessBoard
+            self._setup_board(position)
+            DistributorItem.board_bytes_number = CHESS_BOARD_BYTES_NUMBER
+            EvalItem.board_bytes_number = CHESS_BOARD_BYTES_NUMBER
+            SelectorItem.board_bytes_number = CHESS_BOARD_BYTES_NUMBER
+        else:
+            self.board_class = HexBoard
+            self.board_size = board_size
+            self._setup_board(position, size=board_size)
+            DistributorItem.board_bytes_number = self.board.board_bytes_number  # depends on board size
+            EvalItem.board_bytes_number = self.board.board_bytes_number
+            SelectorItem.board_bytes_number = self.board.board_bytes_number
 
         self.printing = printing
         self.tree_params = tree_params
-        self.search_limit = search_limit or 16
+        self.search_limit = search_limit if search_limit is not None else 16
         self.original_timeout = timeout
         self.in_thread = in_thread
         self.timeout = timeout
 
         self.memory_manager = MemoryManager()
 
-        self.queue_throttle = (CPU_CORES - 2) * (
-            self.search_limit if self.search_limit < 12 else (self.search_limit * 3)
-        )
+        self.queue_throttle = 32  # TODO: adjust?
 
         self.create_queues()
         self.status_lock = Lock()
+        self.finish_lock = Lock()
+        self.counters_lock = Lock()
         self.action_lock = Lock()
         self.search_worker = SearchWorker(
             self.status_lock,
+            self.finish_lock,
+            self.counters_lock,
             self.distributor_queue,
             self.selector_queue,
             self.control_queue,
             self.queue_throttle,
             self.printing,
             self.tree_params,
-            self.search_limit,
         )
 
         self.initial_position: Optional[str] = None
@@ -105,14 +127,14 @@ class Controller(UciProtocol):
 
         self.start_child_processes()
 
-    def reset_board(self, position: Optional[str] = None) -> None:
+    def reset_board(self, position: Optional[str] = None, **kwargs) -> None:
         """"""
 
-        self._setup_board(position)
+        self._setup_board(position, **kwargs)
 
         self.reset()
 
-    def _setup_board(self, position: Optional[str] = None) -> None:
+    def _setup_board(self, position: Optional[str] = None, **kwargs) -> None:
         """
         Initialize the board with an optionally preset position.
 
@@ -120,11 +142,11 @@ class Controller(UciProtocol):
         """
 
         if position:
-            self.initial_position = position
-            self.board = self.board_class(position)
+            # self.initial_position = position
+            self.board = self.board_class(position, **kwargs)
         else:
-            self.board = self.board_class()
-            self.initial_position = self.board.position()
+            self.board = self.board_class(**kwargs)
+            # self.initial_position = self.board.position()
 
     def start_child_processes(self) -> None:
         """"""
@@ -132,8 +154,11 @@ class Controller(UciProtocol):
         print("starting processes")
 
         num_eval_workers = max(
-            1, CPU_CORES - 2
+            1, cpu_count() - 2
         )  # one process required for the tree search and one for the distributor worker
+
+        # affinity_set = {0, 1, 2}; os.sched_setaffinity(0, affinity_set)
+        # TODO: set affinity, force eval worker on weaker cores if exist
 
         from arek_chess.training.envs.square_control_env import SquareControlEnv
 
@@ -143,12 +168,15 @@ class Controller(UciProtocol):
         for i in range(num_eval_workers):
             evaluator = EvalWorker(
                 self.status_lock,
+                self.finish_lock,
                 self.action_lock,
                 self.eval_queue,
                 self.selector_queue,
                 (self.queue_throttle // num_eval_workers),
                 i + 1,
                 self.board_class,
+                self.board_size,
+                evaluator_name=self.game,
                 is_training_run=self.is_training_run,
                 env=self.model_version and SquareControlEnv(controller=self),
                 model_version=self.model_version,
@@ -157,11 +185,14 @@ class Controller(UciProtocol):
 
         distributor = DistributorWorker(
             self.status_lock,
+            self.finish_lock,
+            self.counters_lock,
             self.distributor_queue,
             self.eval_queue,
             self.selector_queue,
             self.control_queue,
             self.board_class,
+            self.board_size,
             self.queue_throttle,
         )
         self.child_processes.append(distributor)
@@ -266,6 +297,12 @@ class Controller(UciProtocol):
             )
             # next_transposition_dict = self.search_worker.transposition_dict  # TODO: shouldn't some keys be cleared?
 
+        if next_root:
+            print(
+                f"reused node by {'white' if next_root.color else 'black'}: "
+                f"{next_root.name}, depth: {next_root.leaf_level - (2 if self.is_training_run else 1)}"
+            )
+
         return next_root, next_nodes_dict
 
     def _cache_color_based_tree(self) -> None:
@@ -306,6 +343,7 @@ class Controller(UciProtocol):
 
     def _get_next_grandroot(self, node: Node) -> Optional[Node]:
         if len(self.board.move_stack) < 2:
+            print("no move stack")
             return None
 
         chosen_child_move = self.board.move_stack[-2].uci()
@@ -339,40 +377,56 @@ class Controller(UciProtocol):
         Clean hashmap of discarded moves and rename remaining keys.
         """
 
+        # print("next root children: \n", next_root.children)
+
         cut = 3 if grand else 2
 
-        new_nodes_dict = {}
+        new_nodes_dict = {"1": next_root}
         for key, value in nodes_dict.items():
             key_split = key.split(".")
-            if key == "1":
-                continue
-            elif grand and (
-                key_split[1] != next_root.parent.move
-                or (len(key_split) < 3 or key_split[2] != next_root.move)
+            split_len = len(key_split)
+
+            if grand and (
+                split_len < 4  # discard first and second level children
+                # discard all nodes that are not descendants of `next_root`
+                or key_split[1] != next_root.parent.move
+                or key_split[2] != next_root.move
             ):
                 continue
-            elif not grand and key_split[1] != next_root.move:
+            # if not `grand` then discard root and all nodes that are not descendants of `next_root`
+            elif not grand and (split_len < 3 or key_split[1] != next_root.move):
                 continue
 
-            alt_key = ".".join(["1"] + key_split[cut:])
-            new_nodes_dict[alt_key] = value
-
-        print(
-            f"reused node by {'white' if next_root.color else 'black'}: "
-            f"{next_root.name}, depth: {next_root.leaf_level - 2}"
-        )
+            new_key = ".".join(["1"] + key_split[cut:])
+            new_nodes_dict[new_key] = value
 
         return new_nodes_dict
 
-    def make_move(self, memory_action: Optional[ActionType] = None) -> None:
+    def make_move(
+        self, memory_action: Optional[ActionType] = None, reuse_node: bool = True, search_limit: Optional[int] = None
+    ) -> None:
+        """"""
+
+        move_uci = self.get_move(memory_action, reuse_node, search_limit)
+
+        try:
+            self.board.push_coord(move_uci)
+        except AssertionError:
+            # move illegal ???
+            print("found illegal move, restarting...")
+            self.reset()
+            self.make_move(memory_action, reuse_node)
+
+    def get_move(
+        self, memory_action: Optional[ActionType] = None, reuse_node: bool = True, search_limit: Optional[int] = None
+    ) -> str:
         """"""
 
         if self.board.is_game_over():
-            msg = "asked for a move in a game over position"
-            print(msg)
-            raise ValueError(msg)
+            print(self.board.get_notation())
+            raise ValueError("asked for a move in a game over position")
 
-        self._setup_search_worker(reuse=True)
+        self._setup_search_worker(reuse=reuse_node)
 
         if memory_action is not None:
             with self.action_lock:
@@ -385,20 +439,20 @@ class Controller(UciProtocol):
                 raise RuntimeError
             elif fails > 2:
                 print("restarting all workers...")
-                sleep(3 * fails)
-                self.last_white_root = None
-                self.last_black_root = None
-                self.reset(fails)
                 # self.restart()
                 sleep(fails)
                 self.restart_child_processes()
+                sleep(fails)
+                self.last_white_root = None
+                self.last_black_root = None
+                self.reset(fails)
             elif fails > 0:
                 print("restarting search worker...")
                 # self.release_memory(silent=self.printing in [Print.MOVE, Print.MOVE])
                 self.reset(fails)
 
             try:
-                move_uci = self._search()
+                move_uci = self._search(search_limit if search_limit is not None else self.search_limit)
                 # self.timeout = self.original_timeout
                 break
             except SearchFailed as e:
@@ -409,20 +463,9 @@ class Controller(UciProtocol):
                 print(f"timed out in search: {e}")
                 sleep(fails)
 
-        try:
-            self.board.push_uci(move_uci)
-        except AssertionError:
-            # move illegal ???
-            print("found illegal move, restarting...")
-            self.reset()
-            self.make_move()
+        return move_uci
 
-    def get_move(self) -> str:
-        # TODO: rework to be an internal part of the make_move
-        self._setup_search_worker()
-        return self._search()
-
-    def _search(self) -> str:
+    def _search(self, limit: int) -> str:
         # TODO: current thread vs new thread vs new process???
         if self.in_thread:
             self.search_worker.start()
@@ -430,7 +473,7 @@ class Controller(UciProtocol):
             if self.search_worker.is_alive():
                 raise TimeoutError
         else:
-            move = self.search_worker.search()
+            move = self.search_worker.search(limit)
         if not move:
             print("returned null move")
             raise SearchFailed
@@ -492,8 +535,8 @@ class Controller(UciProtocol):
         print("stopping child processes")
         self.stop_child_processes()
 
-        print("recreating queues")
-        self.recreate_queues()
+        # print("recreating queues")
+        # self.recreate_queues()
 
         print("starting child processes")
         self.start_child_processes()
@@ -504,10 +547,10 @@ class Controller(UciProtocol):
     def create_queues(self):
         """"""
 
-        self.distributor_queue: QueueManager = QueueManager(
+        self.distributor_queue = QueueManager(
             "distributor", loader=DistributorItem.loads, dumper=DistributorItem.dumps
         )
-        self.eval_queue: QueueManager = QueueManager(
+        self.eval_queue = QueueManager(
             "evaluator", loader=EvalItem.loads, dumper=EvalItem.dumps
         )
         self.selector_queue: QueueManager = QueueManager(

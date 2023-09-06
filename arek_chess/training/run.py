@@ -2,18 +2,25 @@ import os
 from argparse import ArgumentParser
 from enum import Enum
 from time import perf_counter
+from typing import Tuple
 
+import gym
 import matplotlib.pyplot as plt
 import numpy
-from gym.envs.registration import register
+# from gymnasium.envs.registration import register
+# import sys
+# import gymnasium
+# sys.modules["gym"] = gymnasium
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import load_results
 from stable_baselines3.common.results_plotter import ts2xy
-from stable_baselines3.common.vec_env import VecMonitor, DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
-from arek_chess.common.constants import Print
+from arek_chess.common.constants import Game, Print
 from arek_chess.controller import Controller
+from arek_chess.training.envs.hex.raw_7x7_env import Raw7x7Env
+from arek_chess.training.envs.hex.simple_env import SimpleEnv
 from arek_chess.training.envs.square_control_env import SquareControlEnv
 
 # from stable_baselines3.common.callbacks import (
@@ -21,26 +28,23 @@ from arek_chess.training.envs.square_control_env import SquareControlEnv
 #     StopTrainingOnNoModelImprovement,
 # )
 
-register(
-    id="chess-v0",
-    entry_point="arek_chess.training.envs.square_control_env:SquareControlEnv",
-)
-
 LOG_PATH = "./arek_chess/training/logs/"
 
-TOTAL_TIMESTEPS = int(2**13)  # keeps failing before finish on 2**14
+TOTAL_TIMESTEPS = int(2**15)
 LEARNING_RATE = 1e-3
 N_EPOCHS = 10
-N_STEPS = 512
-BATCH_SIZE = 128  # recommended to be a factor of (N_STEPS * N_ENVS)
-CLIP_RANGE = 0.3
+N_STEPS = 2048
+BATCH_SIZE = 512  # recommended to be a factor of (N_STEPS * N_ENVS)
+CLIP_RANGE = 0.5
 
 SEARCH_LIMIT = 9
 
-# POLICY_KWARGS = dict(net_arch=[dict(pi=[10, 24, 16], vf=[16, 10])])
 # POLICY_KWARGS["activation_fn"] = "tanh"
 policy_kwargs_map = {
     "default": dict(net_arch=[dict(pi=[64, 64], vf=[64, 64])]),
+    "hex": dict(net_arch=[dict(pi=[128, 128], vf=[128, 128])]),
+    "raw7hex": dict(net_arch=[dict(pi=[49, 49], vf=[49, 49])]),
+    "raw9hex": dict(net_arch=[dict(pi=[64, 64], vf=[64, 64])]),
     "tight-fit": dict(net_arch=[dict(pi=[10, 16], vf=[16, 10])]),
     "additional-layer": dict(net_arch=[dict(pi=[10, 24, 16], vf=[16, 10])]),
 }
@@ -56,7 +60,9 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
     t0 = perf_counter()
 
     print("loading env...")
-    env: DummyVecEnv = get_env(env_name, version)
+    # env, policy = get_env(env_name, version)
+    # env, policy = get_env_hex(env_name, version)
+    env, policy = get_env_hex_raw(env_name, version)
 
     # Stop training if there is no improvement after more than 3 evaluations
     # stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=3, min_evals=5, verbose=1)
@@ -81,7 +87,7 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
     else:
         print("setting up model...")
         model = PPO(
-            "MlpPolicy",
+            policy,
             env=env,
             verbose=2,
             clip_range=CLIP_RANGE,
@@ -105,7 +111,9 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
 
 def loop_train(env_name: str = "default", version: int = -1, loops=5, device: Device = Device.AUTO.value):
     print("loading env...")
-    env: DummyVecEnv = get_env(env_name, version)
+    # env, policy = get_env(env_name, version)
+    # env, policy = get_env_hex(env_name, version)
+    env, policy = get_env_hex_raw(env_name, version)
 
     for _ in range(loops):
         print("setting up model...")
@@ -128,7 +136,7 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
             )
         else:
             model = PPO(
-                "MlpPolicy",
+                policy,
                 env=env,
                 verbose=2,
                 clip_range=CLIP_RANGE,
@@ -166,7 +174,7 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
     env.envs[0].controller.tear_down()
 
 
-def get_env(env_name, version):
+def get_env(env_name, version) -> Tuple[gym.Env, str]:
     env: DummyVecEnv = make_vec_env(
         lambda: SquareControlEnv(
             controller=Controller(
@@ -182,7 +190,49 @@ def get_env(env_name, version):
 
     env = VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
 
-    return env
+    return (env, "MlpPolicy")
+
+
+def get_env_hex(env_name, version) -> Tuple[gym.Env, str]:
+    env: DummyVecEnv = make_vec_env(
+        lambda: SimpleEnv(
+            controller=Controller(
+                printing=Print.MOVE,
+                search_limit=SEARCH_LIMIT,
+                is_training_run=True,
+                in_thread=False,
+                timeout=3,
+                game=Game.HEX,
+            )
+        ),
+        n_envs=1,
+    )
+
+    env = VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
+
+    return (env, "MultiInputPolicy")
+
+
+def get_env_hex_raw(env_name, version) -> Tuple[gym.Env, str]:
+    env: DummyVecEnv = make_vec_env(
+        lambda: Raw7x7Env(
+            controller=Controller(
+                printing=Print.MOVE,
+                # tree_params="4,4,",
+                search_limit=SEARCH_LIMIT,
+                is_training_run=True,
+                in_thread=False,
+                timeout=3,
+                game=Game.HEX,
+                board_size=7,
+            )
+        ),
+        n_envs=1,
+    )
+
+    env = VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
+
+    return (env, "MlpPolicy")
 
 
 def moving_average(values, window):
@@ -190,7 +240,7 @@ def moving_average(values, window):
     Smooth values by doing a moving average
     :param values: (numpy array)
     :param window: (int)
-    :return: (numpy array)
+    :returns: (numpy array)
     """
 
     weights = numpy.repeat(1.0, window) / window
