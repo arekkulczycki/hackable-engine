@@ -1,7 +1,7 @@
 [project]
 name = "hackable-bot"
 description = "board game playing bot easy to hack in order to change playing approach"
-version = "0.0.2"
+version = "0.0.3"
 authors = [
     { name = "Arek Kulczycki" }
 ]
@@ -22,6 +22,8 @@ build-backend = "setuptools.build_meta"
 packages = [
     "arek_chess.board.chess",
     "arek_chess.board.chess.mixins",
+    "arek_chess.board.hex",
+    "arek_chess.board.hex.mixins",
     "arek_chess.common",
     "arek_chess.common.memory",
     "arek_chess.common.queue",
@@ -29,6 +31,8 @@ packages = [
     "arek_chess.criteria",
     "arek_chess.criteria.evaluation",
     "arek_chess.criteria.evaluation.chess",
+    "arek_chess.criteria.evaluation.hex",
+    "arek_chess.criteria.selection",
     "arek_chess.game_tree",
     "arek_chess.workers",
 ]
