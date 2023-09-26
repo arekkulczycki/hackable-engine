@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
+import math
 from itertools import cycle
 from typing import Any, Dict, Optional, SupportsFloat, Tuple
 
 import gym
-import onnxruntime as ort
 from gymnasium.core import ActType, ObsType, RenderFrame
 from nptyping import Int8, NDArray, Shape
-from numpy import asarray, float32, int8, eye
+from numpy import asarray, eye, float32, int8
 
 from arek_chess.common.constants import INF
 from arek_chess.controller import Controller
@@ -138,6 +138,9 @@ class Raw7x7BinEnv(gym.Env):
         return winner
 
     def _get_reward(self, winner):
+        if winner is False:
+            return self.REWARDS[winner] / math.pow(len(self.controller.board.move_stack) - 11, 0.25)
+
         return self.REWARDS[winner]
 
     def observation_from_board(self) -> NDArray[Shape["147"], Int8]:

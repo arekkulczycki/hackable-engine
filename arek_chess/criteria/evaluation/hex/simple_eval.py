@@ -17,10 +17,10 @@ class SimpleEval(BaseEval[HexBoard]):
     DEFAULT_ACTION: ActionType = asarray((
         float32(1.0),  # connectedness
         float32(1.0),  # wingspan
-        float32(4.0),  # balance
+        float32(5.0),  # balance
         float32(1.0),  # central_balance
-        float32(10.0),  # missing distance - the value should roughly be equal to turn bonus
-        float32(10.0),  # turn bonus
+        float32(15.0),  # missing distance - the value should roughly be equal to turn bonus
+        float32(15.0),  # turn bonus
         float32(0.0),  # local pattern eval
         float32(0.0),  # local pattern confidence
     ), dtype=float32)
