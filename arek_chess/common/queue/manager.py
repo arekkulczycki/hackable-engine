@@ -10,6 +10,8 @@ elif QUEUE_HANDLER == QueueHandler.REDIS:
     from arek_chess.common.queue.adapters.redis_adapter import RedisAdapter
 elif QUEUE_HANDLER == QueueHandler.RABBITMQ:
     from arek_chess.common.queue.adapters.rabbitmq_adapter import RabbitmqAdapter
+elif QUEUE_HANDLER == QueueHandler.WASM:
+    from arek_chess.common.queue.adapters.wasm_adapter import WasmAdapter
 
 from arek_chess.common.queue.items.base_item import BaseItem
 
@@ -37,6 +39,8 @@ class QueueManager(Generic[TItem]):
             self.queue = RedisAdapter(name, loader, dumper)
         elif QUEUE_HANDLER == QueueHandler.RABBITMQ:
             self.queue = RabbitmqAdapter(name)
+        elif QUEUE_HANDLER == QueueHandler.WASM:
+            self.queue = WasmAdapter(name)
 
     @property
     def name(self) -> str:

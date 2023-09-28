@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import math
 from itertools import cycle
-from typing import Any, Dict, Optional, SupportsFloat, Tuple
+from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
 
 import gym
 import onnxruntime as ort
@@ -9,10 +9,10 @@ from gymnasium.core import ActType, ObsType, RenderFrame
 from nptyping import Int8, NDArray, Shape
 from numpy import asarray, float32, int8, eye
 
+from arek_chess.board.hex.hex_board import HexBoard, Move
 from arek_chess.common.constants import INF
 from arek_chess.controller import Controller
 
-BOARD_SIZE: int = 5
 DEFAULT_ACTION = asarray(
     (
         float32(1.0),
@@ -39,6 +39,11 @@ openings = cycle(
         "a3",
         "a4",
         "a5",
+        "e1",
+        "e2",
+        "e3",
+        "e4",
+        "e5",
         # "a6",
         # "a7",
         # "a8",
@@ -51,6 +56,7 @@ openings = cycle(
 class Raw5x5BinEnv(gym.Env):
     """"""
 
+    BOARD_SIZE: int = 5
     REWARDS: Dict[Optional[bool], float32] = {
         None: ZERO,
         True: ONE,
@@ -58,7 +64,7 @@ class Raw5x5BinEnv(gym.Env):
     }
 
     reward_range = (REWARDS[False], REWARDS[True])
-    observation_space = gym.spaces.MultiBinary(25 * 3)
+    observation_space = gym.spaces.MultiBinary(BOARD_SIZE ** 2 * 2)
     action_space = gym.spaces.Box(ZERO, ONE, (1,), float32)
 
     winner: Optional[bool]
@@ -73,6 +79,10 @@ class Raw5x5BinEnv(gym.Env):
         self.steps_done = 0
         self.winner = None
 
+        self.moves: Generator[Move, None, None] = HexBoard.generate_nothing()
+        self.best_move: Optional[Tuple[Move, Tuple[float32]]] = None
+        self.current_move: Optional[Move] = None
+
         # self.opp_model = onnx.load("raw7hex4.onnx")
         # self.opp_model = ort.InferenceSession(
         #     "raw7hex.onnx", providers=["AzureExecutionProvider", "CPUExecutionProvider"]
@@ -80,13 +90,13 @@ class Raw5x5BinEnv(gym.Env):
 
     def _setup_controller(self, controller: Controller):
         self.controller = controller
-        self.controller._setup_board(next(openings), size=BOARD_SIZE)
+        self.controller._setup_board(next(openings), size=self.BOARD_SIZE)
         self.controller.boot_up()
 
     def render(self, mode="human", close=False) -> RenderFrame:
         notation = self.controller.board.get_notation()
-        print(notation, self._get_reward(self.winner))
-        print(self.steps_done)
+        print("render: ", notation, self._get_reward(self.winner))
+        print("steps done: ", self.steps_done)
         return notation
 
     def reset(
@@ -98,33 +108,83 @@ class Raw5x5BinEnv(gym.Env):
         # super().reset(seed=seed)
 
         self.render()
-        self.controller.reset_board(next(openings), size=BOARD_SIZE)
+        self.controller.reset_board(next(openings), size=self.BOARD_SIZE)
+
+        self._prepare_child_moves()
 
         # return self.observation_from_board(), {}
         return self.observation_from_board()
+
+    def _prepare_child_moves(self) -> None:
+        """
+        Reset generator and play the first option to be evaluated.
+        """
+
+        self.moves = self.controller.board.legal_moves  # returns new generator
+        self.current_move = next(self.moves)
+        self.best_move = None
+        self.controller.board.push(self.current_move)
 
     def step(
         self,
         action: ActType
         # ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
     ) -> Tuple[ObsType, SupportsFloat, bool, Dict[str, Any]]:
-        self.controller.make_move(self.prepare_action(action), search_limit=0)
+        """
+        Iterate over all legal moves and evaluate each, storing the move with the best score.
 
-        winner = self._get_winner()
-        if winner is None:
-            # playing against a configured action or an action from self-trained model
-            # obs = reshape(self.observation_from_board().astype(float32), (1, 49))
-            # opp_action, value = self.opp_model.run(None, {"input": obs})
-            # self.controller.make_move(self.prepare_action(opp_action[0]))
-            self.controller.make_move(DEFAULT_ACTION)
+        When generator is exhausted, play the best move, play as opponent and reset the generator.
+
+        To play training moves no engine search is required - a move is selected based on direct evaluation (0 depth).
+        """
+
+        if self.best_move is None:
+            self.best_move = (self.current_move, action[0])
+        else:
+            best_score = self.best_move[1]
+            current_score = action[0]
+            if current_score > best_score:
+                self.best_move = (self.current_move, action[0])
+
+        try:
+            # if doesn't raise then there are still moves to be evaluated
+            self.current_move = next(self.moves)
+
+            # undo last move that was just evaluated
+            self.controller.board.pop()
+
+            # push a new move to be evaluated in the next `step`
+            self.controller.board.push(self.current_move)
+
+            winner = None
+
+        except StopIteration:
+            # all moves evaluated - undo the last and push the best move on the board
+            print("best move: ", self.best_move[0].get_coord(), self.best_move[1])
+            self.controller.board.pop()
+            self.controller.board.push(self.best_move[0])
 
             winner = self._get_winner()
+
+            # if the last move didn't conclude the game, now play opponent move and reset generator
+            if winner is None:
+                # playing against a configured action or an action from self-trained model
+                # obs = reshape(self.observation_from_board().astype(float32), (1, 49))
+                # opp_action, value = self.opp_model.run(None, {"input": obs})
+                # self.controller.make_move(self.prepare_action(opp_action[0]))
+                self.controller.make_move(DEFAULT_ACTION)
+
+                winner = self._get_winner()
+
+                # if the opponent move didn't conclude, reset generator and play the first option to be evaluated
+                if winner is None:
+                    self._prepare_child_moves()
+
+        self.obs = self.observation_from_board()
 
         self.winner = winner
         reward = self._get_reward(winner)
         self.steps_done += 1
-
-        self.obs = self.observation_from_board()
 
         # return self.obs, reward, winner is not None, False, {}
         return self.obs, reward, winner is not None, {}
@@ -141,16 +201,19 @@ class Raw5x5BinEnv(gym.Env):
 
     def _get_reward(self, winner):
         if winner is False:
-            # - 1 + ((len(self.controller.board.move_stack) + 1) - 12) / (49 - 12)
-            return - 1 + (len(self.controller.board.move_stack) - 11) / 37
+            # - 1 + ((len(self.controller.board.move_stack) + 1) - 12) / (25 - 12)
+            return -1 + (len(self.controller.board.move_stack) - 8) / 16
 
         return self.REWARDS[winner]
 
-    def observation_from_board(self) -> NDArray[Shape["75"], Int8]:
+    def observation_from_board(self) -> NDArray[Shape["50"], Int8]:
         local: NDArray[Shape["25"], Int8] = self.controller.board.get_neighbourhood(
             5, should_suppress=True
         )
-        return eye(3, dtype=int8)[local].flatten()  # one-hot encoding - 3 columns of 0/1 values
+        # fmt: off
+        return eye(3, dtype=int8)[local][:, 1:].flatten()  # dummy encoding - 2 columns of 0/1 values, 1 column dropped
+        # fmt: on
 
-    def prepare_action(self, action):
+    @staticmethod
+    def prepare_action(action):
         return asarray((0, 0, 0, 0, 0, 10, action[0], 1))

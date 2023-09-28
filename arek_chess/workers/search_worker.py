@@ -154,10 +154,9 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         else:
             self._set_new_root(should_use_transposition)
 
+        # TODO: random part is added to decrease chance of collision, but another solution is needed to *never* collide
         self.run_id = (
-            f"{self.root.move}.{run_iteration}"
-            if self.root.move != "1"
-            else f"{randint(2, 100)}.{run_iteration}"  # in case of running root multiple times have different run_id
+            f"{self.root.move}.{run_iteration}.{randint(1, 1000)}"
         )
         # print("searching with run_id: ", self.run_id)
         with self.status_lock:
@@ -232,14 +231,15 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
     def search(self, limit: int = 14) -> str:
         """"""
 
-        self.limit: int = 2 ** limit  # 14 -> 16384, 15 -> 32768
-        if self.board.has_move_limit:
-            uppper_limit = self.board.get_move_limit()
-            if uppper_limit < self.limit:
-                self.limit = uppper_limit  # TODO: maybe doesn't make sense because at limit someone wins anyway
-
         if limit == 0:
             self.traverser.should_autodistribute = False
+            self.limit = 0
+        else:
+            self.limit: int = 2 ** limit  # 14 -> 16384, 15 -> 32768
+            if self.board.has_move_limit:
+                uppper_limit = self.board.get_move_limit()
+                if uppper_limit < self.limit:
+                    self.limit = uppper_limit  # TODO: maybe doesn't make sense because at limit someone wins anyway
 
         # must set status started before putting the element on queue or else will be discarded
         with self.status_lock:
@@ -416,7 +416,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
 
     def balance_load(self, i: int) -> bool:
         """
-        Prevent queues from starving.
+        Prevent queues from starving. Loops to clear the selector queue ASAP.
 
         Choosing between actions:
             - pick up from `selector_queue` and handle evaluated nodes
@@ -434,11 +434,11 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
 
         gap_ratio = gap / self.distributed  # already checked to not be 0
 
-        if i > 1000:  # found in practice that levels below happen normally (not stuck)
-            print("balance load: ", gap, gap_ratio, self.distributed, self.queue_throttle)
+        if i > 10000:  # found in practice that levels below happen normally (not stuck)
+            print("balance load: ", gap, gap_ratio, self.distributed, self.finished, self.limit)
 
-        # TODO: find smart conditions instead of that mess
-        if not self.finished and (
+        # TODO: find smart conditions instead of that mess - purpose is to identify if should distribute more to eval
+        if not self.finished and self.limit > 0 and (
             (gap_ratio < 0.1 and gap < 4000)  # always pump when little gap
             or (
                 gap < 24000  # above this number is impractical to add more
@@ -451,19 +451,23 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
                 )
             )
         ):
+            # feed the eval queues
+            # return self._select_from_tree(  # TODO: the param should depend on both gap and speed
+            #     (24000 - gap) // 4000 + 1,  # effectively between 1 and 6
+            # )
             if not self._select_from_tree(  # TODO: the param should depend on both gap and speed
                 (24000 - gap) // 4000 + 1,  # effectively between 1 and 6
             ):
                 self._handle_control_queue()
                 self._handle_selector_queue()
 
-            return False
+            return False  # breaking the loop
 
         # TODO: should it decide between two queues based on something?
         self._handle_control_queue()
-        self._handle_selector_queue()
+        queue_emptied = not self._handle_selector_queue()
 
-        return not self.finished
+        return not (self.finished or queue_emptied)  # breaking the loop if finished or queue empty
 
     def _is_enough(self) -> bool:
         """"""
@@ -481,19 +485,23 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
             self.memory_manager.set_int(STATUS, Status.FINISHED, new=False)
         # self.distributor_queue.put(DistributorItem("finished", "", float32(0), 0))
 
-    def _handle_selector_queue(self) -> None:
-        """"""
+    def _handle_selector_queue(self) -> bool:
+        """
+        :returns: if items found on queue
+        """
 
         candidates: List[SelectorItem] = self._exclude_by_run_id(
             self.selector_queue.get_many(self.queue_throttle, SLEEP)
         )
         if not candidates:
             # print(f"no items")
-            return
+            return False
 
         self.evaluated += len(candidates)
 
         self.handle_candidates(self.distributor_queue, candidates)
+
+        return True
 
     def _exclude_by_run_id(self, candidates: List[SelectorItem]) -> List[SelectorItem]:
         """"""
@@ -725,7 +733,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
             self.root.children, key=lambda node: node.score, reverse=self.root.color
         )
 
-        if self.printing == Print.CANDIDATES:
+        if self.printing == Print.CANDIDATES or self.limit == 0:
             print("***")
             os.system("clear")
             for child in sorted_children[:]:

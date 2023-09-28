@@ -19,7 +19,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
 from arek_chess.common.constants import Game, Print
 from arek_chess.controller import Controller
-from arek_chess.training.envs.hex.raw_7x7_env import Raw7x7Env
+from arek_chess.training.envs.hex.raw_5x5_bin_env import Raw5x5BinEnv
 from arek_chess.training.envs.hex.simple_env import SimpleEnv
 from arek_chess.training.envs.square_control_env import SquareControlEnv
 
@@ -30,19 +30,22 @@ from arek_chess.training.envs.square_control_env import SquareControlEnv
 
 LOG_PATH = "./arek_chess/training/logs/"
 
-TOTAL_TIMESTEPS = int(2**15)
+TOTAL_TIMESTEPS = int(2**16)
 LEARNING_RATE = 1e-3
 N_EPOCHS = 10
-N_STEPS = 2048
-BATCH_SIZE = 512  # recommended to be a factor of (N_STEPS * N_ENVS)
-CLIP_RANGE = 0.5
+N_STEPS = 4 * 1024
+BATCH_SIZE = 4 * 512  # recommended to be a factor of (N_STEPS * N_ENVS)
+CLIP_RANGE = 0.7
+GAE_LAMBDA = 0.95
 
-SEARCH_LIMIT = 9
+SEARCH_LIMIT = 8
 
 # POLICY_KWARGS["activation_fn"] = "tanh"
 policy_kwargs_map = {
     "default": dict(net_arch=[dict(pi=[64, 64], vf=[64, 64])]),
     "hex": dict(net_arch=[dict(pi=[128, 128], vf=[128, 128])]),
+    "raw3hex": dict(net_arch=[dict(pi=[9, 9], vf=[9, 9])]),
+    "raw5hex": dict(net_arch=[dict(pi=[25, 25], vf=[25, 25])]),
     "raw7hex": dict(net_arch=[dict(pi=[49, 49], vf=[49, 49])]),
     "raw9hex": dict(net_arch=[dict(pi=[64, 64], vf=[64, 64])]),
     "tight-fit": dict(net_arch=[dict(pi=[10, 16], vf=[16, 10])]),
@@ -80,6 +83,7 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
                 "n_steps": N_STEPS,
                 "n_epochs": N_EPOCHS,
                 "batch_size": BATCH_SIZE,
+                "gae_lambda": GAE_LAMBDA,
             },
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
@@ -95,6 +99,7 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
             n_steps=N_STEPS,
             n_epochs=N_EPOCHS,
             batch_size=BATCH_SIZE,
+            gae_lambda=GAE_LAMBDA,
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
         )
@@ -130,6 +135,7 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
                     "n_steps": N_STEPS,
                     "n_epochs": N_EPOCHS,
                     "batch_size": BATCH_SIZE,
+                    "gae_lambda": GAE_LAMBDA,
                 },
                 policy_kwargs=policy_kwargs_map[env_name],
                 device=device,
@@ -144,6 +150,7 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
                 n_steps=N_STEPS,
                 n_epochs=N_EPOCHS,
                 batch_size=BATCH_SIZE,
+                gae_lambda=GAE_LAMBDA,
                 policy_kwargs=policy_kwargs_map[env_name],
                 device=device,
             )
@@ -215,7 +222,7 @@ def get_env_hex(env_name, version) -> Tuple[gym.Env, str]:
 
 def get_env_hex_raw(env_name, version) -> Tuple[gym.Env, str]:
     env: DummyVecEnv = make_vec_env(
-        lambda: Raw7x7Env(
+        lambda: Raw5x5BinEnv(
             controller=Controller(
                 printing=Print.MOVE,
                 # tree_params="4,4,",
@@ -224,7 +231,7 @@ def get_env_hex_raw(env_name, version) -> Tuple[gym.Env, str]:
                 in_thread=False,
                 timeout=3,
                 game=Game.HEX,
-                board_size=7,
+                board_size=Raw5x5BinEnv.BOARD_SIZE,
             )
         ),
         n_envs=1,

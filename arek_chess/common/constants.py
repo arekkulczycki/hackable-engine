@@ -41,6 +41,15 @@ class QueueHandler(IntEnum):
     FASTER_FIFO: int = 0
     REDIS: int = 1
     RABBITMQ: int = 2
+    WASM: int = 3
+
+
+class MemoryHandler(IntEnum):
+    """"""
+
+    SHARED_MEM: int = 0
+    REDIS: int = 1
+    WASM: int = 2
 
 
 class Game(str, Enum):
@@ -58,3 +67,4 @@ class Status(IntEnum):
 
 
 QUEUE_HANDLER = QueueHandler.FASTER_FIFO
+MEMORY_HANDLER = MemoryHandler.SHARED_MEM

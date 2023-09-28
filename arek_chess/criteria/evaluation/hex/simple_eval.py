@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-from time import perf_counter
 from typing import Optional
 
 from numpy import asarray, float32, isclose

@@ -1,14 +1,15 @@
 [project]
 name = "hackable-bot"
 description = "board game playing bot easy to hack in order to change playing approach"
-version = "0.0.3"
+version = "0.0.4"
 authors = [
     { name = "Arek Kulczycki" }
 ]
 dependencies = [
     "chess==1.9.*",
     "nptyping==2.5.*",
-    "anytree==2.8.*"
+    "anytree==2.8.*",
+    "astar==0.99"
 ]
 
 [options]
@@ -26,7 +27,9 @@ packages = [
     "arek_chess.board.hex.mixins",
     "arek_chess.common",
     "arek_chess.common.memory",
+    "arek_chess.common.memory.adapters",
     "arek_chess.common.queue",
+    "arek_chess.common.queue.adapters",
     "arek_chess.common.queue.items",
     "arek_chess.criteria",
     "arek_chess.criteria.evaluation",

@@ -1,23 +1,27 @@
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.23.2/full/pyodide.js");
 importScripts("/onnxruntime/ort.js");
 
-async function loadPyodideAndPackages() {
+async function setupWorker() {
+    console.log("setting up worker");
+
     self.pyodide = await loadPyodide();
     await self.pyodide.loadPackage("micropip");
     self.micropip = pyodide.pyimport("micropip");
-    await self.micropip.install("../hackable_bot-0.0.3-py3-none-any.whl")
+    await self.micropip.install("../hackable_bot-0.0.4-py3-none-any.whl")
+
+    self.board_pkg = pyodide.pyimport("arek_chess.board.hex.hex_board");
+    self.pkg = pyodide.pyimport("arek_chess.workers.eval_worker");
+    self.pkg.EvalWorker.callKwargs(null, null, null, null, null, 32, 1, self.board_pkg.HexBoard, 7, {evaluator_name: "hex"});
 
     // self.eval_worker_module = pyodide.pyimport("eval_worker");
-      let results = await self.pyodide.runPythonAsync(`
-        from arek_chess.board.chess.chess_board import ChessBoard
-        from arek_chess.workers.eval_worker import EvalWorker
+    //   let results = await self.pyodide.runPythonAsync(`
+    //     from arek_chess.board.chess.chess_board import ChessBoard
+    //     from arek_chess.workers.eval_worker import EvalWorker
+    //
+    //     worker = EvalWorker()
+    // `);
 
-        worker = EvalWorker()
-    `);
-
-    console.log("pyodide worker");
-    await modelPredict();
-    console.log("model predicted in worker");
+    console.log("... worker ready");
 }
 
 async function modelPredict() {
@@ -40,33 +44,23 @@ async function modelPredict() {
     console.timeEnd("test_timer");
 }
 
-let pyodideReadyPromise = loadPyodideAndPackages();
+let evalWorkerPromise = setupWorker();
 
 self.onmessage = async (event) => {
     // make sure loading is done
-    await pyodideReadyPromise;
+    await evalWorkerPromise;
 
-    const { id, ...context } = event.data;
-    console.log(id, context);
+    console.log('received in js worker: ');
+    console.log(event.data);
     // The worker copies the context in its own "memory" (an object mapping name to values)
     // for (const key of Object.keys(context)) {
     //     self[key] = context[key];
     // }
 
-
-    try {
-        // let results = await self.pyodide.runPythonAsync(`
-        //     from controller import Controller
-        //     controller = Controller()
-        //     controller.boot_up()
-        //     0
-        // `);
-        // let ctrlr = self.pkg.Controller();
-        // ctrlr.boot_up();
-        // let results = ctrlr.get_response()
-        self.postMessage({ id: context.a });
-    } catch (error) {
-        console.log(error);
-        self.postMessage({ error: error.message, id: 1000 });
-    }
+    // try {
+    //     self.postMessage({ id: context.a });
+    // } catch (error) {
+    //     console.log(error);
+    //     self.postMessage({ error: error.message, id: 1000 });
+    // }
 };

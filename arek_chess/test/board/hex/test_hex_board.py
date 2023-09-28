@@ -93,6 +93,33 @@ class HexBoardTestCase(TestCase):
 
     @parameterized.expand(
         [
+            [7, "", 49],
+            [7, "c6d4e2", 46],
+            [7, "c6d4e2d3e3c5d5f4d7g1b1a2b2d1a4b4a5b5a7b7f6e5f5g3g4g6g7c2f2f1g2e6", 17],
+        ]
+    )
+    def test_generate_moves(self, size: int, notation: str, empty_spaces: int):
+        """
+        - how many are generated
+        - if they are within board borders
+        - if they don't repeat
+        """
+
+        generated: set[Move] = set()
+
+        board = HexBoard(notation, size=size)
+
+        for move in board.legal_moves:
+            assert move not in generated
+            generated.add(move)
+
+            assert move.x < size
+            assert move.y < size
+
+        assert len(generated) == empty_spaces
+
+    @parameterized.expand(
+        [
             ["e5c11i5", (3, 7, 17, 42)],
             ["e5c11i5a1", (6, 7, 32, 42)],
             ["e5c11i5m13", (6, 7, 32, 42)],

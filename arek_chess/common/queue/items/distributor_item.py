@@ -30,13 +30,13 @@ class DistributorItem(BaseItem):
     def __init__(
         self,
         run_id: str,
-        parent_node_name: str,
+        node_name: str,
         forcing_level: int,
         score: float32,
         board: bytes,
     ) -> None:
         self.run_id: str = run_id
-        self.node_name: str = parent_node_name
+        self.node_name: str = node_name
         self.score: float32 = score
         self.forcing_level: int = forcing_level
         self.board: bytes = board

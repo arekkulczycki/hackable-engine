@@ -6,12 +6,18 @@ from typing import List, Optional
 from numpy import float32, ndarray
 
 from arek_chess.board import GameBoardBase
+from arek_chess.common.constants import MEMORY_HANDLER, MemoryHandler
 
-# from arek_chess.common.memory.adapters.redis_adapter import RedisAdapter
-from arek_chess.common.memory.adapters.shared_memory_adapter import SharedMemoryAdapter
 from arek_chess.common.memory.base_memory import BaseMemory
 from arek_chess.common.queue.items.base_item import BaseItem
 from arek_chess.criteria.evaluation.base_eval import ActionType
+
+if MEMORY_HANDLER == MemoryHandler.SHARED_MEM:
+    from arek_chess.common.memory.adapters.shared_memory_adapter import SharedMemoryAdapter
+elif MEMORY_HANDLER == MemoryHandler.REDIS:
+    from arek_chess.common.memory.adapters.redis_adapter import RedisAdapter
+elif MEMORY_HANDLER == MemoryHandler.WASM:
+    from arek_chess.common.memory.adapters.wasm_adapter import WasmAdapter
 
 
 class MemoryManager:
@@ -24,9 +30,14 @@ class MemoryManager:
     """
 
     def __init__(self):
-        self.memory: BaseMemory = SharedMemoryAdapter()
         # self.memory: BaseMemory = UltraDictAdapter()
-        # self.memory: BaseMemory = RedisAdapter()
+
+        if MEMORY_HANDLER == MemoryHandler.SHARED_MEM:
+            self.memory = SharedMemoryAdapter()
+        elif MEMORY_HANDLER == MemoryHandler.REDIS:
+            self.memory: BaseMemory = RedisAdapter()
+        elif MEMORY_HANDLER == MemoryHandler.WASM:
+            self.memory: BaseMemory = WasmAdapter()
 
     def get_action(self, size: int) -> ActionType:
         action_bytes = self.memory.get("action")

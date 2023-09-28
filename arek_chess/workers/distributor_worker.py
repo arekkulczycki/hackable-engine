@@ -156,7 +156,6 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
 
             eval_items = self._get_eval_items(item)
 
-            # no parent will result in empty string
             if item.node_name == ROOT_NODE_NAME and len(eval_items) == 1:  # only 1 root child, so just play it
                 self.control_queue.put(ControlItem(item.run_id, item.node_name))
                 return

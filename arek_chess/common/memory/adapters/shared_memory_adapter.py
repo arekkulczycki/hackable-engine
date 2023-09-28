@@ -53,6 +53,11 @@ class SharedMemoryAdapter(BaseMemory):
     Manages the shared memory between multiple processes.
     """
 
+    def __init__(self):
+        """"""
+
+        remove_shm_from_resource_tracker()
+
     @staticmethod
     def parse_key(key: str) -> str:
         # FIXME: distributor will raise on not finding parent, this is temporary solution

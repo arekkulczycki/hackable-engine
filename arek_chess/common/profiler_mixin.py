@@ -1,12 +1,6 @@
 # -*- coding: utf-8 -*-
-"""
-Adds an option to run code profiling over a process using this mixin.
-"""
-
 import sys
 from signal import signal, SIGTERM
-
-from pyinstrument import Profiler
 
 
 class ProfilerMixin:
@@ -16,6 +10,9 @@ class ProfilerMixin:
 
     def _profile_code(self) -> None:
         """"""
+
+        # imported on function call because `pyinstrument` is not a required dependency
+        from pyinstrument import Profiler
 
         profiler = Profiler()
         profiler.start()

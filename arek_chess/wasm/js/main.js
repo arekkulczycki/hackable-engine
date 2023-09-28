@@ -1,15 +1,13 @@
 async function startWorker() {
-  const pyodideWorker = new Worker('./js/nocache.js');
+  const evalWorker = new Worker('./js/eval_worker.js');
 
-  const callbacks = {};
-
-  pyodideWorker.onmessage = (event) => {
+  evalWorker.onmessage = (event) => {
     const {id, ...data} = event.data;
-    console.log(data);
-    const onSuccess = callbacks[id];
-    delete callbacks[id];
-    onSuccess(data);
+    console.log("received back from worker: ", data);
   };
+
+  evalWorker.postMessage({"message": "hello worker", "data": [1, 2, 3, 4]})
+  evalWorker.postMessage({"message": "message", "data": [1, 2, 3, 4]})
 }
 
 async function loadHackableBot() {
@@ -32,7 +30,6 @@ async function loadHackableBot() {
     float(evaluator.get_score(board, False))
   `);
   console.log(results)
-  pyodideWorker.postMessage({results: results, id: 0});
 }
 
 // const asyncRun = (() => {

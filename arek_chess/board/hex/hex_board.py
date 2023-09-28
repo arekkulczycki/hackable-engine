@@ -50,6 +50,11 @@ class Move:
 
         return self.get_coord()
 
+    def __hash__(self) -> int:
+        """"""
+
+        return (self.mask << self.size) + (1 << (self.size - 1))
+
     def uci(self) -> str:
         """"""
 
@@ -101,6 +106,7 @@ class Move:
 
         return 1 << (x + size * y)
 
+    @property
     def x(self) -> int:
         """"""
 
@@ -112,6 +118,7 @@ class Move:
 
         return (mask.bit_length() - 1) % size
 
+    @property
     def y(self) -> int:
         """"""
 
@@ -695,12 +702,16 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         self.turn = not self.turn
 
-    def pop(self) -> None:
+    def pop(self) -> Move:
         """"""
 
-        self.occupied_co[not self.turn] ^= self.move_stack.pop().mask
+        move = self.move_stack.pop()
 
+        self.occupied_co[not self.turn] ^= move.mask
+        self.unoccupied |= move.mask
         self.turn = not self.turn
+
+        return move
 
     def get_forcing_level(self, move: Move) -> int:
         """
@@ -953,8 +964,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             # print("empty board")
 
         move: Move = self.move_stack[-1]
-        move_x: int = move.x()
-        move_y: int = move.y()
+        move_x: int = move.x
+        move_y: int = move.y
 
         top_left_mask_x = (
             move_x - shift
