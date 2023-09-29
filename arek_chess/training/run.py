@@ -49,7 +49,7 @@ policy_kwargs_map = {
     "raw3hex": dict(net_arch=[dict(pi=[9, 9], vf=[9, 9])]),
     "raw5hex": dict(net_arch=[dict(pi=[25, 25], vf=[25, 25])]),
     "raw7hex": dict(net_arch=[dict(pi=[49, 49], vf=[49, 49])]),
-    "raw9hex": dict(net_arch=[dict(pi=[64, 64], vf=[64, 64])]),
+    "raw9hex": dict(net_arch=[dict(pi=[81, 81], vf=[81, 81])]),
     "tight-fit": dict(net_arch=[dict(pi=[10, 16], vf=[16, 10])]),
     "additional-layer": dict(net_arch=[dict(pi=[10, 24, 16], vf=[16, 10])]),
 }
