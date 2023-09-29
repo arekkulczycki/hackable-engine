@@ -39,18 +39,12 @@ openings = cycle(
         # "a5",
         # "e1",
         # "e2",
-        # "a1",
-        # "a2",
-        # "a3",
-        # "e3",
-        # "e4",
-        # "e5",
-        "a1c3d4",
-        "e5c3b2",
-        "a3b4d3",
-        "e3d2b3",
-        "a5b4b2",
-        "e1d2d4",
+        "a1",
+        "a2",
+        "a3",
+        "e3",
+        "e4",
+        "e5",
     ]
 )
 
@@ -176,7 +170,7 @@ class Raw5x5BinEnv(gym.Env):
                 # opp_action, value = self.opp_model.run(None, {"input": obs})
                 # self.controller.make_move(self.prepare_action(opp_action[0]))
 
-                self.controller.make_move(DEFAULT_ACTION, search_limit=choice((8, 0, 8, 0, 8)))
+                self.controller.make_move(DEFAULT_ACTION)
                 # self._make_random_move()
 
                 winner = self._get_winner()
