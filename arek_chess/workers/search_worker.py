@@ -14,7 +14,7 @@ from arek_chess.common.constants import (
     INF,
     LOG_INTERVAL,
     PRINT_CANDIDATES,
-    Print,
+    PROCESS_COUNT, Print,
     ROOT_NODE_NAME,
     RUN_ID,
     SLEEP,
@@ -126,7 +126,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
             self.memory_manager.set_int(DEBUG, 0)
 
         with self.finish_lock:
-            for i in range(cpu_count() - 1):
+            for i in range((PROCESS_COUNT or cpu_count()) - 1):
                 self.memory_manager.set_int(
                     f"{WORKER}_{i}", 0
                 )  # each will switch to 1 when finished
@@ -566,7 +566,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         """"""
 
         # print("wait all workers")
-        for i in range(cpu_count() - 1):
+        for i in range((PROCESS_COUNT or cpu_count()) - 1):
             attempts = 0
             while attempts < 1000:  # TODO: why processes take so long to set new status?
                 attempts += 1
@@ -733,7 +733,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
             self.root.children, key=lambda node: node.score, reverse=self.root.color
         )
 
-        if self.printing == Print.CANDIDATES or self.limit == 0:
+        if self.printing == Print.CANDIDATES:
             print("***")
             os.system("clear")
             for child in sorted_children[:]:

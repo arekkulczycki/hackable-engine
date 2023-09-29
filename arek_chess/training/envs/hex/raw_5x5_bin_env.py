@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import math
 from itertools import cycle
+from random import choice
 from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
 
 import gym
@@ -34,20 +35,22 @@ THREE: float32 = float32(3)
 
 openings = cycle(
     [
-        "a1",
-        "a2",
-        "a3",
-        "a4",
-        "a5",
-        "e1",
-        "e2",
-        "e3",
-        "e4",
-        "e5",
-        # "a6",
-        # "a7",
-        # "a8",
-        # "a9",
+        # "a4",
+        # "a5",
+        # "e1",
+        # "e2",
+        # "a1",
+        # "a2",
+        # "a3",
+        # "e3",
+        # "e4",
+        # "e5",
+        "a1c3d4",
+        "e5c3b2",
+        "a3b4d3",
+        "e3d2b3",
+        "a5b4b2",
+        "e1d2d4",
     ]
 )
 
@@ -65,7 +68,7 @@ class Raw5x5BinEnv(gym.Env):
 
     reward_range = (REWARDS[False], REWARDS[True])
     observation_space = gym.spaces.MultiBinary(BOARD_SIZE ** 2 * 2)
-    action_space = gym.spaces.Box(ZERO, ONE, (1,), float32)
+    action_space = gym.spaces.Box(MINUS_ONE, ONE, (1,), float32)
 
     winner: Optional[bool]
 
@@ -160,7 +163,7 @@ class Raw5x5BinEnv(gym.Env):
 
         except StopIteration:
             # all moves evaluated - undo the last and push the best move on the board
-            print("best move: ", self.best_move[0].get_coord(), self.best_move[1])
+            # print("best move: ", self.best_move[0].get_coord(), self.best_move[1])
             self.controller.board.pop()
             self.controller.board.push(self.best_move[0])
 
@@ -172,7 +175,9 @@ class Raw5x5BinEnv(gym.Env):
                 # obs = reshape(self.observation_from_board().astype(float32), (1, 49))
                 # opp_action, value = self.opp_model.run(None, {"input": obs})
                 # self.controller.make_move(self.prepare_action(opp_action[0]))
-                self.controller.make_move(DEFAULT_ACTION)
+
+                self.controller.make_move(DEFAULT_ACTION, search_limit=choice((8, 0, 8, 0, 8)))
+                # self._make_random_move()
 
                 winner = self._get_winner()
 
@@ -202,9 +207,15 @@ class Raw5x5BinEnv(gym.Env):
     def _get_reward(self, winner):
         if winner is False:
             # - 1 + ((len(self.controller.board.move_stack) + 1) - 12) / (25 - 12)
-            return -1 + (len(self.controller.board.move_stack) - 8) / 16
+            return -1 + (len(self.controller.board.move_stack) - 9) / 16
+        elif winner is True:
+            return 1 - ((len(self.controller.board.move_stack) - 9) / 16) ** 2
 
         return self.REWARDS[winner]
+
+    def _make_random_move(self):
+        moves = list(self.controller.board.legal_moves)
+        self.controller.board.push(choice(moves))
 
     def observation_from_board(self) -> NDArray[Shape["50"], Int8]:
         local: NDArray[Shape["25"], Int8] = self.controller.board.get_neighbourhood(

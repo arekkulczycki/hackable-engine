@@ -56,7 +56,7 @@ class SharedMemoryAdapter(BaseMemory):
     def __init__(self):
         """"""
 
-        remove_shm_from_resource_tracker()
+        # remove_shm_from_resource_tracker()
 
     @staticmethod
     def parse_key(key: str) -> str:

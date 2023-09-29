@@ -9,7 +9,7 @@ from arek_chess.board.chess.mixins.chess_board_serializer_mixin import (
     CHESS_BOARD_BYTES_NUMBER,
 )
 from arek_chess.board.hex.hex_board import HexBoard
-from arek_chess.common.constants import Game, Print
+from arek_chess.common.constants import Game, PROCESS_COUNT, Print
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.common.queue.items.control_item import ControlItem
@@ -154,7 +154,7 @@ class Controller:
         print("starting processes")
 
         num_eval_workers = max(
-            1, cpu_count() - 2
+            1, (PROCESS_COUNT or cpu_count()) - 2
         )  # one process required for the tree search and one for the distributor worker
 
         # affinity_set = {0, 1, 2}; os.sched_setaffinity(0, affinity_set)

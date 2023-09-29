@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import math
 from itertools import cycle
+from random import choice
 from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
 
 import gym
@@ -48,6 +49,16 @@ openings = cycle(
         "g5",
         "g6",
         "g7",
+        "a1c5f5e3d4",
+        "a1d4c5c4e4e3g2",
+        "a1e3d4d3b4",
+        "a1c3e3e4d4",
+        "a1c3d4e2f2",
+        "g7e5d4c6b6",
+        "g7e5c5c4d4",
+        "g7c5d4d5f4",
+        "g7d4e3e4c4c5a6",
+        "g7c5b3e3d4",
     ]
 )
 
@@ -160,7 +171,7 @@ class Raw7x7BinEnv(gym.Env):
 
         except StopIteration:
             # all moves evaluated - undo the last and push the best move on the board
-            print("best move: ", self.best_move[0].get_coord(), self.best_move[1])
+            # print("best move: ", self.best_move[0].get_coord(), self.best_move[1])
             self.controller.board.pop()
             self.controller.board.push(self.best_move[0])
 
@@ -172,7 +183,10 @@ class Raw7x7BinEnv(gym.Env):
                 # obs = reshape(self.observation_from_board().astype(float32), (1, 49))
                 # opp_action, value = self.opp_model.run(None, {"input": obs})
                 # self.controller.make_move(self.prepare_action(opp_action[0]))
-                self.controller.make_move(DEFAULT_ACTION)
+
+                self.controller.make_move(DEFAULT_ACTION, search_limit=choice((0, 8)))
+
+                # self._make_random_move()
 
                 winner = self._get_winner()
 
@@ -204,7 +218,14 @@ class Raw7x7BinEnv(gym.Env):
             # - 1 + ((len(self.controller.board.move_stack) + 1) - 12) / (25 - 12)
             return -1 + (len(self.controller.board.move_stack) - 12) / 36
 
+        elif winner is True:
+            return 1 - ((len(self.controller.board.move_stack) - 12) / 36) ** 2
+
         return self.REWARDS[winner]
+
+    def _make_random_move(self):
+        moves = list(self.controller.board.legal_moves)
+        self.controller.board.push(choice(moves))
 
     def observation_from_board(self) -> NDArray[Shape["98"], Int8]:
         local: NDArray[Shape["49"], Int8] = self.controller.board.get_neighbourhood(

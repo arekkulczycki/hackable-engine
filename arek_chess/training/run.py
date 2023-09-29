@@ -2,7 +2,7 @@ import os
 from argparse import ArgumentParser
 from enum import Enum
 from time import perf_counter
-from typing import Tuple
+from typing import Tuple, Union
 
 import gym
 import matplotlib.pyplot as plt
@@ -15,7 +15,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import load_results
 from stable_baselines3.common.results_plotter import ts2xy
-from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
+from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor, SubprocVecEnv
 
 from arek_chess.common.constants import Game, Print
 from arek_chess.controller import Controller
@@ -30,13 +30,15 @@ from arek_chess.training.envs.square_control_env import SquareControlEnv
 
 LOG_PATH = "./arek_chess/training/logs/"
 
-TOTAL_TIMESTEPS = int(2**16)
+TOTAL_TIMESTEPS = int(2**17)
 LEARNING_RATE = 1e-3
 N_EPOCHS = 10
-N_STEPS = 4 * 1024
-BATCH_SIZE = 4 * 512  # recommended to be a factor of (N_STEPS * N_ENVS)
-CLIP_RANGE = 0.7
+N_STEPS = 2 ** 16
+BATCH_SIZE = 2 ** 16  # recommended to be a factor of (N_STEPS * N_ENVS)
+CLIP_RANGE = 0.8
+GAMMA = 0.8
 GAE_LAMBDA = 0.95
+ENT_COEF = 0.00  # 0.001
 
 SEARCH_LIMIT = 8
 
@@ -83,7 +85,9 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
                 "n_steps": N_STEPS,
                 "n_epochs": N_EPOCHS,
                 "batch_size": BATCH_SIZE,
+                "gamma": GAMMA,
                 "gae_lambda": GAE_LAMBDA,
+                "ent_coef": ENT_COEF,
             },
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
@@ -99,7 +103,9 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
             n_steps=N_STEPS,
             n_epochs=N_EPOCHS,
             batch_size=BATCH_SIZE,
+            gamma=GAMMA,
             gae_lambda=GAE_LAMBDA,
+            ent_coef=ENT_COEF,
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
         )
@@ -135,7 +141,9 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
                     "n_steps": N_STEPS,
                     "n_epochs": N_EPOCHS,
                     "batch_size": BATCH_SIZE,
+                    "gamma": GAMMA,
                     "gae_lambda": GAE_LAMBDA,
+                    "ent_coef": ENT_COEF,
                 },
                 policy_kwargs=policy_kwargs_map[env_name],
                 device=device,
@@ -150,7 +158,9 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
                 n_steps=N_STEPS,
                 n_epochs=N_EPOCHS,
                 batch_size=BATCH_SIZE,
+                gamma=GAMMA,
                 gae_lambda=GAE_LAMBDA,
+                ent_coef=ENT_COEF,
                 policy_kwargs=policy_kwargs_map[env_name],
                 device=device,
             )
@@ -221,10 +231,10 @@ def get_env_hex(env_name, version) -> Tuple[gym.Env, str]:
 
 
 def get_env_hex_raw(env_name, version) -> Tuple[gym.Env, str]:
-    env: DummyVecEnv = make_vec_env(
+    env: Union[DummyVecEnv, SubprocVecEnv] = make_vec_env(
         lambda: Raw5x5BinEnv(
             controller=Controller(
-                printing=Print.MOVE,
+                printing=Print.NOTHING,
                 # tree_params="4,4,",
                 search_limit=SEARCH_LIMIT,
                 is_training_run=True,
@@ -234,7 +244,10 @@ def get_env_hex_raw(env_name, version) -> Tuple[gym.Env, str]:
                 board_size=Raw5x5BinEnv.BOARD_SIZE,
             )
         ),
-        n_envs=1,
+        # monitor_dir=os.path.join(LOG_PATH, env_name, f"v{version}"),
+        # n_envs=2,
+        # vec_env_cls=SubprocVecEnv,
+        # vec_env_kwargs={"start_method": "fork"},
     )
 
     env = VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))

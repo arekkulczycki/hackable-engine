@@ -68,3 +68,4 @@ class Status(IntEnum):
 
 QUEUE_HANDLER = QueueHandler.FASTER_FIFO
 MEMORY_HANDLER = MemoryHandler.SHARED_MEM
+PROCESS_COUNT = 4
