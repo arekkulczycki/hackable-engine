@@ -30,8 +30,8 @@ from arek_chess.training.envs.square_control_env import SquareControlEnv
 
 LOG_PATH = "./arek_chess/training/logs/"
 
-TOTAL_TIMESTEPS = int(2**19)
-LEARNING_RATE = 1e-3
+TOTAL_TIMESTEPS = int(2**22)
+LEARNING_RATE = 2e-4
 N_EPOCHS = 10
 N_STEPS = 2 ** 16
 BATCH_SIZE = 2 ** 14  # recommended to be a factor of (N_STEPS * N_ENVS)
@@ -41,7 +41,7 @@ GAMMA = 0.996  # 0.996 for 5x5 hex, 0.999 for 7x7, 0.9997 for 9x9 - !!! values w
 GAE_LAMBDA = 0.95
 ENT_COEF = 0.00  # 0.001
 
-SEARCH_LIMIT = 8
+SEARCH_LIMIT = 10
 
 # POLICY_KWARGS["activation_fn"] = "tanh"
 policy_kwargs_map = {
@@ -116,8 +116,10 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
 
     print("training started...")
 
-    model.learn(total_timesteps=TOTAL_TIMESTEPS)  # progress_bar=True
-    model.save(f"./{env_name}.v{version + 1}")
+    try:
+        model.learn(total_timesteps=TOTAL_TIMESTEPS)  # progress_bar=True
+    finally:
+        model.save(f"./{env_name}.v{version + 1}")
 
     env.envs[0].controller.tear_down()
     print(f"training finished in: {perf_counter() - t0}")
@@ -185,12 +187,12 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
         else:
             # on success increment the version and keep learning
             version += 1
-            model.save(f"./{env_name}.v{version}")
 
             # shouldn't be necessary but seems to be
             env.envs[0].controller.tear_down()
             env = get_env(env_name, version)
         finally:
+            model.save(f"./{env_name}.v{version}")
             print(f"training finished in: {perf_counter() - t0}")
 
     env.envs[0].controller.tear_down()

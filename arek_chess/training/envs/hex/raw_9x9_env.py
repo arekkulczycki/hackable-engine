@@ -223,7 +223,7 @@ class Raw9x9Env(gym.Env):
 
     def observation_from_board(self) -> NDArray[Shape["162"], Int8]:
         local: NDArray[Shape["81"], Int8] = self.controller.board.get_neighbourhood(
-            7, should_suppress=True
+            9, should_suppress=True
         )
         # fmt: off
         return eye(3, dtype=int8)[local][:, 1:].flatten()  # dummy encoding - 2 columns of 0/1 values, 1 column dropped

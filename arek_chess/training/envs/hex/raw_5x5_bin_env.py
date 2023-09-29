@@ -45,6 +45,8 @@ openings = cycle(
         "e3",
         "e4",
         "e5",
+        "d1",
+        "b5",
     ]
 )
 
