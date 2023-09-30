@@ -30,7 +30,7 @@ from arek_chess.training.envs.square_control_env import SquareControlEnv
 
 LOG_PATH = "./arek_chess/training/logs/"
 
-TOTAL_TIMESTEPS = int(2**22)
+TOTAL_TIMESTEPS = int(2**18)
 LEARNING_RATE = 2e-4
 N_EPOCHS = 10
 N_STEPS = 2 ** 16
