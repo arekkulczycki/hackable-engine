@@ -249,10 +249,10 @@ class Raw9x9Env(gym.Env):
     def _get_reward(self, winner):
         if winner is False:
             # - 1 + ((len(self.controller.board.move_stack) + 1) - 12) / (25 - 12)
-            return -1 + (len(self.controller.board.move_stack) - 16) / (81-16)
+            return -1 + max(((len(self.controller.board.move_stack) - 16) / (81-16), 0))
 
         elif winner is True:
-            return 1 - ((len(self.controller.board.move_stack) - 17) / (81-17)) ** 2  # squared for "optimism"
+            return 1 - max((((len(self.controller.board.move_stack) - 17) / (81-17)) ** 2, 0))  # squared for "optimism"
 
         return self.REWARDS[winner]
 

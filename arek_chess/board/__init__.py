@@ -11,6 +11,9 @@ AnyMove = Any
 class GameMoveBase(ABC):
     """"""
 
+    def __init__(self, *args, **kwargs) -> None:
+        """"""
+
 
 class GameBoardBase(ABC):
     """"""
@@ -18,7 +21,7 @@ class GameBoardBase(ABC):
     turn: bool
     move_stack: List
     legal_moves: Any
-    has_move_limit: False
+    has_move_limit: bool = False
     """Some games can be played forever, others are limited like for instance Hex: up until the board is filled."""
 
     def __init__(self, *args, **kwargs) -> None:

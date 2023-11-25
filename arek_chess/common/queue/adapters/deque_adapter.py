@@ -26,7 +26,7 @@ class DequeAdapter(BaseQueue):
 
         try:
             self.queue.append(item)
-        except Full:  # TODO: probably doesn raise this
+        except Full:  # TODO: probably doesnt raise this
             raise
 
     def put_many(self, items: List[BaseItem]) -> None:
@@ -34,7 +34,7 @@ class DequeAdapter(BaseQueue):
 
         try:
             self.queue.extend(items)
-        except Full:  # TODO: probably doesn raise this
+        except Full:  # TODO: probably doesnt raise this
             raise
 
     def get(self) -> Optional[BaseItem]:
@@ -42,15 +42,15 @@ class DequeAdapter(BaseQueue):
 
         try:
             return self.queue.popleft()
-        except Empty:  # TODO: maybe doesn raise this?
+        except IndexError:
             return None
 
     def get_many(self, max_messages_to_get: int, timeout: float = 0) -> List[BaseItem]:
         """"""
 
         try:
-            return [item for item in (self.queue.popleft() for i in range(max_messages_to_get)) if item is not None]
-        except Empty:  # TODO: maybe doesn raise this?
+            return [item for item in (self.queue.popleft() for _ in range(max_messages_to_get)) if item is not None]
+        except IndexError:
             return []
 
     def _get_many_blocking(

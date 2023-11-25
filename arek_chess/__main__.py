@@ -42,9 +42,9 @@ if __name__ == "__main__":
         action="store_true",
     )
     arg_parser.add_argument(
-        "-f",
-        "--fen",
-        help="Fen of the starting position, defaults to chess starting position.",
+        "-n",
+        "--notation",
+        help="Notation of the starting position, defaults to normal starting position.",
     )
     arg_parser.add_argument(
         "-p",
@@ -79,9 +79,9 @@ if __name__ == "__main__":
         help="Runs in a new thread.",
         action="store_true",
     )
-    arg_parser.add_argument("-G", "--game-played", type=str, choices=["chess", "hex"], help="Game to be played")
+    arg_parser.add_argument("-G", "--game-played", type=str, choices=["chess", "hex"], help="Game to be played", required=True)
     arg_parser.add_argument(
-        "-bs",
+        "-S",
         "--board-size",
         type=int,
         help="Size of the board to be played on.",
@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
     validate_tree_params(args.tree_params)
     controller = Controller(
-        position=args.fen,
+        position=args.notation,
         printing=args.printing,
         tree_params=args.tree_params,
         search_limit=args.search_limit,

@@ -1,3 +1,8 @@
+### Build project if Pyodide is already working
+
+`pyodide build <PROJ_DIR>`
+`cp <PYODIDE_DIR>/dist <PROJ_DIR>/wasm`
+
 ### Build Pyodide with ONNX
 
 All taken from here: `https://github.com/josephrocca/onnx-pyodide`

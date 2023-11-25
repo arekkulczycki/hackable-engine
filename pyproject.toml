@@ -21,6 +21,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = [
+    "arek_chess.board",
     "arek_chess.board.chess",
     "arek_chess.board.chess.mixins",
     "arek_chess.board.hex",

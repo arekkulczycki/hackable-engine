@@ -1,27 +1,50 @@
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.23.2/full/pyodide.js");
 importScripts("/onnxruntime/ort.js");
 
-async function setupWorker() {
-    console.log("setting up worker");
-
+async function setupPyodide() {
     self.pyodide = await loadPyodide();
     await self.pyodide.loadPackage("micropip");
     self.micropip = pyodide.pyimport("micropip");
     await self.micropip.install("../hackable_bot-0.0.4-py3-none-any.whl")
+}
 
-    self.board_pkg = pyodide.pyimport("arek_chess.board.hex.hex_board");
-    self.pkg = pyodide.pyimport("arek_chess.workers.eval_worker");
-    self.pkg.EvalWorker.callKwargs(null, null, null, null, null, 32, 1, self.board_pkg.HexBoard, 7, {evaluator_name: "hex"});
+async function setupWorker(memoryArr, workerNum, boardInitKwargs) {
+    let queue_pkg = pyodide.pyimport("arek_chess.common.queue.manager");
+    let eval_item_pkg = pyodide.pyimport("arek_chess.common.queue.items.eval_item");
+    let selector_item_pkg = pyodide.pyimport("arek_chess.common.queue.items.selector_item");
+    let distributor_item_pkg = pyodide.pyimport("arek_chess.common.queue.items.distributor_item");
 
-    // self.eval_worker_module = pyodide.pyimport("eval_worker");
-    //   let results = await self.pyodide.runPythonAsync(`
-    //     from arek_chess.board.chess.chess_board import ChessBoard
-    //     from arek_chess.workers.eval_worker import EvalWorker
-    //
-    //     worker = EvalWorker()
-    // `);
+    let board_pkg = pyodide.pyimport("arek_chess.board.hex.hex_board");
+    let board = board_pkg.HexBoard.callKwargs(boardInitKwargs);
 
-    console.log("... worker ready");
+    eval_item_pkg.EvalItem.board_bytes_number = board.board_bytes_number
+    selector_item_pkg.SelectorItem.board_bytes_number = board.board_bytes_number
+    distributor_item_pkg.DistributorItem.board_bytes_number = board.board_bytes_number
+
+    self.eval_queue = queue_pkg.QueueManager(
+        "eval_queue",
+        eval_item_pkg.EvalItem.loads,
+        eval_item_pkg.EvalItem.dumps
+    );
+    self.selector_queue = queue_pkg.QueueManager(
+        "selector_queue",
+        selector_item_pkg.SelectorItem.loads,
+        selector_item_pkg.SelectorItem.dumps
+    );
+
+    let worker_pkg = pyodide.pyimport("arek_chess.workers.eval_worker");
+    self.worker = worker_pkg.EvalWorker.callKwargs(
+        null,
+        null,
+        null,
+        self.eval_queue,
+        self.selector_queue,
+        workerNum,
+        board_pkg.HexBoard,
+        boardInitKwargs.size,
+        {evaluator_name: "hex", memory: memoryArr});
+
+    console.log("... eval worker ready");
 }
 
 async function modelPredict() {
@@ -34,7 +57,7 @@ async function modelPredict() {
     input = [1, 2, 3, 4, 5, 6, 7, 8, 9];
     feeds = [];
     n = 10000
-    for (i=0; i<n; i++)
+    for (let i=0; i<n; i++)
         feeds.push({"input": new ort.Tensor("float32", input, [1, 9])});
     console.log('feeds built')
     console.time("test_timer");
@@ -44,23 +67,39 @@ async function modelPredict() {
     console.timeEnd("test_timer");
 }
 
-let evalWorkerPromise = setupWorker();
+async function handle_event(event) {
+    if (!event.data.type) {
+        if (event.data.get("type") === "eval_queue") {
+            self.eval_queue.inject_js(event.data.get("item"));
+        } else if (event.data.get("type") === "eval_queue_bulk") {
+            let items = event.data.get("items");
+            items.forEach((item) => {
+                self.eval_queue.inject_js(item);
+            });
+        } else {
+            console.log("received else in eval: ", event.data)
+        }
+    } else if (event.data.type === "search_port") {
+        self.search_worker_port = event.data.port;
+    } else if (event.data.type === "eval_port") {
+        self.port = event.data.port;
+        self.port.onmessage = async (eval_event) => {
+            await handle_event(eval_event);
+        }
+    } else if (event.data.type === "memory") {
+        await pyodidePromise;
 
-self.onmessage = async (event) => {
-    // make sure loading is done
-    await evalWorkerPromise;
+        var arr = new Int8Array(event.data.memory);
+        await setupWorker(arr, event.data.worker_num, event.data.boardInitKwargs)
+        self.postMessage({"type": "ready"})
 
-    console.log('received in js worker: ');
-    console.log(event.data);
-    // The worker copies the context in its own "memory" (an object mapping name to values)
-    // for (const key of Object.keys(context)) {
-    //     self[key] = context[key];
-    // }
+        // self.worker._set_wasm_port(self.port);
+        self.worker._set_selector_wasm_port(self.search_worker_port);
 
-    // try {
-    //     self.postMessage({ id: context.a });
-    // } catch (error) {
-    //     console.log(error);
-    //     self.postMessage({ error: error.message, id: 1000 });
-    // }
-};
+        await self.worker._run();
+    }
+}
+
+self.onmessage = handle_event;
+
+let pyodidePromise = setupPyodide();

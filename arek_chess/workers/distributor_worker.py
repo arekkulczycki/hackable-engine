@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
+import asyncio
+import contextlib
 from multiprocessing import Lock
-from os import getpid
-from time import sleep
-from typing import Generic, List, Optional, Type, TypeVar
+from typing import Any, Generic, List, Optional, Type, TypeVar
 
 from arek_chess.board import GameBoardBase, GameMoveBase
 from arek_chess.common.constants import (
     DISTRIBUTED,
-    ROOT_NODE_NAME,
+    QUEUE_THROTTLE, ROOT_NODE_NAME,
     RUN_ID,
     SLEEP,
     STATUS,
@@ -49,23 +49,32 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
         control_queue: QM[ControlItem],
         board_class: Type[TGameBoard],
         board_size: Optional[int],
-        throttle: int,
+        memory: Optional[Any] = None
     ):
         """"""
 
-        super().__init__()
+        super().__init__(memory)
 
-        self.status_lock = status_lock
-        self.finish_lock = finish_lock
-        self.counters_lock = counters_lock
+        self.status_lock = status_lock or contextlib.nullcontext()
+        self.finish_lock = finish_lock or contextlib.nullcontext()
+        self.counters_lock = counters_lock or contextlib.nullcontext()
 
         self.distributor_queue = distributor_queue
         self.eval_queue = eval_queue
         self.selector_queue = selector_queue
         self.control_queue = control_queue
-        self.queue_throttle = throttle
 
         self.board: TGameBoard = board_class(size=board_size) if board_size else board_class()
+
+    def _set_control_wasm_port(self, port) -> None:
+        """"""
+
+        self.control_queue.set_destination(port)
+
+    def _set_eval_wasm_ports(self, ports) -> None:
+        """"""
+
+        self.eval_queue.set_mixed_destination(ports)
 
     def setup(self):
         """"""
@@ -74,39 +83,35 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
 
         # self._profile_code()
 
-    def _run(self):
+    async def _run(self):
         """"""
 
         self.setup()
 
-        memory_manager = self.memory_manager
-        queue_throttle = self.queue_throttle
         get_items = self.get_items
-        distribute_items = self.distribute_items
         finished = True
         run_id: Optional[str] = None
 
-        with self.status_lock:
-            self.memory_manager.set_int(str(getpid()), 1)
+        if self.pid:  # is None in WASM
+            with self.status_lock:
+                self.memory_manager.set_int(str(self.pid), 1)
 
         with self.counters_lock:
-            memory_manager.set_int(DISTRIBUTED, 0, new=False)
+            self.memory_manager.set_int(DISTRIBUTED, 0, new=False)
 
         while True:
             with self.status_lock:
-                status: int = memory_manager.get_int(STATUS)
+                status: int = self.memory_manager.get_int(STATUS)
 
             if status == Status.STARTED:
-
                 # throttle has to be larger than value in search worker for putting
-                items: List[DistributorItem] = get_items(queue_throttle * 2)
+                items: List[DistributorItem] = get_items(QUEUE_THROTTLE * 2)
 
                 if items:
-                    # print("distrubuting items")
                     if run_id is None:
                         with self.status_lock:
-                            run_id: str = memory_manager.get_str(RUN_ID)
-                    distribute_items(items, run_id)
+                            run_id: str = self.memory_manager.get_str(RUN_ID)
+                    self.distribute_items(items, run_id)
 
                 if finished is True and items:
                     # could switch without items too, but this is for debug purposes
@@ -114,27 +119,29 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
                     finished = False
 
                 if finished:
-                    print("distributor: started but no items found")
-                    sleep(SLEEP * 100)
+                    # print("distributor: started but no items found")
+                    await asyncio.sleep(SLEEP * 100)
+                else:
+                    await asyncio.sleep(0)
 
             elif not finished:
                 finished = True
                 run_id = None
 
                 # empty queue, **must come before marking worker finished**
-                while get_items(queue_throttle):
+                while get_items(QUEUE_THROTTLE):
                     pass
 
                 with self.counters_lock:
-                    memory_manager.set_int(DISTRIBUTED, 0, new=False)
+                    self.memory_manager.set_int(DISTRIBUTED, 0, new=False)
 
                 with self.finish_lock:
-                    memory_manager.set_int(f"{WORKER}_0", 1, new=False)
+                    self.memory_manager.set_bool(f"{WORKER}_0", True, new=False)
 
                 self.distributed = 0
 
             else:
-                sleep(SLEEP)
+                await asyncio.sleep(SLEEP)
 
     def get_items(self, queue_throttle: int) -> List[DistributorItem]:
         """"""

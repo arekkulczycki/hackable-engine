@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import typing
 from multiprocessing import Lock
-from time import sleep
-from typing import List, Optional, Tuple, Type, TypeVar
+from os import cpu_count
+from time import perf_counter
+from typing import Any, List, Optional, Tuple, Type, TypeVar
 
 from numpy import float32
 
@@ -12,7 +15,7 @@ from arek_chess.board import GameBoardBase
 from arek_chess.common.constants import (
     DRAW,
     Game, INF,
-    RUN_ID,
+    PROCESS_COUNT, QUEUE_THROTTLE, RUN_ID,
     SLEEP,
     STATUS,
     Status,
@@ -45,7 +48,6 @@ class EvalWorker(BaseWorker):
         action_lock: Lock,
         eval_queue: QueueManager,
         selector_queue: QueueManager,
-        queue_throttle: int,
         worker_number: int,
         board_class: Type[TGameBoard],
         board_size: Optional[int],
@@ -54,18 +56,18 @@ class EvalWorker(BaseWorker):
         is_training_run: bool = False,
         env: Optional[gym.Env] = None,
         model_version: Optional[str] = None,
+        memory: Optional[Any] = None,
     ) -> None:
-        super().__init__()
+        super().__init__(memory)
 
-        self.status_lock = status_lock
-        self.finish_lock = finish_lock
-        self.action_lock = action_lock
+        self.status_lock = status_lock or contextlib.nullcontext()
+        self.finish_lock = finish_lock or contextlib.nullcontext()
+        self.action_lock = action_lock or contextlib.nullcontext()
 
         self.eval_queue: QueueManager = eval_queue
         self.selector_queue: QueueManager = selector_queue
-        self.queue_throttle: int = queue_throttle
-        self.worker_number: int = worker_number
 
+        self.worker_number: int = worker_number
         self.evaluator_name = evaluator_name
 
         self.is_training_run: bool = is_training_run
@@ -83,6 +85,11 @@ class EvalWorker(BaseWorker):
 
         self.board: TGameBoard = board_class(size=board_size) if board_size else board_class()
 
+    def _set_selector_wasm_port(self, port) -> None:
+        """"""
+
+        self.selector_queue.set_destination(port)
+
     def setup(self) -> None:
         """"""
 
@@ -96,27 +103,28 @@ class EvalWorker(BaseWorker):
 
         self.evaluator = evaluators[self.evaluator_name]
 
-    def _run(self) -> None:
+    async def _run(self) -> None:
         """"""
 
         self.setup()
 
-        eval_queue = self.eval_queue
-        selector_queue = self.selector_queue
-        queue_throttle = self.queue_throttle
-        eval_items = self.eval_items
-        memory_manager = self.memory_manager
-
-        memory_manager.set_int(str(self.pid), 1)
+        if self.pid:  # is None in WASM
+            with self.status_lock:
+                self.memory_manager.set_int(str(self.pid), 1)
 
         action: Optional[ActionType] = None
         action_set: bool = False
         finished = True
         run_id: Optional[str] = None
 
+        num_eval_workers = max(
+            1, (PROCESS_COUNT or cpu_count()) - 2
+        )  # one process required for the tree search and one for the distributor worker
+        queue_throttle = QUEUE_THROTTLE // num_eval_workers
+
         while True:
             with self.status_lock:
-                status: int = memory_manager.get_int(STATUS)
+                status: int = self.memory_manager.get_int(STATUS)
 
             if status == Status.STARTED:
                 finished = False
@@ -130,16 +138,17 @@ class EvalWorker(BaseWorker):
                             print("failed action retrieval of size: ", self.evaluator.ACTION_SIZE)
                     action_set = True
 
-                items_to_eval: List[EvalItem] = eval_queue.get_many(
+                items_to_eval: List[EvalItem] = self.eval_queue.get_many(
                     queue_throttle, SLEEP
                 )
-
                 if items_to_eval:
                     if run_id is None:
                         with self.status_lock:
-                            run_id = memory_manager.get_str(RUN_ID)
+                            run_id = self.memory_manager.get_str(RUN_ID)
 
-                    selector_queue.put_many(eval_items(items_to_eval, run_id, action))
+                    self.selector_queue.put_many(self.eval_items(items_to_eval, run_id, action))
+
+                await asyncio.sleep(0)
 
             elif not finished:
                 finished = True
@@ -147,12 +156,12 @@ class EvalWorker(BaseWorker):
 
                 action_set = False
                 with self.finish_lock:
-                    memory_manager.set_int(
-                        f"{WORKER}_{self.worker_number}", 1, new=False
+                    self.memory_manager.set_bool(
+                        f"{WORKER}_{self.worker_number}", True, new=False
                     )
 
             else:
-                sleep(SLEEP)
+                await asyncio.sleep(SLEEP)
 
     def eval_items(
         self, eval_items: List[EvalItem], run_id: str, action: Optional[ActionType]
@@ -172,12 +181,12 @@ class EvalWorker(BaseWorker):
         result, is_check = self.get_quick_result(
             self.board, item.parent_node_name, item.move_str
         )
+
         if result is not None:
             finished = True
         else:
             result = self.evaluate(self.board, is_check, action)
 
-        # print("eval: ", id(item.board))
         return SelectorItem(
             item.run_id,
             item.parent_node_name,

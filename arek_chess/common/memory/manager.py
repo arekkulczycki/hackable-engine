@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from struct import pack, unpack
-from typing import List, Optional
+from typing import Any, List, Optional
 
 # from larch.pickle.pickle import dumps, loads
 from numpy import float32, ndarray
@@ -29,7 +29,7 @@ class MemoryManager:
     The leak is small enough to let the engine work until a game is over, then needs a hard restart.
     """
 
-    def __init__(self):
+    def __init__(self, memory: Optional[Any] = None):
         # self.memory: BaseMemory = UltraDictAdapter()
 
         if MEMORY_HANDLER == MemoryHandler.SHARED_MEM:
@@ -37,7 +37,7 @@ class MemoryManager:
         elif MEMORY_HANDLER == MemoryHandler.REDIS:
             self.memory: BaseMemory = RedisAdapter()
         elif MEMORY_HANDLER == MemoryHandler.WASM:
-            self.memory: BaseMemory = WasmAdapter()
+            self.memory: BaseMemory = WasmAdapter(memory)
 
     def get_action(self, size: int) -> ActionType:
         action_bytes = self.memory.get("action")
@@ -80,6 +80,13 @@ class MemoryManager:
 
     def set_int(self, key: str, value: int, *, new: bool = True) -> None:
         self.memory.set(key, pack("i", value), new=new)
+
+    def get_bool(self, key: str) -> bool:
+        v: bytes = self.memory.get(key)
+        return unpack("?", v)[0] if v else False
+
+    def set_bool(self, key: str, value: int, *, new: bool = True) -> None:
+        self.memory.set(key, b"1" if value else b"0", new=new)
 
     def get_str(self, key: str) -> str:
         v: bytes = self.memory.get(key)

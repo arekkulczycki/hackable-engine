@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 import math
+from collections import defaultdict
 from itertools import cycle
 from random import choice
-from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
+from typing import Any, DefaultDict, Dict, Generator, List, Optional, SupportsFloat, Tuple
 
 import gym
 import onnxruntime as ort
@@ -47,6 +48,18 @@ openings = cycle(
         "e5",
         "d1",
         "b5",
+        "a1c3a4",
+        "a2c3a4",
+        "a3b4d3",
+        "e3d2b3",
+        "e4c3e2",
+        "e5c3e2",
+        "d1b4d3",
+        "d1c4b4",
+        "d1c4b4c2d2",
+        "b5d2b3",
+        "b5c2d2",
+        "b5c2d2c4b4",
     ]
 )
 
@@ -67,6 +80,9 @@ class Raw5x5BinEnv(gym.Env):
     action_space = gym.spaces.Box(MINUS_ONE, ONE, (1,), float32)
 
     winner: Optional[bool]
+    opening: str
+
+    losses: DefaultDict = defaultdict(lambda: 0)
 
     def __init__(self, *, controller: Optional[Controller] = None):
         super().__init__()
@@ -89,7 +105,8 @@ class Raw5x5BinEnv(gym.Env):
 
     def _setup_controller(self, controller: Controller):
         self.controller = controller
-        self.controller._setup_board(next(openings), size=self.BOARD_SIZE)
+        self.opening = next(openings)
+        self.controller._setup_board(self.opening, size=self.BOARD_SIZE)
         self.controller.boot_up()
 
     def render(self, mode="human", close=False) -> RenderFrame:
@@ -105,9 +122,12 @@ class Raw5x5BinEnv(gym.Env):
         options: Optional[Dict[str, Any]] = None,
     ) -> Tuple[ObsType, Dict[str, Any]]:
         # super().reset(seed=seed)
+        if not self.winner:
+            self.losses[self.opening] += 1
 
         self.render()
-        self.controller.reset_board(next(openings), size=self.BOARD_SIZE)
+        self.opening = next(openings)
+        self.controller.reset_board(self.opening, size=self.BOARD_SIZE)
 
         self._prepare_child_moves()
 
@@ -203,9 +223,11 @@ class Raw5x5BinEnv(gym.Env):
     def _get_reward(self, winner):
         if winner is False:
             # - 1 + ((len(self.controller.board.move_stack) + 1) - 12) / (25 - 12)
-            return -1 + (len(self.controller.board.move_stack) - 9) / 16
+            # return -1 + max(((len(self.controller.board.move_stack) - 9) / 16, 0))
+            return -1 + max(((len(self.controller.board.move_stack) - 7) / 14, 0))
         elif winner is True:
-            return 1 - ((len(self.controller.board.move_stack) - 9) / 16) ** 2
+            # return 1 - max((((len(self.controller.board.move_stack) - 9) / 16) ** 2, 0))
+            return 1 - max(((len(self.controller.board.move_stack) - 7) / 14, 0))
 
         return self.REWARDS[winner]
 
@@ -224,3 +246,6 @@ class Raw5x5BinEnv(gym.Env):
     @staticmethod
     def prepare_action(action):
         return asarray((0, 0, 0, 0, 0, 10, action[0], 1))
+
+    def summarize(self):
+        print("loss summary: ", sorted(self.losses.items(), key=lambda x: -x[1]))

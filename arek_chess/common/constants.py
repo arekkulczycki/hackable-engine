@@ -19,7 +19,7 @@ RUN_ID: str = "run_id"
 WORKER: str = "worker"
 DISTRIBUTED: str = "distributed"
 
-DEFAULT_HEX_BOARD_SIZE: int = 7
+DEFAULT_HEX_BOARD_SIZE: int = 13
 
 
 class Print(IntEnum):
@@ -66,6 +66,12 @@ class Status(IntEnum):
     ERROR: int = 3
 
 
+# QUEUE_HANDLER = QueueHandler.WASM
+# MEMORY_HANDLER = MemoryHandler.WASM
 QUEUE_HANDLER = QueueHandler.FASTER_FIFO
 MEMORY_HANDLER = MemoryHandler.SHARED_MEM
-PROCESS_COUNT = 4
+PROCESS_COUNT = 6
+
+QUEUE_THROTTLE = 64
+PRINTING: Print = Print.LOGS
+TREE_PARAMS: str = "3,5,"

@@ -5,7 +5,7 @@ import math
 from copy import copy
 from dataclasses import dataclass
 from functools import reduce
-from itertools import groupby, permutations, product
+from itertools import groupby, product
 from operator import ior
 from typing import Callable, Dict, Generator, Iterable, Iterator, List, Optional, Tuple
 
@@ -99,6 +99,13 @@ class Move:
 
         # a1 => (0, 0) => 0b1
         return 1 << (col + size * (row - 1))
+
+    @staticmethod
+    def xy_from_mask(mask: BitBoard, size: int) -> Tuple[int, int]:
+        """"""
+
+        bl = mask.bit_length()
+        return (bl - 1) % size, (bl - 1) // size
 
     @staticmethod
     def mask_from_xy(x: int, y: int, size: int) -> BitBoard:
@@ -1174,3 +1181,14 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 opp = self.occupied_co[not color]
                 masks = list(generate_masks(self.bb_rows[-1] & ~opp))
                 return [masks[len(masks)//2]]  # take a single point in the middle of an edge
+
+    def color_matrix(self, color: bool) -> NDArray:
+        """"""
+
+        array = zeros((self.size, self.size), dtype=int)
+
+        for mask in generate_masks(self.occupied_co[color]):
+            x, y = Move.xy_from_mask(mask, self.size)
+            array[x][y] = 1
+
+        return array

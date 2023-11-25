@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
+import asyncio
+import contextlib
 import os
 from multiprocessing import Lock, cpu_count
 from random import randint
-from time import perf_counter, sleep, time
-from typing import ClassVar, Dict, Generic, List, Optional, Tuple, TypeVar
+from time import time
+from typing import Any, ClassVar, Dict, Generic, List, Optional, Tuple, TypeVar
 
 from numpy import abs, float32
 
 from arek_chess.board import GameBoardBase
+from arek_chess.common import constants
 from arek_chess.common.constants import (
     DEBUG,
     DISTRIBUTED,
@@ -15,12 +18,12 @@ from arek_chess.common.constants import (
     LOG_INTERVAL,
     PRINT_CANDIDATES,
     PROCESS_COUNT, Print,
-    ROOT_NODE_NAME,
+    QUEUE_THROTTLE, ROOT_NODE_NAME,
     RUN_ID,
     SLEEP,
     STATUS,
     Status,
-    WORKER,
+    TREE_PARAMS, WORKER,
 )
 from arek_chess.common.custom_threads import ReturningThread
 from arek_chess.common.exceptions import SearchFailed
@@ -71,22 +74,20 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         status_lock: Lock,
         finish_lock: Lock,
         counters_lock: Lock,
-        distributor_queue: QM[DistributorItem],
         selector_queue: QM[SelectorItem],
+        distributor_queue: QM[DistributorItem],
         control_queue: QM[ControlItem],
-        queue_throttle: int,
-        printing: Print,
-        tree_params: str,
+        memory: Optional[Any] = None
     ):
         super().__init__()
 
-        self.distributor_queue = distributor_queue
-        self.selector_queue = selector_queue
-        self.control_queue = control_queue
-        self.queue_throttle = queue_throttle
+        self.selector_queue = selector_queue  # or QM("selector_queue", **SelectorItem.get_queue_kwargs())
+        self.distributor_queue = distributor_queue  # or QM("distributor_queue", **DistributorItem.get_queue_kwargs())
+        self.control_queue = control_queue  # or QM("control_queue", **ControlItem.get_queue_kwargs())
 
-        self.printing = printing
-        self.tree_params = tree_params  # TODO: create a constant class like Print
+        self.queue_throttle = QUEUE_THROTTLE
+        self.printing = constants.PRINTING
+        self.tree_params = TREE_PARAMS
 
         self.root = None
         # self.nodes_dict: Dict[str, Node] = {}
@@ -94,10 +95,11 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         self.transposition_dict: Optional[
             Dict[bytes, Node]
         ] = None  # WeakValueDictionary({})
-        self.memory_manager = MemoryManager()
-        self.status_lock = status_lock
-        self.finish_lock = finish_lock
-        self.counters_lock = counters_lock
+        self.memory_manager = MemoryManager(memory)
+
+        self.status_lock = status_lock or contextlib.nullcontext()
+        self.finish_lock = finish_lock or contextlib.nullcontext()
+        self.counters_lock = counters_lock or contextlib.nullcontext()
 
         self._reset_counters()
 
@@ -109,6 +111,11 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
 
         with self.status_lock:
             self.memory_manager.set_int(STATUS, Status.CLOSED)
+
+    def _set_distributor_wasm_port(self, port) -> None:
+        """"""
+
+        self.distributor_queue.set_destination(port)
 
     def _reset_counters(self) -> None:
         """"""
@@ -127,8 +134,8 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
 
         with self.finish_lock:
             for i in range((PROCESS_COUNT or cpu_count()) - 1):
-                self.memory_manager.set_int(
-                    f"{WORKER}_{i}", 0
+                self.memory_manager.set_bool(
+                    f"{WORKER}_{i}", False
                 )  # each will switch to 1 when finished
 
         # with self.counters_lock:  # TODO: unclear if is needed
@@ -156,7 +163,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
 
         # TODO: random part is added to decrease chance of collision, but another solution is needed to *never* collide
         self.run_id = (
-            f"{self.root.move}.{run_iteration}.{randint(1, 1000)}"
+            f"{self.root.move}.{run_iteration}.{str(randint(0, 999)).zfill(3)}"  # zfill 3 to fill same space in memory
         )
         # print("searching with run_id: ", self.run_id)
         with self.status_lock:
@@ -228,7 +235,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         self.finished = True
         self.started = False
 
-    def search(self, limit: int = 14) -> str:
+    async def search(self, limit: int = 14) -> str:
         """"""
 
         if limit == 0:
@@ -268,12 +275,13 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
             while not (
                 self.finished and self.evaluated >= self.distributed
             ):  # TODO: should check for equality maybe, but this is safer
-                if self.main_loop():
+                if await self.main_loop():
                     break
+                await asyncio.sleep(0)
 
         finally:
             self._signal_run_finished()
-            self._wait_all_workers()
+            await self._wait_all_workers()
 
         # with open(self.run_id, "w") as f:
         #     for l in Node.debug_log:
@@ -283,7 +291,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
 
         return self.finish_up(time() - self.t_0)
 
-    def main_loop(self) -> bool:
+    async def main_loop(self) -> bool:
         """
         :returns: if should break the loop
         """
@@ -314,7 +322,11 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
                 return False
 
             # waiting for first eval, check control queue as may not have needed distributing
-            return self._handle_control_queue(timeout=SLEEP)
+            try:
+                return self._handle_control_queue(timeout=SLEEP)
+            except:
+                print("raised when: ", self.started, self.run_id, self.root.children)
+                raise
 
         i = 0
         while self.balance_load(i):
@@ -345,7 +357,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
 
         t = time()
 
-        if t > self.t_tmp + LOG_INTERVAL:
+        if t > self.t_tmp + LOG_INTERVAL and self.limit != 0:  # TODO: no monitor when limit=0?
             if self.printing not in [Print.NOTHING, Print.MOVE, Print.LOGS]:
                 os.system("clear")
 
@@ -377,7 +389,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
                         f"selected: {self.selected}, started: {self.started}, finished: {self.finished}"
                     )
                     self.print_tree(0, 4)
-                    self.memory_manager.set_int(DEBUG, 1)
+                    # self.memory_manager.set_int(DEBUG, 1)
                     with self.status_lock:
                         self.memory_manager.set_int(STATUS, Status.FINISHED, new=False)
 
@@ -562,7 +574,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
 
         return False
 
-    def _wait_all_workers(self) -> None:
+    async def _wait_all_workers(self) -> None:
         """"""
 
         # print("wait all workers")
@@ -571,10 +583,11 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
             while attempts < 1000:  # TODO: why processes take so long to set new status?
                 attempts += 1
                 with self.finish_lock:
-                    worker_status = self.memory_manager.get_int(f"{WORKER}_{i}")
+                    worker_status = self.memory_manager.get_bool(f"{WORKER}_{i}")
 
                 if not worker_status:
-                    sleep(SLEEP)
+                    # sleep(SLEEP)
+                    await asyncio.sleep(SLEEP)
                 else:
                     break
             else:

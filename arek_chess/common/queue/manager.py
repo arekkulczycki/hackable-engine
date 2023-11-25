@@ -40,11 +40,31 @@ class QueueManager(Generic[TItem]):
         elif QUEUE_HANDLER == QueueHandler.RABBITMQ:
             self.queue = RabbitmqAdapter(name)
         elif QUEUE_HANDLER == QueueHandler.WASM:
-            self.queue = WasmAdapter(name)
+            self.queue = WasmAdapter(name, loader, dumper)
 
     @property
     def name(self) -> str:
         return self.queue.name
+
+    def inject(self, raw_item: bytes) -> None:
+        """"""
+
+        self.queue.inject(raw_item)
+
+    def inject_js(self, raw_item) -> None:
+        """"""
+
+        self.queue.inject(raw_item.to_py().tobytes())
+
+    def set_destination(self, port) -> None:
+        """"""
+
+        self.queue.set_destination(port)
+
+    def set_mixed_destination(self, ports) -> None:
+        """"""
+
+        self.queue.set_mixed_destination(ports)
 
     def put(self, item: TItem) -> None:
         """"""

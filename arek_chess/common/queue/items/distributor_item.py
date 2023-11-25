@@ -54,13 +54,14 @@ class DistributorItem(BaseItem):
         board = bytes_[-DistributorItem.board_bytes_number:]
         values = string_part.decode("utf-8").split(";")
 
-        return DistributorItem(
+        item = DistributorItem(
             values[0],
             values[1],
             int(values[2]),
             unpack("f", float_part)[0],
             board,
         )
+        return item
 
     @staticmethod
     def dumps(obj: DistributorItem) -> bytes:

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import asyncio
 from multiprocessing import Lock, cpu_count
 from time import sleep
 from typing import Dict, List, Optional, Tuple, Type, TypeVar, Union
@@ -9,7 +10,8 @@ from arek_chess.board.chess.mixins.chess_board_serializer_mixin import (
     CHESS_BOARD_BYTES_NUMBER,
 )
 from arek_chess.board.hex.hex_board import HexBoard
-from arek_chess.common.constants import Game, PROCESS_COUNT, Print
+from arek_chess.common import constants
+from arek_chess.common.constants import Game, PROCESS_COUNT, Print, QUEUE_THROTTLE
 from arek_chess.common.exceptions import SearchFailed
 from arek_chess.common.memory.manager import MemoryManager
 from arek_chess.common.queue.items.control_item import ControlItem
@@ -75,16 +77,17 @@ class Controller:
             EvalItem.board_bytes_number = self.board.board_bytes_number
             SelectorItem.board_bytes_number = self.board.board_bytes_number
 
-        self.printing = printing
-        self.tree_params = tree_params
+        if printing:
+            constants.PRINTING = printing
+        if tree_params:
+            constants.TREE_PARAMS = tree_params
+
         self.search_limit = search_limit if search_limit is not None else 16
         self.original_timeout = timeout
         self.in_thread = in_thread
         self.timeout = timeout
 
         self.memory_manager = MemoryManager()
-
-        self.queue_throttle = 32  # TODO: adjust?
 
         self.create_queues()
         self.status_lock = Lock()
@@ -95,12 +98,9 @@ class Controller:
             self.status_lock,
             self.finish_lock,
             self.counters_lock,
-            self.distributor_queue,
             self.selector_queue,
+            self.distributor_queue,
             self.control_queue,
-            self.queue_throttle,
-            self.printing,
-            self.tree_params,
         )
 
         self.initial_position: Optional[str] = None
@@ -172,7 +172,6 @@ class Controller:
                 self.action_lock,
                 self.eval_queue,
                 self.selector_queue,
-                (self.queue_throttle // num_eval_workers),
                 i + 1,
                 self.board_class,
                 self.board_size,
@@ -193,7 +192,7 @@ class Controller:
             self.control_queue,
             self.board_class,
             self.board_size,
-            self.queue_throttle,
+            QUEUE_THROTTLE,
         )
         self.child_processes.append(distributor)
 
@@ -473,7 +472,7 @@ class Controller:
             if self.search_worker.is_alive():
                 raise TimeoutError
         else:
-            move = self.search_worker.search(limit)
+            move = asyncio.run(self.search_worker.search(limit))
         if not move:
             print("returned null move")
             raise SearchFailed

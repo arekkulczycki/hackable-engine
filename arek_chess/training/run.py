@@ -30,18 +30,18 @@ from arek_chess.training.envs.square_control_env import SquareControlEnv
 
 LOG_PATH = "./arek_chess/training/logs/"
 
-TOTAL_TIMESTEPS = int(2**18)
-LEARNING_RATE = 2e-4
+TOTAL_TIMESTEPS = int(2**19)
+LEARNING_RATE = 1e-3
 N_EPOCHS = 10
-N_STEPS = 2 ** 16
-BATCH_SIZE = 2 ** 14  # recommended to be a factor of (N_STEPS * N_ENVS)
-CLIP_RANGE = 0.8
+N_STEPS = 2 ** 17
+BATCH_SIZE = 2 ** 16  # recommended to be a factor of (N_STEPS * N_ENVS)
+CLIP_RANGE = 0.1
 # 1 / (1 - GAMMA) = number of steps to finish the episode, for hex env steps are SIZE^2 * SIZE^2 / 2
 GAMMA = 0.996  # 0.996 for 5x5 hex, 0.999 for 7x7, 0.9997 for 9x9 - !!! values when starting on empty board !!!
 GAE_LAMBDA = 0.95
 ENT_COEF = 0.00  # 0.001
 
-SEARCH_LIMIT = 10
+SEARCH_LIMIT = 9
 
 # POLICY_KWARGS["activation_fn"] = "tanh"
 policy_kwargs_map = {
@@ -92,7 +92,7 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
             },
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
-            # tensorboard_log=os.path.join(LOG_PATH, f"{env_name}_tensorboard", f"v{version}")
+            tensorboard_log=None,  #os.path.join(LOG_PATH, f"{env_name}_tensorboard")
         )
     else:
         print("setting up model...")
@@ -110,7 +110,7 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
             ent_coef=ENT_COEF,
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
-            # tensorboard_log=os.path.join(LOG_PATH, f"{env_name}_tensorboard", f"v{version}")
+            tensorboard_log=None,  #os.path.join(LOG_PATH, f"{env_name}_tensorboard")
         )
         # model = PPO("MultiInputPolicy", env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
 
@@ -121,6 +121,7 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
     finally:
         model.save(f"./{env_name}.v{version + 1}")
 
+    env.envs[0].summarize()
     env.envs[0].controller.tear_down()
     print(f"training finished in: {perf_counter() - t0}")
 
