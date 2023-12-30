@@ -162,13 +162,20 @@ class Traverser:
             if parent.level < 1:
                 should_search = True
             else:
-                should_search = candidate.forcing_level > 0 and (
-                    (self.root.color and bool(candidate.score > self.root.score))
-                    or (not self.root.color and bool(self.root.score > candidate.score))
-                )
+                if candidate.forcing_level > 1:
+                    benchmark_score = parent.parent.score if parent.parent else self.root.score
+                    should_search = (
+                        (self.root.color and bool(candidate.score > benchmark_score))
+                        or (not self.root.color and bool(candidate.score < benchmark_score))
+                    )
+                elif candidate.forcing_level == 1:
+                    # only search if is the first forcing move in a row
+                    should_search = parent.forcing_level < 1
+                else:
+                    should_search = False
 
             if node is not None:
-                # node already existed from different parent
+                # using transpositions, node already existed from different parent
                 node_name = ".".join((candidate.parent_node_name, candidate.move_str))
                 self.nodes_dict[node_name] = node
 

@@ -68,7 +68,7 @@ onnx_model = onnx.load(path_out)
 onnx.checker.check_model(onnx_model)
 
 observation = np.zeros((1, *observation_size)).astype(np.float32)
-ort_session = ort.InferenceSession(path_out, providers=['AzureExecutionProvider', 'CPUExecutionProvider'])
+ort_session = ort.InferenceSession(path_out, providers=['OpenVINOExecutionProvider', 'CPUExecutionProvider'])
 
 from time import perf_counter
 # t0 = perf_counter()
@@ -80,5 +80,5 @@ t0 = perf_counter()
 for i in range(10000):
     action_onnx, value = ort_session.run(None, {"input": observation})
 print(perf_counter() - t0)
-print(action_sb2)
+# print(action_sb2)
 print(action_onnx)

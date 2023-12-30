@@ -21,18 +21,11 @@ def validate_tree_params(tree_params: str) -> None:
 
 
 if __name__ == "__main__":
-
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument(
         "-m",
         "--move",
         help="Find the best move and quit.",
-        action="store_true",
-    )
-    arg_parser.add_argument(
-        "-g",
-        "--game",
-        help="Play entire game and quit.",
         action="store_true",
     )
     arg_parser.add_argument(
@@ -79,10 +72,11 @@ if __name__ == "__main__":
         help="Runs in a new thread.",
         action="store_true",
     )
-    arg_parser.add_argument("-G", "--game-played", type=str, choices=["chess", "hex"], help="Game to be played", required=True)
+    arg_parser.add_argument("-G", "--game", type=str, choices=["chess", "hex"], help="Game to be played", required=True)
     arg_parser.add_argument(
         "-S",
         "--board-size",
+        required="-G=hex" in sys.argv,
         type=int,
         help="Size of the board to be played on.",
     )
@@ -101,7 +95,7 @@ if __name__ == "__main__":
         search_limit=args.search_limit,
         model_version=args.model_version,
         timeout=args.timeout,
-        game=args.game_played,
+        game=args.game,
         board_size=args.board_size
     )
     controller.boot_up()
@@ -109,9 +103,6 @@ if __name__ == "__main__":
     if args.move:
         controller.make_move()
         controller.stop_child_processes()
-        sys.exit(0)
-    elif args.game:
-        controller.play()
         sys.exit(0)
 
     try:

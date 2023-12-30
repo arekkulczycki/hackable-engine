@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from functools import reduce
-from typing import ClassVar, Dict, List, Optional
+from typing import ClassVar, Dict, Generator, List, Optional, Tuple
 
 from numpy import float32
 
@@ -23,6 +23,8 @@ class Node:
     color: bool
     being_processed: bool
     only_forcing: bool
+    """This node has only forcing children generated so far."""
+
     board: bytes
 
     children: List[Node]
@@ -102,7 +104,7 @@ class Node:
         return self._score
 
     @score.setter
-    def score(self, value: float32) -> None:
+    def score(self, value: float32, parallel_propagation: bool = True) -> None:
         old_value: Optional[float32] = getattr(
             self, "_score", None
         )  # None means is a leaf
@@ -110,12 +112,60 @@ class Node:
 
         parent: Optional[Node] = self.parent
         if parent:
-            # switch parent to the same status if is processing only forcing moves (edit: but why so?)
-            # parent.being_processed = self.being_processed if self.only_forcing else False
-
-            # if not self.being_processed:  # don't propagate until capture-fest finished
             # TODO: to not propagate is good idea only if we wait all captures to finish which is not the case
-            parent.propagate_score(value, old_value)
+            if parallel_propagation:
+                self.propagate_parallel(value, old_value)
+            else:
+                parent.propagate_score(value, old_value)
+
+    def propagate_parallel(self, value: float32, old_value: float32):
+        """
+        The idea was to somehow vectorize and run with GPU, but so far it's not yet so.
+        """
+
+        parents_list: List[Tuple[Node, List[Node]]] = list(self.generate_parents())
+
+        for node, children in parents_list:
+            if node.color:
+                if node.only_forcing:
+                    if value < node.score:
+                        self.set_score(value)
+                    else:
+                        break
+                else:
+                    if value > node.score:
+                        # score increased, propagate immediately
+                        self.set_score(value)
+                    elif old_value is not None and value < old_value < node.score:
+                        # score decreased, but old score indicates an insignificant node
+                        break
+                    else:
+                        # score decreased, propagate the highest child score
+                        self.set_score(reduce(self.maximal, children)._score)
+            else:
+                if node.only_forcing:
+                    if value < node.score:
+                        self.set_score(value)
+                    else:
+                        break
+                else:
+                    if value < node.score:
+                        # score increased (relatively), propagate immediately
+                        self.set_score(value)
+                    elif old_value is not None and value > old_value > node.score:
+                        # score decreased (relatively), but old score indicates an insignificant node
+                        break
+                    else:
+                        # score decreased, propagate the lowest child score
+                        self.set_score(reduce(self.minimal, children)._score)
+
+    def generate_parents(self) -> Generator[Tuple[Node, List[Node]], None, None]:
+        """"""
+
+        node = self.parent
+        while node:
+            yield node, node.children
+            node = node.parent
 
     # @property
     # def being_processed(self) -> bool:
@@ -131,17 +181,16 @@ class Node:
     def propagate_being_processed_up(self) -> None:
         """"""
 
-        if self.parent and self.parent.being_processed:
-            # switch parent to not being processed if node is not being processed anymore
-            # if self.only_forcing and self.being_processed:
-            #     self.parent.being_processed = True
-            # else:
-            if not self.being_processed:
+        if self.parent:
+            if self.leaf_level > self.parent.leaf_level:
+                self.parent.leaf_level = self.leaf_level
+                self.parent.leaf_color = self.leaf_color
+
+            if not self.being_processed and self.parent.being_processed:
+                # switch parent to not being processed if node is not being processed anymore
                 self.parent.being_processed = False
-                if self.leaf_level > self.parent.leaf_level:
-                    self.parent.leaf_level = self.leaf_level
-                    self.parent.leaf_color = self.leaf_color
-                self.parent.propagate_being_processed_up()
+
+            self.parent.propagate_being_processed_up()
 
     def propagate_being_processed_down(self) -> None:
         """"""
@@ -167,54 +216,53 @@ class Node:
             # if being processed it means not all forcing children have finished processing, therefore can wait
             pass
 
-        elif self.only_forcing and self.parent is not None:
-            if not self.color:
-                recapture_score = reduce(self.minimal, children)._score
-                if recapture_score >= self.init_score:
-                    # if opponent doesn't have any good recaptures then keeping the score
-                    # score = self.init_score
-                    pass
-                else:
-                    # not being processed anymore, final propagation,
-                    # not taking the recapture score as may have non-capture children
-                    score = max(self.parent.init_score, recapture_score)
-                    self.set_score(score)
-            else:
-                recapture_score = reduce(self.maximal, children)._score
-                if recapture_score <= self.init_score:
-                    # if opponent doesn't have any good recaptures then keeping the score
-                    # score = self.init_score
-                    pass
-                else:
-                    # final propagation, not taking the recapture score as may have non-capture children
-                    score = min(self.parent.init_score, recapture_score)
-                    self.set_score(score)
+        elif self.parent is not None:
+            parent_score: float32 = self.parent.score
 
-        else:
-            parent_score: float32 = self._score
-            if self.color:
-                if value > parent_score:
-                    # score increased, propagate immediately
-                    self.set_score(value)
-                elif old_value is not None and value < old_value < parent_score:
-                    # score decreased, but old score indicates an insignificant node
-                    pass
-                else:
-                    self.set_score(reduce(self.maximal, children)._score)
+            if self.only_forcing:
+                self.propagate_only_forcing(value)
             else:
-                if value < parent_score:
-                    # score increased (relatively), propagate immediately
-                    self.set_score(value)
-                elif old_value is not None and value > old_value > parent_score:
-                    # score decreased (relatively), but old score indicates an insignificant node
-                    pass
-                else:
-                    self.set_score(reduce(self.minimal, children)._score)
+                self.propagate_optimal(children, parent_score, value, old_value)
+
+    def propagate_only_forcing(self, value: float32) -> None:
+        """
+        Propagate score to this node knowing that all children are forcing moves.
+        In such case the value can only go one way (forcing moves are assumed to be "good" by definition).
+        """
+
+        if not self.color:
+            if value < self.score:
+                self.score = value
+        else:
+            if value > self.score:
+                self.score = value
+
+    def propagate_optimal(self, children: List[Node], parent_score: float32, value: float32, old_value: float32):
+        """"""
+
+        if self.color:
+            if value > parent_score:
+                # score increased, propagate immediately
+                self.score = value
+            elif old_value is not None and value < old_value < parent_score:
+                # score decreased, but old score indicates an insignificant node
+                pass
+            else:
+                self.score = reduce(self.maximal, children)._score
+        else:
+            if value < parent_score:
+                # score increased (relatively), propagate immediately
+                self.score = value
+            elif old_value is not None and value > old_value > parent_score:
+                # score decreased (relatively), but old score indicates an insignificant node
+                pass
+            else:
+                self.score = reduce(self.minimal, children)._score
 
     def set_score(self, value: float32) -> None:
-        self.score = value
-        # TODO: set `being_processed=False` here and remove propagation on init?
-        #  (currently doesn't even get here if is `being_processed`)
+        """Set score skipping property setter (propagation)."""
+
+        self._score = value
 
     def has_grand_children(self) -> bool:
         for child in self.children:

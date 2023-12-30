@@ -204,7 +204,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 move_str = ""
                 color = not color
 
-        self.unoccupied ^= self.occupied_co[True] | self.occupied_co[False]
+        self.unoccupied ^= (self.occupied_co[True] | self.occupied_co[False])
 
         self.turn = color
 
@@ -727,8 +727,6 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         Considered forcing when adjacent to both own and opponent stone *or* when adjacent to lone opponent stone.
         """
 
-        return 0
-
         adjacent_black: Optional[BitBoard] = None
         adjacent_white: Optional[BitBoard] = None
 
@@ -739,20 +737,22 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             if not adjacent_white and mask & self.occupied_co[True]:
                 adjacent_white = mask
 
-            if adjacent_black and adjacent_white:
-                return 1
+            # if adjacent_black and adjacent_white:
+            #     return 1
 
         # adjacent to a lone stone
         if self.turn and adjacent_black:
             if not any(
                 self.generate_adjacent_cells(adjacent_black, among=self.unoccupied)
             ):
-                return 1
+                return 2
+            return 1
         elif not self.turn and adjacent_white:
             if not any(
                 self.generate_adjacent_cells(adjacent_white, among=self.unoccupied)
             ):
-                return 1
+                return 2
+            return 1
 
         return 0
 

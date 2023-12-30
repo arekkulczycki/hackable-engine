@@ -1,4 +1,5 @@
 import os
+import sys
 from argparse import ArgumentParser
 from enum import Enum
 from time import perf_counter
@@ -11,12 +12,20 @@ import numpy
 # import sys
 # import gymnasium
 # sys.modules["gym"] = gymnasium
+import torch
+import intel_extension_for_pytorch as ipex
+from onnxruntime.transformers.onnx_model_bart import BartOnnxModel
+from onnxruntime.transformers.optimizer import optimize_by_fusion
 from stable_baselines3 import PPO
+from sbx import PPO as PPO_JAX
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import load_results
 from stable_baselines3.common.results_plotter import ts2xy
-from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor, SubprocVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
 
+from arek_chess.training.envs.hex.raw_7x7_bin_env import Raw7x7BinEnv
+
+# sys.path.insert(0, os.getcwd())
 from arek_chess.common.constants import Game, Print
 from arek_chess.controller import Controller
 from arek_chess.training.envs.hex.raw_5x5_bin_env import Raw5x5BinEnv
@@ -30,16 +39,16 @@ from arek_chess.training.envs.square_control_env import SquareControlEnv
 
 LOG_PATH = "./arek_chess/training/logs/"
 
-TOTAL_TIMESTEPS = int(2**19)
+TOTAL_TIMESTEPS = int(2**21)
 LEARNING_RATE = 1e-3
 N_EPOCHS = 10
-N_STEPS = 2 ** 17
-BATCH_SIZE = 2 ** 16  # recommended to be a factor of (N_STEPS * N_ENVS)
+N_STEPS = 2 ** 18
+BATCH_SIZE = 2 ** 17  # recommended to be a factor of (N_STEPS * N_ENVS)
 CLIP_RANGE = 0.1
 # 1 / (1 - GAMMA) = number of steps to finish the episode, for hex env steps are SIZE^2 * SIZE^2 / 2
-GAMMA = 0.996  # 0.996 for 5x5 hex, 0.999 for 7x7, 0.9997 for 9x9 - !!! values when starting on empty board !!!
+GAMMA = 0.99  # 0.996 for 5x5 hex, 0.999 for 7x7, 0.9997 for 9x9 - !!! values when starting on empty board !!!
 GAE_LAMBDA = 0.95
-ENT_COEF = 0.00  # 0.001
+ENT_COEF = 0.001  # 0.001
 
 SEARCH_LIMIT = 9
 
@@ -49,7 +58,7 @@ policy_kwargs_map = {
     "hex": dict(net_arch=[dict(pi=[128, 128], vf=[128, 128])]),
     "raw3hex": dict(net_arch=[dict(pi=[9, 9], vf=[9, 9])]),
     "raw5hex": dict(net_arch=[dict(pi=[25, 25], vf=[25, 25])]),
-    "raw7hex": dict(net_arch=[dict(pi=[49, 49], vf=[49, 49])]),
+    "raw7hex": dict(net_arch=dict(pi=[49, 49], vf=[49, 49])),
     "raw9hex": dict(net_arch=[dict(pi=[81, 81], vf=[81, 81])]),
     "tight-fit": dict(net_arch=[dict(pi=[10, 16], vf=[16, 10])]),
     "additional-layer": dict(net_arch=[dict(pi=[10, 24, 16], vf=[16, 10])]),
@@ -60,6 +69,7 @@ class Device(str, Enum):
     GPU = "cuda"
     CPU = "cpu"
     AUTO = "auto"
+    XPU = "xpu"  # intel arc GPU
 
 
 def train(env_name: str = "default", version: int = -1, device: Device = Device.AUTO.value):
@@ -75,7 +85,6 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
     # eval_callback = EvalCallback(env, eval_freq=512, callback_after_eval=stop_train_callback, verbose=1)
 
     if version >= 0:
-        # model = PPO.load(f"./chess.v{version}", env=env, custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
         model = PPO.load(
             f"./{env_name}.v{version}",
             env=env,
@@ -95,7 +104,6 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
             tensorboard_log=None,  #os.path.join(LOG_PATH, f"{env_name}_tensorboard")
         )
     else:
-        print("setting up model...")
         model = PPO(
             policy,
             env=env,
@@ -114,6 +122,12 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
         )
         # model = PPO("MultiInputPolicy", env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
 
+    print("optimizing for intel...")
+    # optimizer = torch.optim.AdamW(model.policy.parameters(), lr=LEARNING_RATE, eps=1e-5)
+    optimizer = torch.optim.SGD(model.policy.parameters(), lr=LEARNING_RATE, momentum=0.5)
+    model.policy, optimizer = ipex.optimize(model.policy, optimizer=optimizer, dtype=torch.float32)
+    # model.policy = torch.compile(model.policy, backend="ipex")
+
     print("training started...")
 
     try:
@@ -121,9 +135,11 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
     finally:
         model.save(f"./{env_name}.v{version + 1}")
 
-    env.envs[0].summarize()
-    env.envs[0].controller.tear_down()
     print(f"training finished in: {perf_counter() - t0}")
+    # env.envs[0].summarize()
+    # env.envs[0].controller.tear_down()
+    env.summarize()
+    env.controller.tear_down()
 
 
 def loop_train(env_name: str = "default", version: int = -1, loops=5, device: Device = Device.AUTO.value):
@@ -230,7 +246,7 @@ def get_env_hex(env_name, version) -> Tuple[gym.Env, str]:
                 game=Game.HEX,
             )
         ),
-        n_envs=1,
+        n_envs=4,
     )
 
     env = VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
@@ -240,7 +256,7 @@ def get_env_hex(env_name, version) -> Tuple[gym.Env, str]:
 
 def get_env_hex_raw(env_name, version) -> Tuple[gym.Env, str]:
     env: Union[DummyVecEnv, SubprocVecEnv] = make_vec_env(
-        lambda: Raw5x5BinEnv(
+        lambda: Raw7x7BinEnv(
             controller=Controller(
                 printing=Print.NOTHING,
                 # tree_params="4,4,",
@@ -249,13 +265,13 @@ def get_env_hex_raw(env_name, version) -> Tuple[gym.Env, str]:
                 in_thread=False,
                 timeout=3,
                 game=Game.HEX,
-                board_size=Raw5x5BinEnv.BOARD_SIZE,
+                board_size=Raw7x7BinEnv.BOARD_SIZE,
             )
         ),
         # monitor_dir=os.path.join(LOG_PATH, env_name, f"v{version}"),
-        # n_envs=2,
-        # vec_env_cls=SubprocVecEnv,
-        # vec_env_kwargs={"start_method": "fork"},
+        n_envs=2,
+        vec_env_cls=SubprocVecEnv,
+        vec_env_kwargs={"start_method": "fork"},
     )
 
     env = VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
@@ -282,6 +298,7 @@ def plot_results(log_folder, title="Learning Curve"):
     :param log_folder: (str) the save location of the results to plot
     :param title: (str) the title of the task to plot
     """
+
     x, y = ts2xy(load_results(log_folder), "timesteps")
     y = moving_average(y, window=50)
     # Truncate x

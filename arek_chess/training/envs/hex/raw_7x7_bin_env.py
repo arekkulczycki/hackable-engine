@@ -28,6 +28,7 @@ DEFAULT_ACTION = asarray(
 )
 ACTION_SIZE: int = 8
 
+LESS_THAN_ZERO: float32 = float32(-0.1)
 ZERO: float32 = float32(0)
 ONE: float32 = float32(1)
 MINUS_ONE: float32 = float32(-1)
@@ -49,6 +50,17 @@ openings = cycle(
         "g5",
         "g6",
         "g7",
+        "a1c5f5e3d4",
+        "a1d4c5c4e4e3g2",
+        "a1e3d4d3b4",
+        "a1c3e3e4d4",
+        "a1c3d4e2f2",
+        "g7e5d4c6b6",
+        "g7e5c5c4d4",
+        "g7c5d4d5f4",
+        "g7d4e3e4c4c5a6",
+        "g7c5b3e3d4",
+        # same openings twice for counterbalance against single move opening
         "a1c5f5e3d4",
         "a1d4c5c4e4e3g2",
         "a1e3d4d3b4",
@@ -102,7 +114,8 @@ class Raw7x7BinEnv(gym.Env):
     def _setup_controller(self, controller: Controller):
         self.controller = controller
         self.controller._setup_board(next(openings), size=self.BOARD_SIZE)
-        self.controller.boot_up()
+        # don't boot up if theres no need for engine to run, but to train on multiple processes
+        # self.controller.boot_up()
 
     def render(self, mode="human", close=False) -> RenderFrame:
         notation = self.controller.board.get_notation()
@@ -136,7 +149,7 @@ class Raw7x7BinEnv(gym.Env):
         self.best_move = None
         self.controller.board.push(self.current_move)
 
-    def step(
+    def step_iterative(
         self,
         action: ActType
         # ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
@@ -161,14 +174,6 @@ class Raw7x7BinEnv(gym.Env):
             # if doesn't raise then there are still moves to be evaluated
             self.current_move = next(self.moves)
 
-            # undo last move that was just evaluated
-            self.controller.board.pop()
-
-            # push a new move to be evaluated in the next `step`
-            self.controller.board.push(self.current_move)
-
-            winner = None
-
         except StopIteration:
             # all moves evaluated - undo the last and push the best move on the board
             # print("best move: ", self.best_move[0].get_coord(), self.best_move[1])
@@ -184,9 +189,9 @@ class Raw7x7BinEnv(gym.Env):
                 # opp_action, value = self.opp_model.run(None, {"input": obs})
                 # self.controller.make_move(self.prepare_action(opp_action[0]))
 
-                self.controller.make_move(DEFAULT_ACTION, search_limit=choice((0, 8)))
+                # self.controller.make_move(DEFAULT_ACTION, search_limit=choice((0, 8)))
 
-                # self._make_random_move()
+                self._make_random_move()
 
                 winner = self._get_winner()
 
@@ -194,14 +199,51 @@ class Raw7x7BinEnv(gym.Env):
                 if winner is None:
                     self._prepare_child_moves()
 
+        else:
+            # undo last move that was just evaluated
+            self.controller.board.pop()
+
+            # push a new move to be evaluated in the next `step`
+            self.controller.board.push(self.current_move)
+
+            winner = None
+
         self.obs = self.observation_from_board()
 
         self.winner = winner
-        reward = self._get_reward(winner)
+        reward = self._get_reward(winner, action[0])
         self.steps_done += 1
 
         # return self.obs, reward, winner is not None, False, {}
         return self.obs, reward, winner is not None, {}
+
+    def step(
+        self,
+        action: ActType
+    ) -> Tuple[ObsType, SupportsFloat, bool, Dict[str, Any]]:
+        """"""
+
+        return self.step_iterative(action)
+
+        # self.controller.board.push(self.get_move_from_action())
+        #
+        # winner = self._get_winner()
+        # if winner is None:
+        #     self._make_random_move()
+        #
+        # self.obs = self.observation_from_board()
+        #
+        # self.winner = winner
+        # reward = self._get_reward(winner)
+        # self.steps_done += 1
+        #
+        # # return self.obs, reward, winner is not None, False, {}
+        # return self.obs, reward, winner is not None, {}
+
+    def get_move_from_action(self, action: ActType) -> Move:
+        """"""
+
+
 
     def _get_winner(self) -> Optional[bool]:
         winner = self.controller.board.winner()
@@ -213,15 +255,15 @@ class Raw7x7BinEnv(gym.Env):
 
         return winner
 
-    def _get_reward(self, winner):
+    def _get_reward(self, winner, score=None):
         if winner is False:
             # - 1 + ((len(self.controller.board.move_stack) + 1) - 12) / (25 - 12)
-            return -1 + (len(self.controller.board.move_stack) - 12) / 36
+            return -1 + max(0, (len(self.controller.board.move_stack) - 12)) / 36
 
         elif winner is True:
-            return 1 - ((len(self.controller.board.move_stack) - 12) / 36) ** 2
+            return 1 - (max(0, (len(self.controller.board.move_stack) - 12)) / 36) ** 0.5
 
-        return self.REWARDS[winner]
+        return ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO
 
     def _make_random_move(self):
         moves = list(self.controller.board.legal_moves)
@@ -238,3 +280,7 @@ class Raw7x7BinEnv(gym.Env):
     @staticmethod
     def prepare_action(action):
         return asarray((0, 0, 0, 0, 0, 10, action[0], 1))
+
+    def summarize(self):
+        print("finished")
+        # print("loss summary: ", sorted(self.losses.items(), key=lambda x: -x[1]))
