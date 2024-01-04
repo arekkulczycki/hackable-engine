@@ -1,36 +1,37 @@
 import os
-import sys
 from argparse import ArgumentParser
 from enum import Enum
 from time import perf_counter
 from typing import Tuple, Union
 
 import gym
+import intel_extension_for_pytorch as ipex
 import matplotlib.pyplot as plt
 import numpy
+
 # from gymnasium.envs.registration import register
 # import sys
 # import gymnasium
 # sys.modules["gym"] = gymnasium
 import torch
-import intel_extension_for_pytorch as ipex
-from onnxruntime.transformers.onnx_model_bart import BartOnnxModel
-from onnxruntime.transformers.optimizer import optimize_by_fusion
 from stable_baselines3 import PPO
-from sbx import PPO as PPO_JAX
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import load_results
 from stable_baselines3.common.results_plotter import ts2xy
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
-
-from arek_chess.training.envs.hex.raw_7x7_bin_env import Raw7x7BinEnv
+from stable_baselines3.common.vec_env import (
+    DummyVecEnv,
+    SubprocVecEnv,
+    VecMonitor,
+)
 
 # sys.path.insert(0, os.getcwd())
 from arek_chess.common.constants import Game, Print
 from arek_chess.controller import Controller
-from arek_chess.training.envs.hex.raw_5x5_bin_env import Raw5x5BinEnv
+from arek_chess.training.envs.hex.raw_7_env import Raw7Env
+from arek_chess.training.envs.hex.raw_7x7_bin_env import Raw7x7BinEnv
 from arek_chess.training.envs.hex.simple_env import SimpleEnv
 from arek_chess.training.envs.square_control_env import SquareControlEnv
+from arek_chess.training.hex_cnn_features_extractor import HexCnnFeaturesExtractor
 
 # from stable_baselines3.common.callbacks import (
 #     EvalCallback,
@@ -39,16 +40,17 @@ from arek_chess.training.envs.square_control_env import SquareControlEnv
 
 LOG_PATH = "./arek_chess/training/logs/"
 
-TOTAL_TIMESTEPS = int(2**21)
+N_ENVS = 2**3
+TOTAL_TIMESTEPS = int(2**22)
 LEARNING_RATE = 1e-3
 N_EPOCHS = 10
-N_STEPS = 2 ** 18
-BATCH_SIZE = 2 ** 17  # recommended to be a factor of (N_STEPS * N_ENVS)
-CLIP_RANGE = 0.1
+N_STEPS = 2**11  # batch size per env, total batch size is this times N_ENVS
+BATCH_SIZE = int(N_STEPS * N_ENVS / 2**0)   # mini-batch, recommended to be a factor of (N_STEPS * N_ENVS)
+CLIP_RANGE = 0.5  # 0.1 to 0.3 according to many sources, but I used even 0.9 with beneficial results
 # 1 / (1 - GAMMA) = number of steps to finish the episode, for hex env steps are SIZE^2 * SIZE^2 / 2
 GAMMA = 0.99  # 0.996 for 5x5 hex, 0.999 for 7x7, 0.9997 for 9x9 - !!! values when starting on empty board !!!
 GAE_LAMBDA = 0.95
-ENT_COEF = 0.001  # 0.001
+ENT_COEF = 0.001  # 0 to 0.01 https://medium.com/aureliantactics/ppo-hyperparameters-and-ranges-6fc2d29bccbe
 
 SEARCH_LIMIT = 9
 
@@ -59,6 +61,14 @@ policy_kwargs_map = {
     "raw3hex": dict(net_arch=[dict(pi=[9, 9], vf=[9, 9])]),
     "raw5hex": dict(net_arch=[dict(pi=[25, 25], vf=[25, 25])]),
     "raw7hex": dict(net_arch=dict(pi=[49, 49], vf=[49, 49])),
+    "raw7hexcnn": dict(
+        policy="CnnPolicy",
+        features_extractor_class=HexCnnFeaturesExtractor,
+        features_extractor_kwargs=dict(n_envs=N_ENVS, board_size=7, features_dim=49, kernel_size=5),
+        # should_preprocess_obs=False,
+        net_arch=[49, 49],
+    ),
+    "raw7hex-v2": dict(net_arch=dict(pi=[49, 49], vf=[49, 49])),
     "raw9hex": dict(net_arch=[dict(pi=[81, 81], vf=[81, 81])]),
     "tight-fit": dict(net_arch=[dict(pi=[10, 16], vf=[16, 10])]),
     "additional-layer": dict(net_arch=[dict(pi=[10, 24, 16], vf=[16, 10])]),
@@ -69,27 +79,28 @@ class Device(str, Enum):
     GPU = "cuda"
     CPU = "cpu"
     AUTO = "auto"
-    XPU = "xpu"  # intel arc GPU
+    XPU = "xpu"  # intel Arc GPU
 
 
-def train(env_name: str = "default", version: int = -1, device: Device = Device.AUTO.value):
+def train(
+    env_name: str = "default", version: int = -1, device: Device = Device.AUTO.value
+):
     t0 = perf_counter()
 
     print("loading env...")
-    # env, policy = get_env(env_name, version)
-    # env, policy = get_env_hex(env_name, version)
-    env, policy = get_env_hex_raw(env_name, version)
+    env = get_env(env_name, Raw7Env, version, device)
 
     # Stop training if there is no improvement after more than 3 evaluations
     # stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=3, min_evals=5, verbose=1)
     # eval_callback = EvalCallback(env, eval_freq=512, callback_after_eval=stop_train_callback, verbose=1)
 
     if version >= 0:
+        policy_kwargs_map[env_name].pop("policy", "MlpPolicy")
         model = PPO.load(
             f"./{env_name}.v{version}",
             env=env,
             verbose=2,
-            custom_objecs={
+            param_override={
                 "clip_range": CLIP_RANGE,
                 "learning_rate": LEARNING_RATE,
                 "n_steps": N_STEPS,
@@ -101,11 +112,11 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
             },
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
-            tensorboard_log=None,  #os.path.join(LOG_PATH, f"{env_name}_tensorboard")
+            tensorboard_log=os.path.join(LOG_PATH, f"{env_name}_tensorboard"),
         )
     else:
         model = PPO(
-            policy,
+            policy_kwargs_map[env_name].pop("policy", "MlpPolicy"),
             env=env,
             verbose=2,
             clip_range=CLIP_RANGE,
@@ -118,41 +129,69 @@ def train(env_name: str = "default", version: int = -1, device: Device = Device.
             ent_coef=ENT_COEF,
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
-            tensorboard_log=None,  #os.path.join(LOG_PATH, f"{env_name}_tensorboard")
+            tensorboard_log=None,  # os.path.join(LOG_PATH, f"{env_name}_tensorboard")
         )
-        # model = PPO("MultiInputPolicy", env, device="cpu", verbose=2, clip_range=0.3, learning_rate=3e-3)
 
     print("optimizing for intel...")
     # optimizer = torch.optim.AdamW(model.policy.parameters(), lr=LEARNING_RATE, eps=1e-5)
-    optimizer = torch.optim.SGD(model.policy.parameters(), lr=LEARNING_RATE, momentum=0.5)
-    model.policy, optimizer = ipex.optimize(model.policy, optimizer=optimizer, dtype=torch.float32)
+    optimizer = torch.optim.SGD(
+        model.policy.parameters(), lr=LEARNING_RATE, momentum=0.9
+    )
+    if device == Device.XPU and hasattr(torch, "xpu") and torch.xpu.is_available():
+        model.policy, model.optimizer = torch.xpu.optimize(
+            model.policy,
+            optimizer=optimizer,
+            # dtype=torch.bfloat16,
+            weights_prepack=False,
+            optimize_lstm=True,
+            # fuse_update_step=True,
+            # auto_kernel_selection=True,
+        )
+    else:
+        model.policy, model.optimizer = ipex.optimize(
+            model.policy,
+            optimizer=optimizer,
+            # dtype=torch.bfloat16,
+            weights_prepack=False,
+            optimize_lstm=True,
+            # fuse_update_step=True,
+            # auto_kernel_selection=True,
+        )
     # model.policy = torch.compile(model.policy, backend="ipex")
 
-    print("training started...")
+    # print("optimizing with lightning")
+    # fabric = lightning.Fabric(accelerator="cpu", devices=4, strategy="ddp")
+    # fabric.launch()
+    # model.policy, optimizer = fabric.setup(model.policy, optimizer)
 
+    print("training started...")
     try:
-        model.learn(total_timesteps=TOTAL_TIMESTEPS)  # progress_bar=True
+        model.learn(total_timesteps=TOTAL_TIMESTEPS, tb_log_name=env_name)  # progress_bar=True
     finally:
         model.save(f"./{env_name}.v{version + 1}")
 
     print(f"training finished in: {perf_counter() - t0}")
     # env.envs[0].summarize()
     # env.envs[0].controller.tear_down()
-    env.summarize()
-    env.controller.tear_down()
+    # env.summarize()
+    for e in env.envs:
+        e.controller.tear_down()
 
 
-def loop_train(env_name: str = "default", version: int = -1, loops=5, device: Device = Device.AUTO.value):
+def loop_train(
+    env_name: str = "default",
+    version: int = -1,
+    loops=5,
+    device: Device = Device.AUTO.value,
+):
     print("loading env...")
-    # env, policy = get_env(env_name, version)
-    # env, policy = get_env_hex(env_name, version)
-    env, policy = get_env_hex_raw(env_name, version)
+    env = get_env(env_name, Raw7x7BinEnv, version, device)
 
     for _ in range(loops):
         print("setting up model...")
         t0 = perf_counter()
         if version >= 0:
-            # custom_objects={"n_steps": 512, "learning_rate": 3e-3, "clip_range": 0.3})
+            policy_kwargs_map[env_name].pop("policy", "MlpPolicy"),
             model = PPO.load(
                 f"./{env_name}.v{version}",
                 env=env,
@@ -173,7 +212,7 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
             )
         else:
             model = PPO(
-                policy,
+                policy_kwargs_map[env_name].pop("policy", "MlpPolicy"),
                 env=env,
                 verbose=2,
                 clip_range=CLIP_RANGE,
@@ -193,90 +232,46 @@ def loop_train(env_name: str = "default", version: int = -1, loops=5, device: De
         print("training started...")
 
         try:
-            model.learn(total_timesteps=TOTAL_TIMESTEPS)  # progress_bar=True
+            model.learn(total_timesteps=TOTAL_TIMESTEPS, tb_log_name=env_name)  # progress_bar=True
         except:
             print("learning crashed")
             import traceback
+
             traceback.print_exc()
             # start over with new env
-            env.envs[0].controller.tear_down()
-            env = get_env(env_name, version)
+            for e in env.envs:
+                e.controller.tear_down()
+            env = get_env(env_name, Raw7x7BinEnv, version, device)
         else:
             # on success increment the version and keep learning
             version += 1
 
             # shouldn't be necessary but seems to be
-            env.envs[0].controller.tear_down()
-            env = get_env(env_name, version)
+            for e in env.envs:
+                e.controller.tear_down()
+            env = get_env(env_name, Raw7x7BinEnv, version, device)
         finally:
             model.save(f"./{env_name}.v{version}")
             print(f"training finished in: {perf_counter() - t0}")
 
-    env.envs[0].controller.tear_down()
+    for e in env.envs:
+        e.controller.tear_down()
 
 
-def get_env(env_name, version) -> Tuple[gym.Env, str]:
-    env: DummyVecEnv = make_vec_env(
-        lambda: SquareControlEnv(
-            controller=Controller(
-                printing=Print.MOVE,
-                search_limit=SEARCH_LIMIT,
-                is_training_run=True,
-                in_thread=False,
-                timeout=3,
-            )
-        ),
-        n_envs=1,
-    )
-
-    env = VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
-
-    return (env, "MlpPolicy")
-
-
-def get_env_hex(env_name, version) -> Tuple[gym.Env, str]:
-    env: DummyVecEnv = make_vec_env(
-        lambda: SimpleEnv(
-            controller=Controller(
-                printing=Print.MOVE,
-                search_limit=SEARCH_LIMIT,
-                is_training_run=True,
-                in_thread=False,
-                timeout=3,
-                game=Game.HEX,
-            )
-        ),
-        n_envs=4,
-    )
-
-    env = VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
-
-    return (env, "MultiInputPolicy")
-
-
-def get_env_hex_raw(env_name, version) -> Tuple[gym.Env, str]:
+def get_env(env_name, env_class, version, device) -> gym.Env:
     env: Union[DummyVecEnv, SubprocVecEnv] = make_vec_env(
-        lambda: Raw7x7BinEnv(
-            controller=Controller(
-                printing=Print.NOTHING,
-                # tree_params="4,4,",
-                search_limit=SEARCH_LIMIT,
-                is_training_run=True,
-                in_thread=False,
-                timeout=3,
-                game=Game.HEX,
-                board_size=Raw7x7BinEnv.BOARD_SIZE,
-            )
-        ),
+        lambda: env_class(),
         # monitor_dir=os.path.join(LOG_PATH, env_name, f"v{version}"),
-        n_envs=2,
-        vec_env_cls=SubprocVecEnv,
-        vec_env_kwargs={"start_method": "fork"},
+        n_envs=N_ENVS,
+        vec_env_cls=DummyVecEnv,
+        # vec_env_kwargs={"start_method": "fork"},
     )
+    env.device = device
 
-    env = VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
+    # nice try, but works only with Box and Dict spaces
+    # env = VecFrameStack(env, n_stack=8)
 
-    return (env, "MlpPolicy")
+    return VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
 
 
 def moving_average(values, window):
@@ -300,7 +295,7 @@ def plot_results(log_folder, title="Learning Curve"):
     """
 
     x, y = ts2xy(load_results(log_folder), "timesteps")
-    y = moving_average(y, window=50)
+    y = moving_average(y, window=250)
     # Truncate x
     x = x[len(x) - len(y) :]
 
@@ -333,7 +328,7 @@ def get_args():
     parser.add_argument(
         "-d",
         "--device",
-        help="cuda, cpu or auto",
+        help="cuda, xpu, cpu or auto",
         choices=[d.value for d in Device.__members__.values()],
         default=Device.AUTO.value,
     )

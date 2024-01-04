@@ -5,13 +5,14 @@ from random import choice
 from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
 
 import gym
+import gymnasium
 import onnxruntime as ort
 from gymnasium.core import ActType, ObsType, RenderFrame
 from nptyping import Int8, NDArray, Shape
 from numpy import asarray, float32, int8, eye
 
 from arek_chess.board.hex.hex_board import HexBoard, Move
-from arek_chess.common.constants import INF
+from arek_chess.common.constants import Game, INF, Print
 from arek_chess.controller import Controller
 
 DEFAULT_ACTION = asarray(
@@ -28,6 +29,7 @@ DEFAULT_ACTION = asarray(
 )
 ACTION_SIZE: int = 8
 
+LESS_THAN_ZERO: float32 = float32(-0.1)
 ZERO: float32 = float32(0)
 ONE: float32 = float32(1)
 MINUS_ONE: float32 = float32(-1)
@@ -42,65 +44,42 @@ openings = cycle(
         "a5",
         "a6",
         "a7",
-        "a8",
-        "a9",
-        "i1",
-        "i2",
-        "i3",
-        "i4",
-        "i5",
-        "i6",
-        "i7",
-        "i8",
-        "i9",
-        "c2",
-        "g8",
+        "g1",
         "g2",
-        "c8",
-        ### middlegame
-        "c2d6g6g3b5",
-        "g8f4c4c7h5",
-        "a9d3b7f7f4e5c4",
-        "i1f7h3d3d6e5g6",
-        "a9d3b7f7f4e5f6",
-        "i1f7h3d3d6e5d4",
-        "a7b8g6g7h6h7f7f4b3",
-        "i3h2c4c3b4b3d3d6h7",
-        ### endgame
-        "c2d6g6g3b5f7g7f8g8",
-        "g8f4c4c7h5d3c3d2c2",
-        "a9d3b7f7f4e5f6f5g6h2g3",
-        "i1f7h3d3d6e5d4d5c4b8c7",
-        "a9d3b7f7f4e5c4c5b4d4f6",
-        "i1f7h3d3d6e5g6g5h6f6d4",
-        "a7b8g6g7h6h7f7f4b3c3b4c2b2c4b5c5",
-        "i3h2c4c3b4b3d3d6h7g7h6g8h8g6h5g5",
-        "a7b8g6g7h6h7f7f4b3e3b5",
-        "i3h2c4c3b4b3d3d6h7e7h5",
-        ### finishing touch
-        "c2d6g6g3b5f7g7f8g8f6g4h3g5e4b7",
-        "c2d6g6g3b5f7g7f8g8f6g5e4f4f3b7",
-        "g8f4c4c7h5d3c3d2c2d4c5e6d6d7h3",
-        "g8f4c4c7h5d3c3d2c2d4c6b7c5e6h3",
-        "a9d3b7f7f4e5c4c3b4b3e4d5f6f5h4g5i5",
-        "i1f7h3d3d6e5g6g7h6h7e6f5d4d5b6c5a5",
-        "a9d3b7f7f4e5f6f5g6h2g3h4c4c3b4b3d4",
-        "i1f7h3d3d6e5g6g7h6h7d4d5c4b8c7b6f6",
-        "a7b8g6g7h6h7f7f4b3c3b4c2b2c4b5c5h3f5h4h2g3g2f3f2e3e2b7",
-        "i3h2c4c3b4b3d3d6h7g7h6g8h8g6h5g5b7d5b6b8c7c8d7d8e7e8h3",
-        "a7b8g6g7h6h7f7f4b3f3d5e6f5e5h2h3d7",
-        "i3h2c4c3b4b3d3d6h7d7f5e4d5e5b8b7f3",
-        "a7b8g6g7h6h7f7f4b3f3c7c8d7d8d9",
-        "i3h2c4c3b4b3d3d6h7d7g3g2f3f2f1",
+        "g3",
+        "g4",
+        "g5",
+        "g6",
+        "g7",
+        "a1c5f5e3d4",
+        "a1d4c5c4e4e3g2",
+        "a1e3d4d3b4",
+        "a1c3e3e4d4",
+        "a1c3d4e2f2",
+        "g7e5d4c6b6",
+        "g7e5c5c4d4",
+        "g7c5d4d5f4",
+        "g7d4e3e4c4c5a6",
+        "g7c5b3e3d4",
+        # same openings twice for counterbalance against single move opening
+        "a1c5f5e3d4",
+        "a1d4c5c4e4e3g2",
+        "a1e3d4d3b4",
+        "a1c3e3e4d4",
+        "a1c3d4e2f2",
+        "g7e5d4c6b6",
+        "g7e5c5c4d4",
+        "g7c5d4d5f4",
+        "g7d4e3e4c4c5a6",
+        "g7c5b3e3d4",
     ]
 )
 
 
-# class SimpleEnv(gymnasium.Env):
-class Raw9x9Env(gym.Env):
+class Raw7x7BinGymnasium(gymnasium.Env):
     """"""
 
-    BOARD_SIZE: int = 9
+    BOARD_SIZE: int = 7
     REWARDS: Dict[Optional[bool], float32] = {
         None: ZERO,
         True: ONE,
@@ -108,17 +87,28 @@ class Raw9x9Env(gym.Env):
     }
 
     reward_range = (REWARDS[False], REWARDS[True])
-    observation_space = gym.spaces.MultiBinary(BOARD_SIZE ** 2 * 2)
-    action_space = gym.spaces.Box(ZERO, ONE, (1,), float32)
+    observation_space = gymnasium.spaces.MultiBinary(BOARD_SIZE ** 2 * 2)
+    action_space = gymnasium.spaces.Box(ZERO, ONE, (1,), float32)
 
     winner: Optional[bool]
 
-    def __init__(self, *, controller: Optional[Controller] = None):
+    def __init__(self, *args, controller: Optional[Controller] = None):
         super().__init__()
-
+        print(args)
         if controller:
             self._setup_controller(controller)
             self.obs = self.observation_from_board()
+        else:
+            self._setup_controller(Controller(
+                printing=Print.NOTHING,
+                # tree_params="4,4,",
+                search_limit=9,
+                is_training_run=True,
+                in_thread=False,
+                timeout=3,
+                game=Game.HEX,
+                board_size=self.BOARD_SIZE,
+            ))
 
         self.steps_done = 0
         self.winner = None
@@ -135,7 +125,8 @@ class Raw9x9Env(gym.Env):
     def _setup_controller(self, controller: Controller):
         self.controller = controller
         self.controller._setup_board(next(openings), size=self.BOARD_SIZE)
-        self.controller.boot_up()
+        # don't boot up if theres no need for engine to run, but to train on multiple processes
+        # self.controller.boot_up()
 
     def render(self, mode="human", close=False) -> RenderFrame:
         notation = self.controller.board.get_notation()
@@ -146,18 +137,18 @@ class Raw9x9Env(gym.Env):
     def reset(
         self,
         *,
-        # seed: Optional[int] = None,
+        seed: Optional[int] = None,
         options: Optional[Dict[str, Any]] = None,
     ) -> Tuple[ObsType, Dict[str, Any]]:
-        # super().reset(seed=seed)
+        super().reset(seed=seed)
 
         self.render()
         self.controller.reset_board(next(openings), size=self.BOARD_SIZE)
 
         self._prepare_child_moves()
 
-        # return self.observation_from_board(), {}
-        return self.observation_from_board()
+        return self.observation_from_board(), {}
+        # return self.observation_from_board()
 
     def _prepare_child_moves(self) -> None:
         """
@@ -169,11 +160,11 @@ class Raw9x9Env(gym.Env):
         self.best_move = None
         self.controller.board.push(self.current_move)
 
-    def step(
+    def step_iterative(
         self,
         action: ActType
         # ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
-    ) -> Tuple[ObsType, SupportsFloat, bool, Dict[str, Any]]:
+    ) -> Tuple[ObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
         """
         Iterate over all legal moves and evaluate each, storing the move with the best score.
 
@@ -193,14 +184,6 @@ class Raw9x9Env(gym.Env):
         try:
             # if doesn't raise then there are still moves to be evaluated
             self.current_move = next(self.moves)
-
-            # undo last move that was just evaluated
-            self.controller.board.pop()
-
-            # push a new move to be evaluated in the next `step`
-            self.controller.board.push(self.current_move)
-
-            winner = None
 
         except StopIteration:
             # all moves evaluated - undo the last and push the best move on the board
@@ -227,14 +210,51 @@ class Raw9x9Env(gym.Env):
                 if winner is None:
                     self._prepare_child_moves()
 
+        else:
+            # undo last move that was just evaluated
+            self.controller.board.pop()
+
+            # push a new move to be evaluated in the next `step`
+            self.controller.board.push(self.current_move)
+
+            winner = None
+
         self.obs = self.observation_from_board()
 
         self.winner = winner
-        reward = self._get_reward(winner)
+        reward = self._get_reward(winner, action[0])
         self.steps_done += 1
 
-        # return self.obs, reward, winner is not None, False, {}
-        return self.obs, reward, winner is not None, {}
+        return self.obs, reward, winner is not None, False, {}
+        # return self.obs, reward, winner is not None, {}
+
+    def step(
+        self,
+        action: ActType
+    ) -> Tuple[ObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
+        """"""
+
+        return self.step_iterative(action)
+
+        # self.controller.board.push(self.get_move_from_action())
+        #
+        # winner = self._get_winner()
+        # if winner is None:
+        #     self._make_random_move()
+        #
+        # self.obs = self.observation_from_board()
+        #
+        # self.winner = winner
+        # reward = self._get_reward(winner)
+        # self.steps_done += 1
+        #
+        # # return self.obs, reward, winner is not None, False, {}
+        # return self.obs, reward, winner is not None, {}
+
+    def get_move_from_action(self, action: ActType) -> Move:
+        """"""
+
+
 
     def _get_winner(self) -> Optional[bool]:
         winner = self.controller.board.winner()
@@ -246,23 +266,23 @@ class Raw9x9Env(gym.Env):
 
         return winner
 
-    def _get_reward(self, winner):
+    def _get_reward(self, winner, score=None):
         if winner is False:
             # - 1 + ((len(self.controller.board.move_stack) + 1) - 12) / (25 - 12)
-            return -1 + max(((len(self.controller.board.move_stack) - 16) / (81-16), 0))
+            return -1 + max(0, (len(self.controller.board.move_stack) - 12)) / 36
 
         elif winner is True:
-            return 1 - max((((len(self.controller.board.move_stack) - 17) / (81-17)) ** 2, 0))  # squared for "optimism"
+            return 1 - (max(0, (len(self.controller.board.move_stack) - 12)) / 36) ** 0.5
 
-        return self.REWARDS[winner]
+        return ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO
 
     def _make_random_move(self):
         moves = list(self.controller.board.legal_moves)
         self.controller.board.push(choice(moves))
 
-    def observation_from_board(self) -> NDArray[Shape["162"], Int8]:
-        local: NDArray[Shape["81"], Int8] = self.controller.board.get_neighbourhood(
-            9, should_suppress=True
+    def observation_from_board(self) -> NDArray[Shape["98"], Int8]:
+        local: NDArray[Shape["49"], Int8] = self.controller.board.get_neighbourhood(
+            7, should_suppress=True
         ).flatten()
         # fmt: off
         return eye(3, dtype=int8)[local][:, 1:].flatten()  # dummy encoding - 2 columns of 0/1 values, 1 column dropped
@@ -271,3 +291,7 @@ class Raw9x9Env(gym.Env):
     @staticmethod
     def prepare_action(action):
         return asarray((0, 0, 0, 0, 0, 10, action[0], 1))
+
+    def summarize(self):
+        print("finished")
+        # print("loss summary: ", sorted(self.losses.items(), key=lambda x: -x[1]))

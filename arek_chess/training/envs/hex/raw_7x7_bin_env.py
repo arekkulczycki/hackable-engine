@@ -1,34 +1,25 @@
 # -*- coding: utf-8 -*-
-import math
+from collections import namedtuple
 from itertools import cycle
 from random import choice
-from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
+from typing import Any, Dict, Generator, Optional, SupportsFloat, Tuple
 
 import gym
+import gymnasium
 import onnxruntime as ort
+from envpool.python.env_spec import EnvSpecMeta, EnvSpecMixin
 from gymnasium.core import ActType, ObsType, RenderFrame
 from nptyping import Int8, NDArray, Shape
-from numpy import asarray, float32, int8, eye
+from numpy import asarray, float32, int8, eye, reshape
+from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import DummyVecEnv
+from torch import from_numpy
 
 from arek_chess.board.hex.hex_board import HexBoard, Move
-from arek_chess.common.constants import INF
+from arek_chess.common.constants import Game, INF, Print
 from arek_chess.controller import Controller
 
-DEFAULT_ACTION = asarray(
-    (
-        float32(1.0),
-        float32(1.0),
-        float32(5.0),
-        float32(1.0),
-        float32(15.0),
-        float32(15.0),
-        float32(0.0),  # local pattern eval
-        float32(0.0),  # local pattern confidence
-    )
-)
-ACTION_SIZE: int = 8
-
-LESS_THAN_ZERO: float32 = float32(-0.1)
+LESS_THAN_ZERO: float32 = float32(-0.003)
 ZERO: float32 = float32(0)
 ONE: float32 = float32(1)
 MINUS_ONE: float32 = float32(-1)
@@ -50,32 +41,31 @@ openings = cycle(
         "g5",
         "g6",
         "g7",
-        "a1c5f5e3d4",
-        "a1d4c5c4e4e3g2",
-        "a1e3d4d3b4",
-        "a1c3e3e4d4",
-        "a1c3d4e2f2",
-        "g7e5d4c6b6",
-        "g7e5c5c4d4",
-        "g7c5d4d5f4",
-        "g7d4e3e4c4c5a6",
-        "g7c5b3e3d4",
-        # same openings twice for counterbalance against single move opening
-        "a1c5f5e3d4",
-        "a1d4c5c4e4e3g2",
-        "a1e3d4d3b4",
-        "a1c3e3e4d4",
-        "a1c3d4e2f2",
-        "g7e5d4c6b6",
-        "g7e5c5c4d4",
-        "g7c5d4d5f4",
-        "g7d4e3e4c4c5a6",
-        "g7c5b3e3d4",
+        # "a1c5f5e3d4",
+        # "a1d4c5c4e4e3g2",
+        # "a1e3d4d3b4",
+        # "a1c3e3e4d4",
+        # "a1c3d4e2f2",
+        # "g7e5d4c6b6",
+        # "g7e5c5c4d4",
+        # "g7c5d4d5f4",
+        # "g7d4e3e4c4c5a6",
+        # "g7c5b3e3d4",
+        # # same openings twice for counterbalance against single move opening
+        # "a1c5f5e3d4",
+        # "a1d4c5c4e4e3g2",
+        # "a1e3d4d3b4",
+        # "a1c3e3e4d4",
+        # "a1c3d4e2f2",
+        # "g7e5d4c6b6",
+        # "g7e5c5c4d4",
+        # "g7c5d4d5f4",
+        # "g7d4e3e4c4c5a6",
+        # "g7c5b3e3d4",
     ]
 )
 
 
-# class SimpleEnv(gymnasium.Env):
 class Raw7x7BinEnv(gym.Env):
     """"""
 
@@ -92,24 +82,37 @@ class Raw7x7BinEnv(gym.Env):
 
     winner: Optional[bool]
 
-    def __init__(self, *, controller: Optional[Controller] = None):
+    def __init__(self, *args, controller: Optional[Controller] = None):
         super().__init__()
 
         if controller:
             self._setup_controller(controller)
             self.obs = self.observation_from_board()
+        else:
+            self._setup_controller(Controller(
+                printing=Print.NOTHING,
+                # tree_params="4,4,",
+                search_limit=9,
+                is_training_run=True,
+                in_thread=False,
+                timeout=3,
+                game=Game.HEX,
+                board_size=self.BOARD_SIZE,
+            ))
 
         self.steps_done = 0
         self.winner = None
+
+        self.losses = 0
 
         self.moves: Generator[Move, None, None] = HexBoard.generate_nothing()
         self.best_move: Optional[Tuple[Move, Tuple[float32]]] = None
         self.current_move: Optional[Move] = None
 
-        # self.opp_model = onnx.load("raw7hex4.onnx")
-        # self.opp_model = ort.InferenceSession(
-        #     "raw7hex.onnx", providers=["AzureExecutionProvider", "CPUExecutionProvider"]
-        # )
+        # self.opp_model = onnx.load("onnx_hex7")
+        self.opp_model = ort.InferenceSession(
+            "onnx_hex7", providers=["CPUExecutionProvider"]
+        )
 
     def _setup_controller(self, controller: Controller):
         self.controller = controller
@@ -184,14 +187,11 @@ class Raw7x7BinEnv(gym.Env):
 
             # if the last move didn't conclude the game, now play opponent move and reset generator
             if winner is None:
-                # playing against a configured action or an action from self-trained model
-                # obs = reshape(self.observation_from_board().astype(float32), (1, 49))
-                # opp_action, value = self.opp_model.run(None, {"input": obs})
                 # self.controller.make_move(self.prepare_action(opp_action[0]))
-
                 # self.controller.make_move(DEFAULT_ACTION, search_limit=choice((0, 8)))
 
-                self._make_random_move()
+                self._make_self_trained_move(False)  # opponent playing black
+                # self._make_random_move()
 
                 winner = self._get_winner()
 
@@ -240,11 +240,6 @@ class Raw7x7BinEnv(gym.Env):
         # # return self.obs, reward, winner is not None, False, {}
         # return self.obs, reward, winner is not None, {}
 
-    def get_move_from_action(self, action: ActType) -> Move:
-        """"""
-
-
-
     def _get_winner(self) -> Optional[bool]:
         winner = self.controller.board.winner()
         self.winner = winner
@@ -263,18 +258,33 @@ class Raw7x7BinEnv(gym.Env):
         elif winner is True:
             return 1 - (max(0, (len(self.controller.board.move_stack) - 12)) / 36) ** 0.5
 
-        return ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO
+        # return ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO
+        return 0 if score != ZERO and score != ONE else -0.003
 
     def _make_random_move(self):
         moves = list(self.controller.board.legal_moves)
         self.controller.board.push(choice(moves))
 
+    def _make_self_trained_move(self, color: bool) -> None:
+        best_move: Optional[Move] = None
+        best_score = None
+        for move in self.controller.board.legal_moves:
+            self.controller.board.push(move)
+            obs = reshape(self.observation_from_board().numpy().astype(float32), (1, 98))
+            score, value = self.opp_model.run(None, {"input": obs})
+            if best_move is None or (color and score > best_score) or (not color and score < best_score):
+                best_move = move
+                best_score = score
+            self.controller.board.pop()
+
+        self.controller.board.push(best_move)
+
     def observation_from_board(self) -> NDArray[Shape["98"], Int8]:
         local: NDArray[Shape["49"], Int8] = self.controller.board.get_neighbourhood(
             7, should_suppress=True
-        )
+        ).flatten()
         # fmt: off
-        return eye(3, dtype=int8)[local][:, 1:].flatten()  # dummy encoding - 2 columns of 0/1 values, 1 column dropped
+        return from_numpy(eye(3, dtype=int8)[local][:, 1:].flatten())  # dummy encoding - 2 columns of 0/1 values, 1 column dropped
         # fmt: on
 
     @staticmethod
@@ -282,5 +292,27 @@ class Raw7x7BinEnv(gym.Env):
         return asarray((0, 0, 0, 0, 0, 10, action[0], 1))
 
     def summarize(self):
-        print("finished")
+        print("loss summary: ", self.losses)
         # print("loss summary: ", sorted(self.losses.items(), key=lambda x: -x[1]))
+
+
+class Raw7x7BinEnvSpec(EnvSpecMixin):
+
+    def __init__(self, config):
+        self._config_values = config
+
+    @staticmethod
+    def gen_config(**kwargs):
+        return namedtuple("Config", ["base_path", "num_envs", "batch_size", "gym_reset_return_info"])(**kwargs)
+
+
+class Raw7x7BinEnvVec(EnvSpecMixin):
+
+    def __new__(self, *args, **kwargs):
+        return make_vec_env(
+            lambda: Raw7x7BinEnv(),
+            # monitor_dir=os.path.join(LOG_PATH, env_name, f"v{version}"),
+            n_envs=8,
+            vec_env_cls=DummyVecEnv,
+            # vec_env_kwargs={"start_method": "fork"},
+        )

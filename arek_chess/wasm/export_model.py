@@ -6,6 +6,7 @@ pip install shimmy
 pip install onnx
 pip install onnxruntime
 """
+
 from sys import argv
 
 import numpy as np
@@ -19,6 +20,7 @@ path = argv[1]
 path_out = argv[2]
 print("exporting: ", path, " to: ", path_out)
 model = PPO.load(path, device="cpu")
+
 
 class OnnxablePolicy(th.nn.Module):
     def __init__(self, extractor, action_net, value_net):
@@ -46,6 +48,7 @@ onnxable_model = OnnxablePolicy(
     model.policy.mlp_extractor, model.policy.action_net, model.policy.value_net
 )
 
+print("shape: ", model.observation_space.shape)
 observation_size = model.observation_space.shape
 # dummy_input = th.randn(1, *observation_size)
 dummy_input = th.from_numpy(np.zeros((1, *observation_size)).astype(np.float32))
@@ -71,14 +74,14 @@ observation = np.zeros((1, *observation_size)).astype(np.float32)
 ort_session = ort.InferenceSession(path_out, providers=['OpenVINOExecutionProvider', 'CPUExecutionProvider'])
 
 from time import perf_counter
-# t0 = perf_counter()
-# for i in range(10000):
-#     action_sb2 = model.predict(observation, deterministic=True)
-# print(perf_counter() - t0)
-action_sb2 = model.predict(observation, deterministic=True)
 t0 = perf_counter()
-for i in range(10000):
+for i in range(1000):
+    action_sb2 = model.predict(observation, deterministic=True)
+print(perf_counter() - t0)
+# action_sb2 = model.predict(observation, deterministic=True)
+t0 = perf_counter()
+for i in range(1000):
     action_onnx, value = ort_session.run(None, {"input": observation})
 print(perf_counter() - t0)
-# print(action_sb2)
+print(action_sb2)
 print(action_onnx)

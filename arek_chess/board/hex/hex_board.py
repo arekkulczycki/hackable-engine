@@ -10,7 +10,7 @@ from operator import ior
 from typing import Callable, Dict, Generator, Iterable, Iterator, List, Optional, Tuple
 
 from nptyping import Int8, NDArray, Shape
-from numpy import empty, float32, int8, mean, zeros
+from numpy import asarray, empty, float32, int8, mean, zeros
 
 from arek_chess.board import BitBoard, GameBoardBase
 from arek_chess.board.hex.mixins import BoardShapeError
@@ -167,7 +167,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         super().__init__()
 
-        self.initial_notation = notation
+        self.initial_notation = notation if not init_move_stack else ""
         self.size = size
         self.size_square = size**2
         self.bb_rows: List[BitBoard] = [
@@ -616,7 +616,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         visited: BitBoard = yield from self.generate_adjacent_moves()
 
-        visited = yield from self.generate_diagonal_moves(visited)
+        # visited = yield from self.generate_diagonal_moves(visited)
 
         yield from self.generate_remaining_moves(visited)
 
@@ -700,6 +700,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         if move.mask & self.unoccupied == 0:
             print("board", bin(self.unoccupied), bin(self.occupied))
+            print(self.move_stack)
             raise ValueError(f"the move is occupied: {move.uci()}")
 
         self.occupied_co[self.turn] |= move.mask
@@ -958,7 +959,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         if self.size < diameter:
             raise ValueError("Cannot get neighbourhood larger than board size")
 
-        shift = (diameter - 1) // 2
+        radius = (diameter - 1) // 2
+        """Included cells around the last move, in straight line."""
 
         if not self.occupied_co[True] | self.occupied_co[False]:
             return zeros((diameter ** 2,), dtype=int8)
@@ -974,23 +976,19 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         move_x: int = move.x
         move_y: int = move.y
 
-        top_left_mask_x = (
-            move_x - shift
-            if shift <= move_x <= self.size - shift - 1
-            else 0
-            if move_x < shift
-            else self.size - 1
+        top_left_x = (
+            0 if self.size == radius or move_x <= radius
+            else self.size - diameter if move_x >= self.size - radius
+            else move_x - radius
         )
-        top_left_mask_y = (
-            move_y - shift
-            if shift <= move_y <= self.size - shift - 1
-            else 0
-            if move_y < shift
-            else self.size - 1
+        top_left_y = (
+            0 if self.size == radius or move_y <= radius
+            else self.size - diameter if move_y >= self.size - radius
+            else move_y - radius
         )
 
-        mask: BitBoard = Move.mask_from_xy(top_left_mask_x, top_left_mask_y, self.size)
-        """Top-left mask at start, then shifted."""
+        mask: BitBoard = Move.mask_from_xy(top_left_x, top_left_y, self.size)
+        """Top-left mask at start, then assigned subsequent masks."""
 
         array = empty((diameter, diameter), dtype=int8)
         for row in range(diameter):
@@ -1001,13 +999,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                     TWO if occupied_black else ONE if occupied_white else ZERO
                 )
 
-                if col != diameter - 1:  # last iteration
+                if col != diameter - 1:  # not last iteration
                     mask <<= 1
 
-            if row != diameter - 1:  # last iteration
-                mask <<= self.size - diameter + 1
+            if row != diameter - 1:  # not last iteration
+                mask <<= (self.size - diameter + 1)
 
-        return array.flatten()
+        return array
 
     def _x(self, mask: BitBoard) -> int:
         """"""
@@ -1020,7 +1018,9 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         return Move._y(mask, self.size)
 
     def _get_short_diagonal_mask(self) -> BitBoard:
-        """"""
+        """
+        FIXME: this is not working right, for instance at 3x3 is showing 5 cells
+        """
 
         mask = 0
 
@@ -1192,3 +1192,96 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             array[x][y] = 1
 
         return array
+
+    def to_graph(self) -> Tuple[NDArray, NDArray]:
+        """
+        By convention the board graph has always all the nodes and link types, counting empty.
+
+        Only the type of the node and link changes.
+            - Available node types: empty, white, black.
+            - Available link types: empty, white, black, mixed.
+
+        To obtain a full graph a third value is required, which is constant per board - table of links.
+
+        :returns: node types and link types
+        """
+
+        nodes = []
+        links = []
+
+        whites = self.occupied_co[True]
+        blacks = self.occupied_co[False]
+
+        last_color: int = 0
+        for i in range(self.size_square):
+            color: int = 0
+            if whites & 1:
+                color = 1
+            elif blacks & 1:
+                color = 2
+
+            nodes.append(color)
+            if i % self.size != 0:
+                links.append(self._get_graph_link_type(last_color, color))
+
+            last_color = color
+
+            whites >>= 1
+            blacks >>= 1
+
+        self._append_graph_vertical_links(nodes, links)
+        self._append_graph_diagonal_links(nodes, links)
+
+        return asarray(nodes), asarray(links)
+
+    def _append_graph_vertical_links(self, nodes: List[int], links: List[int]):
+        """
+        Links along columns.
+
+        TODO: think if better done same as `_append_graph_diagonal_links`
+        """
+
+        last_color: int = 0
+        for k in range(self.size):
+            for i in range(k, self.size_square+k, self.size):
+                color = nodes[i]
+                if i >= self.size:
+                    # links along rows
+                    links.append(self._get_graph_link_type(last_color, color))
+                last_color = color
+
+    def _append_graph_diagonal_links(self, nodes: List[int], links: List[int]):
+        """
+        Links along the short diagonal.
+        """
+
+        for i in range(self.size_square):
+            color = nodes[i]
+            try:
+                neighbour_mask = self.cell_downleft(1 << i)
+                if not color or self.unoccupied & neighbour_mask:
+                    links.append(0)
+
+                elif color == 1 and self.occupied_co[True] & neighbour_mask:
+                    links.append(1)
+                elif color == 2 and self.occupied_co[False] & neighbour_mask:
+                    links.append(2)
+                else:
+                    links.append(3)
+
+            except BoardShapeError:
+                continue
+
+    def _get_graph_link_type(self, last_color: Optional[int], color: int) -> int:
+        """"""
+
+        if not last_color or not color:
+            return 0
+
+        elif last_color == 1 and color == 1:
+            return 1
+
+        elif last_color == 2 and color == 2:
+            return 2
+
+        return 3

@@ -16,13 +16,25 @@ in your python3.8 virtual environment.
 
 Moreover in the requirements.txt there is a commented instruction how to install larch-pickle, do it as well.
 
-### Before you run
-
 ### Basic Usage (finding the best move)
 
 `PYTHONPATH=. python arek_chess -p=1 -l=9 -m -f="rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"`
 
 ### Advanced Usage (implement own criteria)
+
+### Training
+
+To train a model
+`PYTHONPATH=. python arek_chess/training/run.py -t -e=<ENVIRONMENT NAME>`
+
+To retrain a model
+`PYTHONPATH=. python arek_chess/training/run.py -t -e=<ENVIRONMENT NAME> -v=<VERSION TO LOAD>`
+
+To plot the training rewards over the training period
+`PYTHONPATH=. python arek_chess/training/run.py -pl -e=<ENVIRONMENT NAME>`
+
+To view the tensorboard log if used
+`tensorboard --logdir <PATH TO THE LOG DIRECTORY>`
 
 ### Development directions
 

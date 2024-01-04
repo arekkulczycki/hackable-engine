@@ -217,7 +217,7 @@ class Controller:
             if self.search_worker._started.is_set():
                 self.search_worker.join(0.5)
 
-        sleep(0.5)
+        # sleep(0.5)
         # self.clear_queues()
         self._setup_search_worker(run_iteration)
 
