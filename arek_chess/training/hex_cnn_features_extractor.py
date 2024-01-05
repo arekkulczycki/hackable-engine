@@ -35,32 +35,46 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
 
         # out = number of possible placements of the kernel on the input
         # https://arxiv.org/pdf/1603.07285v1.pdf
-        possible_placements_1 = board_size**2
+        # possible_placements_1 = board_size**2
         # output_1_size = 1 + board_size  # (input_size - kernel + 1) + 2 * padding
         # output_channels_2 = board_size  # = output_1_size - 1
 
-        # possible_placements_2 = (1 + possible_placements_1 - kernel_size) * possible_placements_1
-        output = possible_placements_1
+        # possible_placements_2 = (1 + possible_placements_1 - kernel_size)**2
+        # output = possible_placements_1
 
+        # self.cnn = th.nn.Sequential(
+        #     th.nn.Conv2d(1, possible_placements_1, kernel_size=board_size, padding=board_size // 2),
+        #     # th.nn.BatchNorm2d(output_channels_1),
+        #     th.nn.ReLU(),
+        #     th.nn.Conv2d(possible_placements_1, output, kernel_size=kernel_size),
+        #     # th.nn.BatchNorm2d(output_channels_2),
+        #     th.nn.ReLU(),
+        #     # th.nn.Conv2d(possible_placements_2, output, kernel_size=kernel_size-2, dilation=1),
+        #     # th.nn.MaxPool2d(kernel_size=kernel_size-2, dilation=1),
+        #     th.nn.ReLU(),
+        #     th.nn.Flatten(),
+        # )
+
+        output = 16
         self.cnn = th.nn.Sequential(
-            th.nn.Conv2d(1, possible_placements_1, kernel_size=board_size, padding=board_size // 2),
-            # th.nn.BatchNorm2d(output_channels_1),
-            th.nn.ReLU(),
-            th.nn.Conv2d(possible_placements_1, output, kernel_size=kernel_size),
-            # th.nn.BatchNorm2d(output_channels_2),
-            th.nn.ReLU(),
-            # th.nn.Conv2d(possible_placements_2, output, kernel_size=kernel_size-2, dilation=1),
-            # th.nn.MaxPool2d(kernel_size=kernel_size-2, dilation=1),
-            th.nn.ReLU(),
+            th.nn.Conv2d(1, output, kernel_size=3),  # 16 channels, 5x5 matrices
+            th.nn.Tanh(),
+            th.nn.Conv2d(output, output, kernel_size=2),  # 16 channels 4x4 matrices
+            th.nn.Tanh(),
             th.nn.Flatten(),
         )
 
         # Compute shape by doing one forward pass
         with th.no_grad():
-            n_flatten = self.cnn(th.as_tensor(observation_space.sample()[None]).float()).shape[1] * output
+            n_flatten = self.cnn(th.as_tensor(observation_space.sample().astype(np.float32)[None])).shape[1] * output
 
-        self.linear = th.nn.Sequential(th.nn.Linear(n_flatten, features_dim), th.nn.ReLU())
+        self.linear = th.nn.Sequential(
+            th.nn.Linear(n_flatten, features_dim),
+            # th.nn.ReLU(),
+        )
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
         observations = th.reshape(observations, (observations.size(dim=0), 1, self.board_size, self.board_size))
-        return self.linear(self.cnn(observations))
+        return self.cnn(observations)
+        # return self.linear(self.cnn(observations))
+

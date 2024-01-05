@@ -270,7 +270,7 @@ class Raw7x7BinEnv(gym.Env):
         best_score = None
         for move in self.controller.board.legal_moves:
             self.controller.board.push(move)
-            obs = reshape(self.observation_from_board().numpy().astype(float32), (1, 98))
+            obs = reshape(self.observation_from_board().astype(float32), (1, 98))
             score, value = self.opp_model.run(None, {"input": obs})
             if best_move is None or (color and score > best_score) or (not color and score < best_score):
                 best_move = move
@@ -284,7 +284,7 @@ class Raw7x7BinEnv(gym.Env):
             7, should_suppress=True
         ).flatten()
         # fmt: off
-        return from_numpy(eye(3, dtype=int8)[local][:, 1:].flatten())  # dummy encoding - 2 columns of 0/1 values, 1 column dropped
+        return eye(3, dtype=int8)[local][:, 1:].flatten()  # dummy encoding - 2 columns of 0/1 values, 1 column dropped
         # fmt: on
 
     @staticmethod

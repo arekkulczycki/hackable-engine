@@ -29,7 +29,7 @@ VEC_1: BitBoard = 2**13 - 1
 NEIGHBOURHOOD_DIAMETER: int = 7
 ZERO: int8 = int8(0)
 ONE: int8 = int8(1)
-TWO: int8 = int8(2)
+MINUS_ONE: int8 = int8(-1)
 
 
 @dataclass
@@ -996,7 +996,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 occupied_white = mask & self.occupied_co[True]
                 occupied_black = mask & self.occupied_co[False]
                 array[row][col] = (
-                    TWO if occupied_black else ONE if occupied_white else ZERO
+                    MINUS_ONE if occupied_black else ONE if occupied_white else ZERO
                 )
 
                 if col != diameter - 1:  # not last iteration

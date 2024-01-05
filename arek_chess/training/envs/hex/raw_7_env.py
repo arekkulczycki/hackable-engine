@@ -9,6 +9,7 @@ import torch as th
 from gymnasium.core import ActType, ObsType, RenderFrame
 from nptyping import Int8, NDArray, Shape
 from numpy import asarray, float32, reshape, full, int8
+from bfloat16 import bfloat16
 
 from arek_chess.board.hex.hex_board import HexBoard, Move
 from arek_chess.common.constants import Game, INF, Print
@@ -72,7 +73,7 @@ class Raw7Env(gym.Env):
     }
 
     reward_range = (REWARDS[False], REWARDS[True])
-    observation_space = gym.spaces.Box(0, 2, shape=(BOARD_SIZE, BOARD_SIZE), dtype=int8)  # should be int8
+    observation_space = gym.spaces.Box(0, 2, shape=(BOARD_SIZE, BOARD_SIZE), dtype=float32)  # should be int8
     action_space = gym.spaces.Box(ZERO, ONE, shape=(1,), dtype=float32)
 
     winner: Optional[bool]
@@ -124,22 +125,21 @@ class Raw7Env(gym.Env):
     def reset(
         self,
         *,
-        # seed: Optional[int] = None,
+        seed: Optional[int] = None,
         options: Optional[Dict[str, Any]] = None,
     ) -> Tuple[ObsType, Dict[str, Any]]:
-        # super().reset(seed=seed)
+        super().reset(seed=seed)
 
         self.render()
 
         notation = next(openings)
         self.controller.reset_board(notation, size=self.BOARD_SIZE, init_move_stack=True)
 
-        # return self.observation_from_board(), {}
         obs = self.observation_from_board()
 
         # must be after the observation, as it adds a move on the board
         self._prepare_child_moves()
-        return obs
+        return obs, {}
 
     def _prepare_child_moves(self) -> None:
         """
@@ -154,8 +154,7 @@ class Raw7Env(gym.Env):
     def step_iterative(
         self,
         action: ActType
-        # ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
-    ) -> Tuple[ObsType, SupportsFloat, bool, Dict[str, Any]]:
+    ) -> Tuple[ObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
         """
         Iterate over all legal moves and evaluate each, storing the move with the best score.
 
@@ -214,12 +213,12 @@ class Raw7Env(gym.Env):
         self.steps_done += 1
 
         # return self.obs, reward, winner is not None, False, {}
-        return self.obs, reward, winner is not None, {}
+        return self.obs, reward, winner is not None, False, {}
 
     def step(
         self,
         action: ActType
-    ) -> Tuple[ObsType, SupportsFloat, bool, Dict[str, Any]]:
+    ) -> Tuple[ObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
         """"""
 
         return self.step_iterative(action)
@@ -258,7 +257,7 @@ class Raw7Env(gym.Env):
             return 1 - (max(0, (len(self.controller.board.move_stack) - 12)) / 36) ** 0.5
 
         # return ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO
-        return 0 if score != ZERO and score != ONE else -0.003
+        return 0  # if score != ZERO and score != ONE else -0.003
 
     def _make_random_move(self):
         moves = list(self.controller.board.legal_moves)
@@ -281,7 +280,7 @@ class Raw7Env(gym.Env):
     def observation_from_board(self) -> th.Tensor:
         return th.from_numpy(self.controller.board.get_neighbourhood(
             7, should_suppress=True
-        ).astype(float32))  # .reshape(1, 1, self.BOARD_SIZE, self.BOARD_SIZE))
+        ))  # .reshape(1, 1, self.BOARD_SIZE, self.BOARD_SIZE))
 
     @staticmethod
     def prepare_action(action):

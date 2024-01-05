@@ -14,6 +14,7 @@ import numpy
 # import gymnasium
 # sys.modules["gym"] = gymnasium
 import torch
+from bfloat16 import bfloat16
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import load_results
@@ -44,13 +45,13 @@ N_ENVS = 2**3
 TOTAL_TIMESTEPS = int(2**22)
 LEARNING_RATE = 1e-3
 N_EPOCHS = 10
-N_STEPS = 2**11  # batch size per env, total batch size is this times N_ENVS
+N_STEPS = 2**13  # batch size per env, total batch size is this times N_ENVS
 BATCH_SIZE = int(N_STEPS * N_ENVS / 2**0)   # mini-batch, recommended to be a factor of (N_STEPS * N_ENVS)
-CLIP_RANGE = 0.5  # 0.1 to 0.3 according to many sources, but I used even 0.9 with beneficial results
+CLIP_RANGE = 0.3  # 0.1 to 0.3 according to many sources, but I used even 0.9 with beneficial results
 # 1 / (1 - GAMMA) = number of steps to finish the episode, for hex env steps are SIZE^2 * SIZE^2 / 2
 GAMMA = 0.99  # 0.996 for 5x5 hex, 0.999 for 7x7, 0.9997 for 9x9 - !!! values when starting on empty board !!!
 GAE_LAMBDA = 0.95
-ENT_COEF = 0.001  # 0 to 0.01 https://medium.com/aureliantactics/ppo-hyperparameters-and-ranges-6fc2d29bccbe
+ENT_COEF = 0.005  # 0 to 0.01 https://medium.com/aureliantactics/ppo-hyperparameters-and-ranges-6fc2d29bccbe
 
 SEARCH_LIMIT = 9
 
@@ -64,9 +65,9 @@ policy_kwargs_map = {
     "raw7hexcnn": dict(
         policy="CnnPolicy",
         features_extractor_class=HexCnnFeaturesExtractor,
-        features_extractor_kwargs=dict(n_envs=N_ENVS, board_size=7, features_dim=49, kernel_size=5),
-        # should_preprocess_obs=False,
-        net_arch=[49, 49],
+        features_extractor_kwargs=dict(n_envs=N_ENVS, board_size=7, features_dim=256, kernel_size=3),
+        should_preprocess_obs=False,
+        net_arch=[64, 32],
     ),
     "raw7hex-v2": dict(net_arch=dict(pi=[49, 49], vf=[49, 49])),
     "raw9hex": dict(net_arch=[dict(pi=[81, 81], vf=[81, 81])]),
@@ -112,7 +113,7 @@ def train(
             },
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
-            tensorboard_log=os.path.join(LOG_PATH, f"{env_name}_tensorboard"),
+            tensorboard_log=None  #os.path.join(LOG_PATH, f"{env_name}_tensorboard"),
         )
     else:
         model = PPO(
@@ -133,15 +134,15 @@ def train(
         )
 
     print("optimizing for intel...")
-    # optimizer = torch.optim.AdamW(model.policy.parameters(), lr=LEARNING_RATE, eps=1e-5)
+    # optimizer = torch.optim.Adam(model.policy.parameters(), lr=LEARNING_RATE, eps=1e-5)
     optimizer = torch.optim.SGD(
-        model.policy.parameters(), lr=LEARNING_RATE, momentum=0.9
+        model.policy.parameters(), lr=LEARNING_RATE, momentum=0.5
     )
     if device == Device.XPU and hasattr(torch, "xpu") and torch.xpu.is_available():
         model.policy, model.optimizer = torch.xpu.optimize(
             model.policy,
             optimizer=optimizer,
-            # dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             weights_prepack=False,
             optimize_lstm=True,
             # fuse_update_step=True,
@@ -151,13 +152,14 @@ def train(
         model.policy, model.optimizer = ipex.optimize(
             model.policy,
             optimizer=optimizer,
-            # dtype=torch.bfloat16,
+            dtype=torch.float16,
             weights_prepack=False,
             optimize_lstm=True,
             # fuse_update_step=True,
             # auto_kernel_selection=True,
         )
-    # model.policy = torch.compile(model.policy, backend="ipex")
+    original_policy = model.policy
+    model.policy = torch.compile(model.policy, backend="ipex")
 
     # print("optimizing with lightning")
     # fabric = lightning.Fabric(accelerator="cpu", devices=4, strategy="ddp")
@@ -166,8 +168,14 @@ def train(
 
     print("training started...")
     try:
-        model.learn(total_timesteps=TOTAL_TIMESTEPS, tb_log_name=env_name)  # progress_bar=True
+        if device == Device.XPU:
+            with torch.xpu.amp.autocast(enabled=True, dtype=torch.bfloat16):
+                model.learn(total_timesteps=TOTAL_TIMESTEPS, tb_log_name=env_name)  # progress_bar=True
+        else:
+            with torch.cpu.amp.autocast(enabled=True, dtype=torch.float16):
+                model.learn(total_timesteps=TOTAL_TIMESTEPS, tb_log_name=env_name)  # progress_bar=True
     finally:
+        model.policy = original_policy  # the state_dict is maintained, therefore saving the trained network
         model.save(f"./{env_name}.v{version + 1}")
 
     print(f"training finished in: {perf_counter() - t0}")
