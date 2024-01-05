@@ -64,6 +64,8 @@ policy_kwargs_map = {
     "raw7hex": dict(net_arch=dict(pi=[49, 49], vf=[49, 49])),
     "raw7hexcnn": dict(
         policy="CnnPolicy",
+        optimizer_class=torch.optim.SGD,
+        optimizer_kwargs=dict(momentum=0.5),
         features_extractor_class=HexCnnFeaturesExtractor,
         features_extractor_kwargs=dict(n_envs=N_ENVS, board_size=7, features_dim=256, kernel_size=3),
         should_preprocess_obs=False,
@@ -95,8 +97,10 @@ def train(
     # stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=3, min_evals=5, verbose=1)
     # eval_callback = EvalCallback(env, eval_freq=512, callback_after_eval=stop_train_callback, verbose=1)
 
+    policy_kwargs = policy_kwargs_map[env_name]
+
     if version >= 0:
-        policy_kwargs_map[env_name].pop("policy", "MlpPolicy")
+        policy_kwargs.pop("policy", "MlpPolicy")
         model = PPO.load(
             f"./{env_name}.v{version}",
             env=env,
@@ -117,7 +121,7 @@ def train(
         )
     else:
         model = PPO(
-            policy_kwargs_map[env_name].pop("policy", "MlpPolicy"),
+            policy_kwargs.pop("policy", "MlpPolicy"),
             env=env,
             verbose=2,
             clip_range=CLIP_RANGE,
@@ -135,19 +139,21 @@ def train(
 
     print("optimizing for intel...")
     # optimizer = torch.optim.Adam(model.policy.parameters(), lr=LEARNING_RATE, eps=1e-5)
-    optimizer = torch.optim.SGD(
-        model.policy.parameters(), lr=LEARNING_RATE, momentum=0.5
+    optimizer = policy_kwargs.get("optimizer_class", torch.optim.SGD)(
+        model.policy.parameters(), lr=LEARNING_RATE, **policy_kwargs.get("optimizer_kwargs", {})
     )
+    original_policy = None
     if device == Device.XPU and hasattr(torch, "xpu") and torch.xpu.is_available():
-        model.policy, model.optimizer = torch.xpu.optimize(
-            model.policy,
-            optimizer=optimizer,
-            dtype=torch.bfloat16,
-            weights_prepack=False,
-            optimize_lstm=True,
-            # fuse_update_step=True,
-            # auto_kernel_selection=True,
-        )
+        ...
+        # model.policy, model.optimizer = torch.xpu.optimize(
+        #     model.policy,
+        #     optimizer=optimizer,
+        #     dtype=torch.bfloat16,
+        #     weights_prepack=False,
+        #     optimize_lstm=True,
+        #     # fuse_update_step=True,
+        #     # auto_kernel_selection=True,
+        # )
     else:
         model.policy, model.optimizer = ipex.optimize(
             model.policy,
@@ -158,8 +164,8 @@ def train(
             # fuse_update_step=True,
             # auto_kernel_selection=True,
         )
-    original_policy = model.policy
-    model.policy = torch.compile(model.policy, backend="ipex")
+        original_policy = model.policy
+        model.policy = torch.compile(model.policy, backend="ipex")
 
     # print("optimizing with lightning")
     # fabric = lightning.Fabric(accelerator="cpu", devices=4, strategy="ddp")
@@ -175,7 +181,8 @@ def train(
             with torch.cpu.amp.autocast(enabled=True, dtype=torch.float16):
                 model.learn(total_timesteps=TOTAL_TIMESTEPS, tb_log_name=env_name)  # progress_bar=True
     finally:
-        model.policy = original_policy  # the state_dict is maintained, therefore saving the trained network
+        if original_policy:
+            model.policy = original_policy  # the state_dict is maintained, therefore saving the trained network
         model.save(f"./{env_name}.v{version + 1}")
 
     print(f"training finished in: {perf_counter() - t0}")
