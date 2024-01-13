@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import random
+from time import perf_counter
 from typing import Tuple
 from unittest import TestCase
 
@@ -91,6 +93,29 @@ class HexBoardTestCase(TestCase):
         assert board.is_black_win() is False
         assert board.is_white_win() is True
 
+    @staticmethod
+    def test_is_black_win_perf() -> None:
+        """"""
+
+        def make_random_notation(size):
+            notation = ""
+            for i in range(140):  # fill the board
+                coords = Move.from_xy(random.randint(0, size-1), random.randint(0, size-1), size).get_coord()
+                if coords not in notation:
+                    notation += coords
+            return notation
+
+        t = 0
+        for i in range(1000):
+            board = HexBoard(make_random_notation(9), size=9)
+
+            t0 = perf_counter()
+            board.is_black_win()
+            t += perf_counter() - t0
+
+        print(t)
+        assert t < 0.05  # can check the winner more than 20k times per second even with full board
+
     @parameterized.expand(
         [
             [7, "", 49],
@@ -163,15 +188,20 @@ class HexBoardTestCase(TestCase):
 
     @parameterized.expand(
         [
-            ["", 7, 7],
-            ["d4g2b7e4a3c3g1f6b6b4e2d7g5d1c2d5c1g3f4a2c4c5d2g4e6a4g6f2b5a7c7a6d6a5e7b3g7", 2, 1],
+            ["", 7, 7, 7],
+            ["", 9, 9, 9],
+            ["d4g2b7e4a3c3g1f6b6b4e2d7g5d1c2d5c1g3f4a2c4c5d2g4e6a4g6f2b5a7c7a6d6a5e7b3g7", 7, 2, 1],
+            ["e2e1i9b6f9c6b9h2h8h7d9c3a8e3g6c7e6e5a5h4i5h6a2d3e9d5c1i1g1g3f8d6c9d1d8e4f7a1g9a7a4f2a9c2h9f5i8i6e7g7e8b2g8i4c8b4c5a6d7", 9, 1, 5],
         ]
     )
-    def test_get_shortest_missing_distance(self, notation, missing_distance_white, missing_distance_black) -> None:
-        board = HexBoard(notation, size=7)
+    def test_get_shortest_missing_distance(self, notation, size, missing_distance_white, missing_distance_black) -> None:
+        board = HexBoard(notation, size=size)
 
         assert board.get_shortest_missing_distance(True) == missing_distance_white
         assert board.get_shortest_missing_distance(False) == missing_distance_black
+
+        assert board.get_shortest_missing_distance_perf(True) == missing_distance_white
+        assert board.get_shortest_missing_distance_perf(False) == missing_distance_black
 
     @parameterized.expand(
         [
@@ -227,5 +257,6 @@ class HexBoardTestCase(TestCase):
         try:
             assert array_equal(board.get_neighbourhood(neighbourhood_size), arr)
         except:
-            print(board.get_neighbourhood(neighbourhood_size))
+            pass
+            # print(board.get_neighbourhood(neighbourhood_size))
         assert board.get_notation() == notation

@@ -5,6 +5,7 @@ from typing import Callable, List, Optional
 
 from faster_fifo import Queue
 
+from arek_chess.common.constants import QUEUE_MEMORY_MB
 from arek_chess.common.queue.base_queue import BaseQueue
 from arek_chess.common.queue.items.base_item import BaseItem
 # from larch.pickle.pickle import dumps, loads
@@ -29,7 +30,7 @@ class FasterFifoAdapter(BaseQueue):
 
         super().__init__(name)
         self.queue = Queue(
-            max_size_bytes=1024 * 1024 * 100,
+            max_size_bytes=1024 * 1024 * QUEUE_MEMORY_MB,
             loads=partial(self.memoryview_loader, loader),
             dumps=dumper,
             # loads=partial(self.memoryview_loader, loader)

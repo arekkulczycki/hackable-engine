@@ -3,16 +3,13 @@ import random
 from collections import defaultdict
 from itertools import cycle
 from random import choice
-from time import sleep
 from typing import Any, Dict, Generator, Optional, SupportsFloat, Tuple
 
 import gym
 import onnxruntime as ort
 import torch as th
 from gymnasium.core import ActType, ObsType, RenderFrame
-from nptyping import Int8, NDArray, Shape
-from numpy import asarray, float32, reshape, full, int8
-from bfloat16 import bfloat16
+from numpy import asarray, float32
 
 from arek_chess.board.hex.hex_board import HexBoard, Move
 from arek_chess.common.constants import Game, INF, Print
@@ -215,7 +212,7 @@ class Raw7Env(gym.Env):
             # push a new move to be evaluated in the next `step`
             self.controller.board.push(self.current_move)
 
-            winner = None
+            winner = self._get_winner()
 
         self.obs = self.observation_from_board()
         self.winner = winner
@@ -289,7 +286,7 @@ class Raw7Env(gym.Env):
         for move in self.controller.board.legal_moves:
             self.controller.board.push(move)
             obs = self.controller.board.as_matrix().astype(float32).reshape(1, 7, 7)
-            score = self.opp_model.run(None, {"input": obs})
+            score = self.opp_model.run(None, {"input": obs})[0][0][0]
             if best_move is None or (color and score > best_score) or (not color and score < best_score):
                 if not best_move or random.choice((True, False)):  # randomize a bit which move is selected
                     best_move = move

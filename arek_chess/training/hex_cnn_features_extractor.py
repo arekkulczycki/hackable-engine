@@ -23,9 +23,10 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         board_size: int,
         output_filters: Tuple[int, ...] = (16,),
         kernel_sizes: Tuple[int, ...] = (3,),
+        strides: Tuple[int, ...] = (1,),
         activation_func_class: Optional[Type] = None,
     ) -> None:
-        features_dim = self._get_features_number(board_size, output_filters, kernel_sizes)
+        features_dim = self._get_features_number(board_size, output_filters, kernel_sizes, strides)
 
         super().__init__(observation_space, features_dim)
 
@@ -42,9 +43,9 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         input_filters = [1, *output_filters[:-1]]
         layers = (
             th.nn.Conv2d(
-                i_f, o_f, kernel_size=ks
+                i_f, o_f, kernel_size=ks, stride=stride
             )
-            for i_f, o_f, ks in zip(input_filters, output_filters, kernel_sizes)
+            for i_f, o_f, ks, stride in zip(input_filters, output_filters, kernel_sizes, strides)
         )
         if activation_func_class:
             layers = sum(zip(layers, cycle((activation_func_class(),))), ())
@@ -69,8 +70,9 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         )
 
     @staticmethod
-    def _get_features_number(board_size, output_filters, kernel_sizes):
-        features_dim = (board_size - sum(kernel_sizes) + len(kernel_sizes))**2
+    def _get_features_number(board_size, output_filters, kernel_sizes, strides):
+        # TODO: incorrect with regard to `strides`
+        features_dim = (int((board_size - sum(kernel_sizes)) / strides[-1]) + len(kernel_sizes))**2
         features_dim *= output_filters[-1]
         return int(features_dim)
 

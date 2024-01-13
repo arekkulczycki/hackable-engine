@@ -399,27 +399,30 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             return False
 
         # find connection from top to bottom
+        visited = 0
         for mask in generate_masks(blacks & self.bb_rows[0]):
-            if self.is_connected_to_bottom(mask):
+            finished, visited = self.is_connected_to_bottom(mask, visited)
+            if finished:
                 return True
 
         return False
 
-    def is_connected_to_bottom(self, mask: BitBoard, visited: BitBoard = 0) -> bool:
+    def is_connected_to_bottom(self, mask: BitBoard, visited: BitBoard = 0) -> Tuple[bool, int]:
         """
         Recurrent way of finding if a stone is connected to bottom.
         """
 
         if mask & self.bb_rows[self.size - 1]:
-            return True
+            return True, visited
 
         visited |= mask
 
         for neighbour in self.generate_neighbours_black(mask, visited):
-            if self.is_connected_to_bottom(neighbour, visited):
-                return True
+            finished, visited = self.is_connected_to_bottom(neighbour, visited)
+            if finished:
+                return True, visited
 
-        return False
+        return False, visited
 
     def generate_neighbours_black(self, mask: BitBoard, visited: BitBoard) -> Iterator:
         """
@@ -454,27 +457,30 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             return False
 
         # find connection from left to right
+        visited = 0
         for mask in generate_masks(whites & self.bb_cols[0]):
-            if self.is_connected_to_right(mask):
+            finished, visited = self.is_connected_to_right(mask, visited)
+            if finished:
                 return True
 
         return False
 
-    def is_connected_to_right(self, mask: BitBoard, visited: BitBoard = 0) -> bool:
+    def is_connected_to_right(self, mask: BitBoard, visited: BitBoard = 0) -> Tuple[bool, int]:
         """
         Recurrent way of finding if a stone is connected to bottom.
         """
 
         if mask & self.bb_cols[self.size - 1]:
-            return True
+            return True, visited
 
         visited |= mask
 
         for neighbour in self.generate_neighbours_white(mask, visited):
-            if self.is_connected_to_right(neighbour, visited):
-                return True
+            finished, visited = self.is_connected_to_right(neighbour, visited)
+            if finished:
+                return True, visited
 
-        return False
+        return False, visited
 
     def generate_neighbours_white(
         self, mask: BitBoard, visited: BitBoard
@@ -599,8 +605,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     def legal_moves(self) -> Generator[Move, None, None]:
         """"""
 
-        if self.winner() is not None:
-            return self.generate_nothing()
+        # if self.winner() is not None:
+        #     return self.generate_nothing()
 
         return self.generate_moves()
 
@@ -1151,8 +1157,35 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         )
         return min([self.distance_missing(*pair, color) for pair in connection_points_pairs])
 
+    def get_shortest_missing_distance_perf(self, color: bool) -> int:
+        """
+        Calculate how many stones are missing to finish the connection between two sides.
+
+        Measurements restricted to: from obtuse corner to any opposite cell.
+        """
+
+        opp = self.occupied_co[not color]
+        if color:
+            start_corner = list(generate_masks(self.bb_cols[0] & ~opp))[-1]
+            finish_corner = next(generate_masks(self.bb_cols[-1] & ~opp))
+        else:
+            start_corner = list(generate_masks(self.bb_rows[0] & ~opp))[-1]
+            finish_corner = next(generate_masks(self.bb_rows[-1] & ~opp))
+
+        connection_points_start: List[BitBoard] = self._get_start_points(color)
+        connection_points_finish: List[BitBoard] = self._get_finish_points(color)
+
+        if not (connection_points_start and connection_points_finish):
+            raise ValueError("searching shortest missing distance on game over")
+
+        connection_points_pairs: List[Tuple[BitBoard, BitBoard]] = [
+            (start_corner, finish) for finish in connection_points_finish
+        ] + [(start, finish_corner) for start in connection_points_start]
+
+        return min([self.distance_missing(*pair, color) for pair in connection_points_pairs])
+
     def _get_start_points(self, color: bool) -> List[BitBoard]:
-        """"""
+        """Top row or left column."""
 
         own = self.occupied_co[color]
 
@@ -1164,7 +1197,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             else:
                 opp = self.occupied_co[not color]
                 masks = list(generate_masks(self.bb_cols[0] & ~opp))
-                return [masks[len(masks)//2]]  # take a single point in the middle of an edge
+                return masks
+                # return [masks[len(masks)//2]]  # take a single point in the middle of an edge
 
         else:
             # all own cells at first row
@@ -1174,32 +1208,35 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             else:
                 opp = self.occupied_co[not color]
                 masks = list(generate_masks(self.bb_rows[0] & ~opp))
-                return [masks[len(masks)//2]]  # take a single point in the middle of an edge
+                return masks
+                # return [masks[len(masks)//2]]  # take a single point in the middle of an edge
 
     def _get_finish_points(self, color: bool) -> List[BitBoard]:
-        """"""
+        """Bottom row or right column."""
 
         own = self.occupied_co[color]
 
         if color:
-            # all own cells at first column
+            # all own cells at last column
             points = own & self.bb_cols[-1]
             if points:
                 return list(generate_masks(points))
             else:
                 opp = self.occupied_co[not color]
                 masks = list(generate_masks(self.bb_cols[-1] & ~opp))
-                return [masks[len(masks)//2]]  # take a single point in the middle of an edge
+                return masks
+                # return [masks[len(masks)//2]]  # take a single point in the middle of an edge
 
         else:
-            # all own cells at first row
+            # all own cells at last row
             points = own & self.bb_rows[-1]
             if points:
                 return list(generate_masks(points))
             else:
                 opp = self.occupied_co[not color]
                 masks = list(generate_masks(self.bb_rows[-1] & ~opp))
-                return [masks[len(masks)//2]]  # take a single point in the middle of an edge
+                return masks
+                # return [masks[len(masks)//2]]  # take a single point in the middle of an edge
 
     def color_matrix(self, color: bool) -> NDArray:
         """"""
