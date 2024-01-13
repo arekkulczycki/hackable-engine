@@ -29,6 +29,7 @@ VEC_1: BitBoard = 2**13 - 1
 NEIGHBOURHOOD_DIAMETER: int = 7
 ZERO: int8 = int8(0)
 ONE: int8 = int8(1)
+TWO: int8 = int8(2)
 MINUS_ONE: int8 = int8(-1)
 
 
@@ -1004,6 +1005,24 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
             if row != diameter - 1:  # not last iteration
                 mask <<= (self.size - diameter + 1)
+
+        return array
+
+    def as_matrix(self, black_stone_val: Int8 = MINUS_ONE) -> NDArray:
+        """"""
+
+        mask: BitBoard = 1
+        array: NDArray = empty((self.size, self.size), dtype=int8)
+
+        for row in range(self.size):
+            for col in range(self.size):
+                occupied_white = mask & self.occupied_co[True]
+                occupied_black = mask & self.occupied_co[False]
+                array[row][col] = (
+                    black_stone_val if occupied_black else ONE if occupied_white else ZERO
+                )
+
+                mask <<= 1
 
         return array
 

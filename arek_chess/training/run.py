@@ -30,6 +30,7 @@ from arek_chess.common.constants import Game, Print
 from arek_chess.controller import Controller
 from arek_chess.training.envs.hex.raw_7_env import Raw7Env
 from arek_chess.training.envs.hex.raw_7x7_bin_env import Raw7x7BinEnv
+from arek_chess.training.envs.hex.raw_9_env import Raw9Env
 from arek_chess.training.envs.hex.simple_env import SimpleEnv
 from arek_chess.training.envs.square_control_env import SquareControlEnv
 from arek_chess.training.hex_cnn_features_extractor import HexCnnFeaturesExtractor
@@ -43,35 +44,62 @@ LOG_PATH = "./arek_chess/training/logs/"
 
 N_ENVS = 2**3
 TOTAL_TIMESTEPS = int(2**22)
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 1e-4
 N_EPOCHS = 10
-N_STEPS = 2**13  # batch size per env, total batch size is this times N_ENVS
+N_STEPS = 2**14  # batch size per env, total batch size is this times N_ENVS
 BATCH_SIZE = int(N_STEPS * N_ENVS / 2**0)   # mini-batch, recommended to be a factor of (N_STEPS * N_ENVS)
-CLIP_RANGE = 0.3  # 0.1 to 0.3 according to many sources, but I used even 0.9 with beneficial results
+CLIP_RANGE = 0.2  # 0.1 to 0.3 according to many sources, but I used even 0.9 with beneficial results
 # 1 / (1 - GAMMA) = number of steps to finish the episode, for hex env steps are SIZE^2 * SIZE^2 / 2
-GAMMA = 0.99  # 0.996 for 5x5 hex, 0.999 for 7x7, 0.9997 for 9x9 - !!! values when starting on empty board !!!
+GAMMA = 0.999  # 0.996 for 5x5 hex, 0.999 for 7x7, 0.9997 for 9x9 - !!! values when starting on empty board !!!
 GAE_LAMBDA = 0.95
-ENT_COEF = 0.005  # 0 to 0.01 https://medium.com/aureliantactics/ppo-hyperparameters-and-ranges-6fc2d29bccbe
+ENT_COEF = 0.001  # 0 to 0.01 https://medium.com/aureliantactics/ppo-hyperparameters-and-ranges-6fc2d29bccbe
 
 SEARCH_LIMIT = 9
+
+cnn_base = dict(
+    policy="CnnPolicy",
+    optimizer_class=torch.optim.Adam,
+    optimizer_kwargs=dict(weight_decay=1e-4),
+    # optimizer_class=torch.optim.SGD,
+    # optimizer_kwargs=dict(momentum=0.5),
+    features_extractor_class=HexCnnFeaturesExtractor,
+    features_extractor_kwargs=dict(board_size=7, n_filters=(32,), kernel_sizes=(3,)),
+    should_preprocess_obs=False,
+    net_arch=[64, 32],
+)
 
 # POLICY_KWARGS["activation_fn"] = "tanh"
 policy_kwargs_map = {
     "default": dict(net_arch=[dict(pi=[64, 64], vf=[64, 64])]),
     "hex": dict(net_arch=[dict(pi=[128, 128], vf=[128, 128])]),
-    "raw3hex": dict(net_arch=[dict(pi=[9, 9], vf=[9, 9])]),
-    "raw5hex": dict(net_arch=[dict(pi=[25, 25], vf=[25, 25])]),
-    "raw7hex": dict(net_arch=dict(pi=[49, 49], vf=[49, 49])),
-    "raw7hexcnn": dict(
-        policy="CnnPolicy",
-        optimizer_class=torch.optim.SGD,
-        optimizer_kwargs=dict(momentum=0.5),
-        features_extractor_class=HexCnnFeaturesExtractor,
-        features_extractor_kwargs=dict(n_envs=N_ENVS, board_size=7, features_dim=256, kernel_size=3),
-        should_preprocess_obs=False,
-        net_arch=[64, 32],
-    ),
-    "raw7hex-v2": dict(net_arch=dict(pi=[49, 49], vf=[49, 49])),
+    "hex7raw": dict(net_arch=dict(pi=[49, 49], vf=[49, 49])),
+    "hex7cnnA": {
+        **cnn_base,
+        "env_class": Raw7Env,
+    },
+    "hex7cnnB": {
+        **cnn_base,
+        "env_class": Raw7Env,
+        "features_extractor_kwargs": dict(board_size=7, output_filters=(128,), kernel_sizes=(5,)),
+    },
+    "hex7cnnC": {
+        **cnn_base,
+        "env_class": Raw7Env,
+        "features_extractor_kwargs": dict(board_size=7, output_filters=(32, 64), kernel_sizes=(3, 3)),
+    },
+    "hex7cnnD": {
+        **cnn_base,
+        "env_class": Raw7Env,
+        "features_extractor_kwargs": dict(
+            board_size=7, output_filters=(32, 64), kernel_sizes=(3, 3), activation_func_class=torch.nn.Tanh
+        ),
+    },
+    "hex9cnn": {
+        **cnn_base,
+        "env_class": Raw9Env,
+        "net_arch": [64, 64],
+        "features_extractor_kwargs": dict(board_size=9, output_filters=(32,), kernel_sizes=(3,)),
+    },
     "raw9hex": dict(net_arch=[dict(pi=[81, 81], vf=[81, 81])]),
     "tight-fit": dict(net_arch=[dict(pi=[10, 16], vf=[16, 10])]),
     "additional-layer": dict(net_arch=[dict(pi=[10, 24, 16], vf=[16, 10])]),
@@ -86,18 +114,18 @@ class Device(str, Enum):
 
 
 def train(
-    env_name: str = "default", version: int = -1, device: Device = Device.AUTO.value
+    env_name: str = "default", version: int = -1, color: bool = True, device: Device = Device.AUTO.value
 ):
     t0 = perf_counter()
 
+    policy_kwargs = policy_kwargs_map[env_name]
+
     print("loading env...")
-    env = get_env(env_name, Raw7Env, version, device)
+    env = get_env(env_name, policy_kwargs.pop("env_class"), version, color, device)
 
     # Stop training if there is no improvement after more than 3 evaluations
     # stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=3, min_evals=5, verbose=1)
     # eval_callback = EvalCallback(env, eval_freq=512, callback_after_eval=stop_train_callback, verbose=1)
-
-    policy_kwargs = policy_kwargs_map[env_name]
 
     if version >= 0:
         policy_kwargs.pop("policy", "MlpPolicy")
@@ -138,10 +166,6 @@ def train(
         )
 
     print("optimizing for intel...")
-    # optimizer = torch.optim.Adam(model.policy.parameters(), lr=LEARNING_RATE, eps=1e-5)
-    optimizer = policy_kwargs.get("optimizer_class", torch.optim.SGD)(
-        model.policy.parameters(), lr=LEARNING_RATE, **policy_kwargs.get("optimizer_kwargs", {})
-    )
     original_policy = None
     if device == Device.XPU and hasattr(torch, "xpu") and torch.xpu.is_available():
         ...
@@ -155,9 +179,9 @@ def train(
         #     # auto_kernel_selection=True,
         # )
     else:
-        model.policy, model.optimizer = ipex.optimize(
+        model.policy, model.policy.optimizer = ipex.optimize(
             model.policy,
-            optimizer=optimizer,
+            optimizer=model.policy.optimizer,
             dtype=torch.float16,
             weights_prepack=False,
             optimize_lstm=True,
@@ -191,16 +215,18 @@ def train(
     # env.summarize()
     for e in env.envs:
         e.controller.tear_down()
+        e.summarize()
 
 
 def loop_train(
     env_name: str = "default",
     version: int = -1,
-    loops=5,
+    loops: int = 5,
+    color: bool = True,
     device: Device = Device.AUTO.value,
 ):
     print("loading env...")
-    env = get_env(env_name, Raw7x7BinEnv, version, device)
+    env = get_env(env_name, Raw7x7BinEnv, version, color, device)
 
     for _ in range(loops):
         print("setting up model...")
@@ -273,9 +299,9 @@ def loop_train(
         e.controller.tear_down()
 
 
-def get_env(env_name, env_class, version, device) -> gym.Env:
+def get_env(env_name, env_class, version, color, device) -> gym.Env:
     env: Union[DummyVecEnv, SubprocVecEnv] = make_vec_env(
-        lambda: env_class(),
+        lambda: env_class(color=color),
         # monitor_dir=os.path.join(LOG_PATH, env_name, f"v{version}"),
         n_envs=N_ENVS,
         vec_env_cls=DummyVecEnv,
@@ -310,7 +336,7 @@ def plot_results(log_folder, title="Learning Curve"):
     """
 
     x, y = ts2xy(load_results(log_folder), "timesteps")
-    y = moving_average(y, window=250)
+    y = moving_average(y, window=500)
     # Truncate x
     x = x[len(x) - len(y) :]
 
@@ -341,6 +367,9 @@ def get_args():
         "-v", "--version", type=int, default=-1, help="version of the model to use"
     )
     parser.add_argument(
+        "-c", "--color", type=int, default=1, help="which color player should be trained"
+    )
+    parser.add_argument(
         "-d",
         "--device",
         help="cuda, xpu, cpu or auto",
@@ -358,9 +387,9 @@ def find_move():
 if __name__ == "__main__":
     args = get_args()
     if args.train:
-        train(args.env, args.version, args.device)
+        train(args.env, args.version, bool(args.color), args.device)
     elif args.loop_train:
-        loop_train(args.env, args.version, args.loops, args.device)
+        loop_train(args.env, args.version, bool(args.color), args.loops, args.device)
     elif args.plot:
         path = LOG_PATH if not args.env else os.path.join(LOG_PATH, args.env)
         plot_results(path)

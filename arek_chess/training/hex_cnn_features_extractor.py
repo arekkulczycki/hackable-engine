@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from itertools import cycle
+from typing import Optional, Tuple, Type, Union
 
 import gym
 import numpy as np
@@ -13,21 +15,19 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
     Maybe a quantized `Conv2d` could be used, given discrete input, but quantizing seemed to lose input information.
 
     :param observation_space:
-    :param features_dim: Number of features extracted.
-        This corresponds to the number of unit for the last layer.
     """
 
     def __init__(
         self,
         observation_space: gym.Space,
-        n_envs: int,
         board_size: int,
-        features_dim: int,
-        kernel_size: int = 5,
+        output_filters: Tuple[int, ...] = (16,),
+        kernel_sizes: Tuple[int, ...] = (3,),
+        activation_func_class: Optional[Type] = None,
     ) -> None:
+        features_dim = self._get_features_number(board_size, output_filters, kernel_sizes)
+
         super().__init__(observation_space, features_dim)
-        self.n_envs = n_envs
-        self.board_size = board_size
 
         # out = input_size + 2 * padding - dilation * (kernel - 1) - 1
         # @see https://towardsdatascience.com/conv2d-to-finally-understand-what-happens-in-the-forward-pass-1bbaafb0b148
@@ -39,42 +39,45 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         # output_1_size = 1 + board_size  # (input_size - kernel + 1) + 2 * padding
         # output_channels_2 = board_size  # = output_1_size - 1
 
-        # possible_placements_2 = (1 + possible_placements_1 - kernel_size)**2
-        # output = possible_placements_1
+        input_filters = [1, *output_filters[:-1]]
+        layers = (
+            th.nn.Conv2d(
+                i_f, o_f, kernel_size=ks
+            )
+            for i_f, o_f, ks in zip(input_filters, output_filters, kernel_sizes)
+        )
+        if activation_func_class:
+            layers = sum(zip(layers, cycle((activation_func_class(),))), ())
 
-        # self.cnn = th.nn.Sequential(
-        #     th.nn.Conv2d(1, possible_placements_1, kernel_size=board_size, padding=board_size // 2),
-        #     # th.nn.BatchNorm2d(output_channels_1),
-        #     th.nn.ReLU(),
-        #     th.nn.Conv2d(possible_placements_1, output, kernel_size=kernel_size),
-        #     # th.nn.BatchNorm2d(output_channels_2),
-        #     th.nn.ReLU(),
-        #     # th.nn.Conv2d(possible_placements_2, output, kernel_size=kernel_size-2, dilation=1),
-        #     # th.nn.MaxPool2d(kernel_size=kernel_size-2, dilation=1),
-        #     th.nn.ReLU(),
-        #     th.nn.Flatten(),
-        # )
-
-        output = 16
         self.cnn = th.nn.Sequential(
-            th.nn.Conv2d(1, output, kernel_size=3),  # 16 channels, 5x5 matrices
-            th.nn.Tanh(),
-            th.nn.Conv2d(output, output, kernel_size=2),  # 16 channels 4x4 matrices
-            th.nn.Tanh(),
+            *layers,
             th.nn.Flatten(),
         )
 
         # Compute shape by doing one forward pass
         with th.no_grad():
-            n_flatten = self.cnn(th.as_tensor(observation_space.sample().astype(np.float32)[None])).shape[1] * output
+            n_flatten = (
+                self.cnn(
+                    th.as_tensor(observation_space.sample().astype(np.float32)[None])
+                ).shape[1]
+                * output_filters[-1]
+            )
 
         self.linear = th.nn.Sequential(
             th.nn.Linear(n_flatten, features_dim),
             # th.nn.ReLU(),
         )
 
+    @staticmethod
+    def _get_features_number(board_size, output_filters, kernel_sizes):
+        features_dim = (board_size - sum(kernel_sizes) + len(kernel_sizes))**2
+        features_dim *= output_filters[-1]
+        return int(features_dim)
+
     def forward(self, observations: th.Tensor) -> th.Tensor:
-        observations = th.reshape(observations, (observations.size(dim=0), 1, self.board_size, self.board_size))
+        board_size = observations.size(dim=1)
+        observations = th.reshape(
+            observations, (observations.size(dim=0), 1, board_size, board_size)
+        )
         return self.cnn(observations)
         # return self.linear(self.cnn(observations))
-

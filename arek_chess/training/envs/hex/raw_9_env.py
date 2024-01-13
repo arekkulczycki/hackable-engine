@@ -3,7 +3,6 @@ import random
 from collections import defaultdict
 from itertools import cycle
 from random import choice
-from time import sleep
 from typing import Any, Dict, Generator, Optional, SupportsFloat, Tuple
 
 import gym
@@ -33,6 +32,8 @@ openings = cycle(
         "a5",
         "a6",
         "a7",
+        "a8",
+        "a9",
         "g1",
         "g2",
         "g3",
@@ -40,37 +41,16 @@ openings = cycle(
         "g5",
         "g6",
         "g7",
-        "d2",
-        "d6",
-        # "a1c5f5e3d4",
-        # "a1d4c5c4e4e3g2",
-        # "a1e3d4d3b4",
-        # "a1c3e3e4d4",
-        # "a1c3d4e2f2",
-        # "g7e5d4c6b6",
-        # "g7e5c5c4d4",
-        # "g7c5d4d5f4",
-        # "g7d4e3e4c4c5a6",
-        # "g7c5b3e3d4",
-        # # same openings twice for counterbalance against single move opening
-        # "a1c5f5e3d4",
-        # "a1d4c5c4e4e3g2",
-        # "a1e3d4d3b4",
-        # "a1c3e3e4d4",
-        # "a1c3d4e2f2",
-        # "g7e5d4c6b6",
-        # "g7e5c5c4d4",
-        # "g7c5d4d5f4",
-        # "g7d4e3e4c4c5a6",
-        # "g7c5b3e3d4",
+        "g8",
+        "g9",
     ]
 )
 
 
-class Raw7Env(gym.Env):
+class Raw9Env(gym.Env):
     """"""
 
-    BOARD_SIZE: int = 7
+    BOARD_SIZE: int = 9
     REWARDS: Dict[Optional[bool], float32] = {
         None: ZERO,
         True: ONE,
@@ -78,14 +58,13 @@ class Raw7Env(gym.Env):
     }
 
     reward_range = (REWARDS[False], REWARDS[True])
-    observation_space = gym.spaces.Box(-1, 1, shape=(BOARD_SIZE, BOARD_SIZE), dtype=float32)  # should be int8
+    observation_space = gym.spaces.Box(-1, 1, shape=(BOARD_SIZE, BOARD_SIZE), dtype=int8)  # should be int8
     action_space = gym.spaces.Box(ZERO, ONE, shape=(1,), dtype=float32)
 
     winner: Optional[bool]
 
-    def __init__(self, *args, controller: Optional[Controller] = None, color: bool = True):
+    def __init__(self, *args, controller: Optional[Controller] = None):
         super().__init__()
-        self.color = color
 
         if controller:
             self._setup_controller(controller)
@@ -113,20 +92,20 @@ class Raw7Env(gym.Env):
         self.best_move: Optional[Tuple[Move, Tuple[float32]]] = None
         self.current_move: Optional[Move] = None
 
-        ext = "Black" if self.color else "White"
-        self.opp_model = ort.InferenceSession(
-            f"Hex7Cnn{ext}.onnx", providers=["CPUExecutionProvider"]
-        )
+        # self.opp_model = onnx.load("onnx_hex7")
+        # self.opp_model = ort.InferenceSession(
+        #     "onnx_hex7", providers=["CPUExecutionProvider"]
+        # )
 
     def _setup_controller(self, controller: Controller):
         self.controller = controller
         self.controller._setup_board(next(openings), size=self.BOARD_SIZE)
-        # don't boot up if there's no need for engine to run, but to train on multiple processes
+        # don't boot up if theres no need for engine to run, but to train on multiple processes
         # self.controller.boot_up()
 
     def render(self, mode="human", close=False) -> RenderFrame:
         notation = self.controller.board.get_notation()
-        print("render: ", self.winner, notation, self._get_reward(self.winner))
+        print("render: ", notation, self._get_reward(self.winner))
         print("steps done: ", self.steps_done)
         return notation
 
@@ -144,8 +123,6 @@ class Raw7Env(gym.Env):
         self.opening = notation
         self.controller.reset_board(notation, size=self.BOARD_SIZE, init_move_stack=True)
 
-        if self.controller.board.turn != self.color:
-            self._make_self_trained_move(not self.color)
         obs = self.observation_from_board()
 
         # must be after the observation, as it adds a move on the board
@@ -199,8 +176,8 @@ class Raw7Env(gym.Env):
                 # self.controller.make_move(self.prepare_action(opp_action[0]))
                 # self.controller.make_move(DEFAULT_ACTION, search_limit=choice((0, 8)))
 
-                self._make_self_trained_move(not self.color)
-                # self._make_random_move()
+                # self._make_self_trained_move(False)  # opponent playing black
+                self._make_random_move()
 
                 winner = self._get_winner()
 
@@ -266,10 +243,10 @@ class Raw7Env(gym.Env):
     def _get_reward(self, winner, score=None):
         if winner is False:
             # - 1 + ((len(self.controller.board.move_stack) + 1) - 12) / (25 - 12)
-            reward = -1 + max(0, (len(self.controller.board.move_stack) - 12)) / 74
+            reward = -1 + max(0, (len(self.controller.board.move_stack) - 18)) / 126
 
         elif winner is True:
-            reward = 1 - max(0, (len(self.controller.board.move_stack) - 12)) / 74
+            reward = 1 - max(0, (len(self.controller.board.move_stack) - 18)) / 126
 
         else:
             # return ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO
@@ -277,7 +254,9 @@ class Raw7Env(gym.Env):
 
         if self.color is False:
             reward = -reward
-        return reward
+
+        # return ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO
+        return reward  # if score != ZERO and score != ONE else -0.003
 
     def _make_random_move(self):
         moves = list(self.controller.board.legal_moves)
@@ -288,8 +267,8 @@ class Raw7Env(gym.Env):
         best_score = None
         for move in self.controller.board.legal_moves:
             self.controller.board.push(move)
-            obs = self.controller.board.as_matrix().astype(float32).reshape(1, 7, 7)
-            score = self.opp_model.run(None, {"input": obs})
+            obs = self.controller.board.as_matrix().astype(float32).reshape(1, 9, 9)
+            score, value = self.opp_model.run(None, {"input": obs})
             if best_move is None or (color and score > best_score) or (not color and score < best_score):
                 if not best_move or random.choice((True, False)):  # randomize a bit which move is selected
                     best_move = move
@@ -299,7 +278,7 @@ class Raw7Env(gym.Env):
         self.controller.board.push(best_move)
 
     def observation_from_board(self) -> th.Tensor:
-        return th.from_numpy(self.controller.board.as_matrix())
+        return th.from_numpy(self.controller.board.as_matrix())  # .reshape(1, 1, self.BOARD_SIZE, self.BOARD_SIZE))
 
     @staticmethod
     def prepare_action(action):
