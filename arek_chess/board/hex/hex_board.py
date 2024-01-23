@@ -209,6 +209,18 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         self.turn = color
 
+    def set_move_stack_from_notation(self, notation: str) -> None:
+        """"""
+
+        move_str: str = ""
+        for is_letter, value in groupby(notation, str.isalpha):
+            move_str += "".join(value)
+            if not is_letter:
+                mask = Move.mask_from_coord(move_str, self.size)
+                self.move_stack.append(Move(mask, self.size))
+
+                move_str = ""
+
     def get_notation(self) -> str:
         """"""
 

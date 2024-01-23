@@ -19,6 +19,7 @@ from arek_chess.common.constants import Game, Print
 from arek_chess.controller import Controller
 
 LESS_THAN_ZERO: float32 = float32(-0.0001)
+MORE_THAN_ZERO: float32 = float32(0.0001)
 ZERO: float32 = float32(0)
 ONE: float32 = float32(1)
 MINUS_ONE: float32 = float32(-1)
@@ -90,13 +91,6 @@ class Raw9Env(gym.Env):
         self.best_move: Optional[Tuple[Move, Tuple[float32]]] = None
         self.current_move: Optional[Move] = None
 
-        ext = "Black" if self.color else "White"
-        version = "A"
-        path = f"Hex9{ext}{version}.onnx"
-        self.opp_model = ort.InferenceSession(
-            path, providers=["OpenVINOExecutionProvider", "CPUExecutionProvider"]
-        ) if os.path.exists(path) else None
-
     def _setup_controller(self, controller: Controller):
         self.controller = controller
         self.controller._setup_board(next(openings), size=self.BOARD_SIZE)
@@ -119,6 +113,8 @@ class Raw9Env(gym.Env):
 
         self.render()
 
+        self._reset_opp_model()
+
         self.games += 1
         self.scores[self.opening] += 1 if self.winner else -1
 
@@ -138,6 +134,20 @@ class Raw9Env(gym.Env):
         # must precisely be after, because the policy should evaluate the first move candidate (if step_iterative)
         self.obs = self.observation_from_board(self.controller.board)
         return self.obs, {}
+
+    def _reset_opp_model(self):
+        """"""
+
+        ext = "Black" if self.color else "White"
+        version = choice(["A", "B", "C", "D", "E", "F"])
+        path = f"Hex9{ext}{version}.onnx"
+        self.opp_model = (
+            ort.InferenceSession(
+                path, providers=["OpenVINOExecutionProvider", "DNNLExecutionProvider", "CPUExecutionProvider"]
+            )
+            if os.path.exists(path)
+            else None
+        )
 
     def _prepare_child_moves(self) -> None:
         """
@@ -160,7 +170,11 @@ class Raw9Env(gym.Env):
         Action is disregarded because gives a score of an initial position (not of any actual move to be analysed).
         """
 
-        best_move: Tuple[float32, Move, th.Tensor] = (action[0], self.current_move, self.obs)
+        best_move: Tuple[float32, Move, th.Tensor] = (
+            action[0],
+            self.current_move,
+            self.obs,
+        )
         self.controller.board.pop()  # popping the current move which is on the board since reset
 
         for move in self.moves:
@@ -196,7 +210,9 @@ class Raw9Env(gym.Env):
 
         self.controller.board.push(move)
         observation = Raw9Env.observation_from_board(self.controller.board)
-        score = self.policy(observation.reshape(1, self.BOARD_SIZE, self.BOARD_SIZE).to(th.float32))[0][0]
+        score = self.policy(
+            observation.reshape(1, self.BOARD_SIZE, self.BOARD_SIZE).to(th.float32)
+        )[0][0]
         self.controller.board.pop()
         return observation, score
 
@@ -214,7 +230,13 @@ class Raw9Env(gym.Env):
         self.update_best_and_current_move(action)
 
         observation, winner = self.static_step_part(
-            (self.controller.board, self.current_move, self.best_move, self.opp_model, self.color)
+            (
+                self.controller.board,
+                self.current_move,
+                self.best_move,
+                self.opp_model,
+                self.color,
+            )
         )
 
         return self.dynamic_step_part(action, observation, winner)
@@ -229,7 +251,9 @@ class Raw9Env(gym.Env):
             current_score = action[0]
 
             # white searching for the highest scores, black for the lowest scores
-            if (self.color and current_score > best_score) or (not self.color and current_score <= best_score):
+            if (self.color and current_score > best_score) or (
+                not self.color and current_score <= best_score
+            ):
                 self.best_move = (self.current_move, action[0])
 
         try:
@@ -245,7 +269,7 @@ class Raw9Env(gym.Env):
         Making board operations and especially checking if there is a winner is the heaviest part of the step.
         """
 
-        board, current_move, best_move, opp_model, color = arg_tuple
+        board, current_move, best_move, color = arg_tuple
 
         winner = None
         if current_move is not None:
@@ -256,7 +280,7 @@ class Raw9Env(gym.Env):
             board.push(current_move)
         else:
             # all moves evaluated - undo the last and push the best move on the board
-            winner = Raw9Env._make_best_move_and_opp_move(board, best_move, opp_model, color)
+            winner = Raw9Env._make_best_move_and_opp_move(board, best_move, color)
 
         return Raw9Env.observation_from_board(board), winner
 
@@ -276,7 +300,7 @@ class Raw9Env(gym.Env):
         return observation, reward, winner is not None, False, {}
 
     @staticmethod
-    def _make_best_move_and_opp_move(board, best_move, opp_model, color):
+    def _make_best_move_and_opp_move(board, best_move, color):
         """"""
 
         board.pop()
@@ -337,12 +361,24 @@ class Raw9Env(gym.Env):
             reward = 1 - max(0, (len(self.controller.board.move_stack) - 18)) / 126
 
         else:
-            return ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO
+            return (ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO) + self._get_reward_for_whos_closer()
 
         if not self.color:
             reward = -reward
 
         return reward
+
+    def _get_reward_for_whos_closer(self):
+        """"""
+
+        diff = self.controller.board.get_shortest_missing_distance_perf(
+            self.color
+        ) - self.controller.board.get_shortest_missing_distance_perf(not self.color)
+
+        if diff > 1:
+            return MORE_THAN_ZERO
+        else:
+            return ZERO
 
     @staticmethod
     def _make_random_move(board):

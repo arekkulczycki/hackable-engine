@@ -1,7 +1,8 @@
 import os
 from argparse import ArgumentParser
+from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
-from multiprocessing import set_start_method
+from multiprocessing import Pool, get_context, set_start_method
 from time import perf_counter
 from typing import Union
 #
@@ -21,6 +22,7 @@ from stable_baselines3.common.vec_env import (
     VecMonitor,
 )
 
+from arek_chess.training.faster_vec_env import FasterVecEnv
 from arek_chess.training.policies import policy_kwargs_map
 
 # from stable_baselines3.common.callbacks import (
@@ -53,15 +55,23 @@ class Device(str, Enum):
     XPU = "xpu"  # intel Arc GPU
 
 
-def train(
-    env_name: str = "default", version: int = -1, color: bool = True, device: Device = Device.AUTO.value
+def train(env_name: str = "default", version: int = -1, color: bool = True, device: Device = Device.AUTO.value):
+    # with Pool(
+    #     processes=N_ENV_WORKERS
+    # ) as executor:
+    #     return _train(env_name, version, color, device, executor)
+    return _train(env_name, version, color, device)
+
+
+def _train(
+    env_name: str = "default", version: int = -1, color: bool = True, device: Device = Device.AUTO.value, executor=None
 ):
     t0 = perf_counter()
 
     policy_kwargs = policy_kwargs_map[env_name]
 
     print("loading env...")
-    env = get_env(env_name, policy_kwargs.pop("env_class"), version, color)
+    env = get_env(env_name, policy_kwargs.pop("env_class"), version, color, executor)
     # env = get_ray_env(env_name, policy_kwargs.pop("env_class"), version, color)
 
     # Stop training if there is no improvement after more than 3 evaluations
@@ -279,14 +289,14 @@ def loop_train(
             e.controller.tear_down()
 
 
-def get_env(env_name, env_class, version, color) -> gym.Env:
+def get_env(env_name, env_class, version, color, executor = None) -> gym.Env:
     env: Union[DummyVecEnv, SubprocVecEnv] = make_vec_env(
         lambda: env_class(color=color),
         # monitor_dir=os.path.join(LOG_PATH, env_name, f"v{version}"),
         n_envs=N_ENVS,
         vec_env_cls=DummyVecEnv,
-        # vec_env_cls=FasterVecEnv,
-        # vec_env_kwargs={"executor": executor},
+        #vec_env_cls=FasterVecEnv,
+        #vec_env_kwargs={"executor": executor, "n_workers": N_ENV_WORKERS},
     )
     # env.device = device
 
