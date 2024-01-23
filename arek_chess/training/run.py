@@ -344,7 +344,7 @@ def plot_results(log_folder, title="Learning Curve"):
     """
 
     x, y = ts2xy(load_results(log_folder), "timesteps")
-    y = moving_average(y, window=int(N_ENVS * 1.5))
+    y = moving_average(y, window=int(N_ENVS * 1.5))  # average across all parallel results
     # Truncate x
     x = x[len(x) - len(y) :]
 

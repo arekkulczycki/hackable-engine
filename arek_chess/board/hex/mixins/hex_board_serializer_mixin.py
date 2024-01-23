@@ -17,11 +17,31 @@ class HexBoardSerializerMixin:
     def board_bytes_number(self: HexBoardProtocol) -> int:
         """"""
 
+        return self._board_bytes_number(self.size_square)
+
+    @staticmethod
+    def _board_bytes_number(size_square: int) -> int:
+        """"""
+
         long_size: int = 8
         color_sets: int = 2
         turn_bytes: int = 1
 
-        return color_sets * long_size * ((self.size_square - 1) // long_size ** 2 + 1) + turn_bytes
+        return color_sets * long_size * ((size_square - 1) // long_size ** 2 + 1) + turn_bytes
+
+    def __getstate__(self: HexBoardProtocol) -> bytes:
+        # return b"".join((pack("B", self.size), self.get_notation().encode()))
+
+        # state without move stack
+        return b"".join((pack("B", self.size), self.serialize_position()))
+
+    def __setstate__(self, state: bytes) -> None:
+        self.size = unpack("B", state[:1])[0]
+        # self.__init__(state[1:].decode(), size=size, init_move_stack=True)
+
+        # state without move stack
+        self.size_square = self.size ** 2
+        self.deserialize_position(state[1:])
 
     def serialize_position(self: HexBoardProtocol) -> bytes:
         """

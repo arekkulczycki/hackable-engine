@@ -164,7 +164,11 @@ class Raw9Env(gym.Env):
         Action is disregarded because gives a score of an initial position (not of any actual move to be analysed).
         """
 
-        best_move: Tuple[float32, Move, th.Tensor] = (action[0], self.current_move, self.obs)
+        best_move: Tuple[float32, Move, th.Tensor] = (
+            action[0],
+            self.current_move,
+            self.obs,
+        )
         self.controller.board.pop()  # popping the current move which is on the board since reset
 
         for move in self.moves:
@@ -289,7 +293,13 @@ class Raw9Env(gym.Env):
         self.update_best_and_current_move(action)
 
         observation, winner = self.static_step_part(
-            (self.controller.board, self.current_move, self.best_move, self.opp_model, self.color)
+            (
+                self.controller.board,
+                self.current_move,
+                self.best_move,
+                self.opp_model,
+                self.color,
+            )
         )
 
         return self.dynamic_step_part(action, observation, winner)
@@ -304,7 +314,9 @@ class Raw9Env(gym.Env):
             current_score = action[0]
 
             # white searching for the highest scores, black for the lowest scores
-            if (self.color and current_score > best_score) or (not self.color and current_score <= best_score):
+            if (self.color and current_score > best_score) or (
+                not self.color and current_score <= best_score
+            ):
                 self.best_move = (self.current_move, action[0])
 
         try:
@@ -406,6 +418,18 @@ class Raw9Env(gym.Env):
             reward = -reward
 
         return reward
+
+    def _get_reward_for_whos_closer(self):
+        """"""
+
+        diff = self.controller.board.get_shortest_missing_distance_perf(
+            self.color
+        ) - self.controller.board.get_shortest_missing_distance_perf(not self.color)
+
+        if diff > 1:
+            return MORE_THAN_ZERO
+        else:
+            return ZERO
 
     @staticmethod
     def _make_random_move(board):
