@@ -9,7 +9,7 @@ cnn_base = dict(
     policy="CnnPolicy",
     optimizer_class=th.optim.Adam,
     optimizer_kwargs=dict(weight_decay=1e-4),
-    # optimizer_class=torch.optim.SGD,
+    # optimizer_class=th.optim.SGD,
     # optimizer_kwargs=dict(momentum=0.5),
     features_extractor_class=HexCnnFeaturesExtractor,
     features_extractor_kwargs=dict(board_size=7, n_filters=(32,), kernel_sizes=(3,)),

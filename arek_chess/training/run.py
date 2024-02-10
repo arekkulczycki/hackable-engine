@@ -10,6 +10,7 @@ import gym
 import intel_extension_for_pytorch as ipex
 import matplotlib.pyplot as plt
 import numpy as np
+import onnxruntime as ort
 import torch as th
 from RayEnvWrapper import WrapperRayVecEnv
 from stable_baselines3 import PPO
@@ -34,7 +35,7 @@ LOG_PATH = "./arek_chess/training/logs/"
 
 N_ENVS = 2**2
 N_ENV_WORKERS = 4
-TOTAL_TIMESTEPS = int(2**17)
+TOTAL_TIMESTEPS = int(2**24)
 LEARNING_RATE = 1e-4
 N_EPOCHS = 10
 N_STEPS = 2**14  # batch size per env, total batch size is this times N_ENVS
@@ -70,9 +71,20 @@ def _train(
 
     policy_kwargs = policy_kwargs_map[env_name]
 
+    print("loading models...")
+    models = []
+    color_ext = "Black" if color else "White"
+    for model_version in ["A", "B", "C", "D", "E", "F"]:
+        path = f"Hex9{color_ext}{model_version}.onnx"
+        models.append(
+            ort.InferenceSession(
+                path, providers=["OpenVINOExecutionProvider", "DNNLExecutionProvider", "CPUExecutionProvider"]
+            )
+        )
+
     print("loading env...")
-    env = get_env(env_name, policy_kwargs.pop("env_class"), version, color, executor)
-    # env = get_ray_env(env_name, policy_kwargs.pop("env_class"), version, color)
+    # env = get_env(env_name, policy_kwargs.pop("env_class"), version, color, models, executor)
+    env = get_ray_env(env_name, policy_kwargs.pop("env_class"), version, color)
 
     # Stop training if there is no improvement after more than 3 evaluations
     # stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=3, min_evals=5, verbose=1)
@@ -289,12 +301,12 @@ def loop_train(
             e.controller.tear_down()
 
 
-def get_env(env_name, env_class, version, color, executor = None) -> gym.Env:
+def get_env(env_name, env_class, version, color, models, executor = None) -> gym.Env:
     env: Union[DummyVecEnv, SubprocVecEnv] = make_vec_env(
-        lambda: env_class(color=color),
+        lambda: env_class(color=color, models=models),
         # monitor_dir=os.path.join(LOG_PATH, env_name, f"v{version}"),
         n_envs=N_ENVS,
-        vec_env_cls=DummyVecEnv,
+        vec_env_cls=DummyVecEnv
         #vec_env_cls=FasterVecEnv,
         #vec_env_kwargs={"executor": executor, "n_workers": N_ENV_WORKERS},
     )
@@ -307,7 +319,7 @@ def get_env(env_name, env_class, version, color, executor = None) -> gym.Env:
 
 
 def get_ray_env(env_name, env_class, version, color):
-    env = WrapperRayVecEnv(lambda seed: env_class(color=color), N_ENV_WORKERS, N_ENVS)
+    env = WrapperRayVecEnv(lambda seed, models: env_class(color=color, models=models), N_ENV_WORKERS, N_ENVS, {"color": color})
     return VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
 
 

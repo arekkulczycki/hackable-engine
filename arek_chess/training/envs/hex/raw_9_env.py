@@ -4,11 +4,11 @@ import random
 from collections import defaultdict
 from itertools import cycle
 from random import choice
-from typing import Any, Dict, Generator, Optional, SupportsFloat, Tuple
+from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
 
 # import gym
 import gymnasium as gym
-import onnxruntime as ort
+import numpy as np
 import torch as th
 from gymnasium.core import ActType, ObsType, RenderFrame
 from numpy import float32
@@ -19,7 +19,7 @@ from arek_chess.common.constants import Game, Print
 from arek_chess.controller import Controller
 
 LESS_THAN_ZERO: float32 = float32(-0.0001)
-MORE_THAN_ZERO: float32 = float32(0.0001)
+MORE_THAN_ZERO: float32 = float32(0.025)
 ZERO: float32 = float32(0)
 ONE: float32 = float32(1)
 MINUS_ONE: float32 = float32(-1)
@@ -58,10 +58,11 @@ class Raw9Env(gym.Env):
     policy: Optional[ActorCriticPolicy] = None
 
     def __init__(
-        self, *args, controller: Optional[Controller] = None, color: bool = True
+        self, *args, controller: Optional[Controller] = None, color: bool = True, models: List = []
     ):
         super().__init__()
         self.color = color
+        self.models = models
 
         if controller:
             self._setup_controller(controller)
@@ -76,6 +77,7 @@ class Raw9Env(gym.Env):
                     timeout=3,
                     game=Game.HEX,
                     board_size=self.BOARD_SIZE,
+                    no_workers=True,
                 )
             )
         # self.obs = self.observation_from_board(self.controller.board)
@@ -90,6 +92,7 @@ class Raw9Env(gym.Env):
         self.moves: Generator[Move, None, None] = HexBoard.generate_nothing()
         self.best_move: Optional[Tuple[Move, Tuple[float32]]] = None
         self.current_move: Optional[Move] = None
+        self.opp_model = None
 
     def _setup_controller(self, controller: Controller):
         self.controller = controller
@@ -99,6 +102,7 @@ class Raw9Env(gym.Env):
 
     def render(self, mode="human", close=False) -> RenderFrame:
         notation = self.controller.board.get_notation()
+        # print("rendering...")
         print("render: ", self.winner, notation, self._get_reward(self.winner))
         print("steps done: ", self.steps_done)
         return notation
@@ -113,10 +117,11 @@ class Raw9Env(gym.Env):
 
         self.render()
 
-        self._reset_opp_model()
+        self.opp_model = choice(self.models)
 
-        self.games += 1
-        self.scores[self.opening] += 1 if self.winner else -1
+        if self.opening:
+            self.games += 1
+            self.scores[self.opening] += 1 if self.winner else -1
 
         notation = next(openings)
         self.opening = notation
@@ -134,20 +139,6 @@ class Raw9Env(gym.Env):
         # must precisely be after, because the policy should evaluate the first move candidate (if step_iterative)
         self.obs = self.observation_from_board(self.controller.board)
         return self.obs, {}
-
-    def _reset_opp_model(self):
-        """"""
-
-        ext = "Black" if self.color else "White"
-        version = choice(["A", "B", "C", "D", "E", "F"])
-        path = f"Hex9{ext}{version}.onnx"
-        self.opp_model = (
-            ort.InferenceSession(
-                path, providers=["OpenVINOExecutionProvider", "DNNLExecutionProvider", "CPUExecutionProvider"]
-            )
-            if os.path.exists(path)
-            else None
-        )
 
     def _prepare_child_moves(self) -> None:
         """
@@ -234,7 +225,6 @@ class Raw9Env(gym.Env):
                 self.controller.board,
                 self.current_move,
                 self.best_move,
-                self.opp_model,
                 self.color,
             )
         )
@@ -294,7 +284,7 @@ class Raw9Env(gym.Env):
         if self.current_move is None and winner is None:
             self._prepare_child_moves()
 
-        reward = self._get_reward(winner, action[0])
+        reward = self._get_reward(winner, action[0], self.current_move is None)
 
         # return self.obs, reward, winner is not None, False, {}
         return observation, reward, winner is not None, False, {}
@@ -324,8 +314,8 @@ class Raw9Env(gym.Env):
     ) -> Tuple[ObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
         """"""
 
-        # return self._step_iterative(action)
-        return self._step_aggregated(action)
+        return self._step_iterative(action)
+        # return self._step_aggregated(action)
 
         # self.controller.board.push(self.get_move_from_action())
         #
@@ -353,15 +343,18 @@ class Raw9Env(gym.Env):
 
         return self._step_iterative(action)
 
-    def _get_reward(self, winner: Optional[bool], score: Optional[float32] = None):
+    def _get_reward(self, winner: Optional[bool], score: Optional[float32] = None, bonus_eligible: bool = False):
+        n_moves = len(self.controller.board.move_stack)
         if winner is False:
-            reward = -1 + max(0, (len(self.controller.board.move_stack) - 18)) / 126
+            reward = -1 + max(0, (n_moves - 18)) / 126
 
         elif winner is True:
-            reward = 1 - max(0, (len(self.controller.board.move_stack) - 18)) / 126
+            reward = 1 - max(0, (n_moves - 18)) / 126
 
-        else:
+        elif bonus_eligible:
             return (ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO) + self._get_reward_for_whos_closer()
+        else:
+            return ZERO if score != ZERO and score != ONE else LESS_THAN_ZERO
 
         if not self.color:
             reward = -reward
@@ -371,12 +364,16 @@ class Raw9Env(gym.Env):
     def _get_reward_for_whos_closer(self):
         """"""
 
-        diff = self.controller.board.get_shortest_missing_distance_perf(
-            self.color
-        ) - self.controller.board.get_shortest_missing_distance_perf(not self.color)
+        try:
+            diff = self.controller.board.get_shortest_missing_distance_perf(
+                self.color
+            ) - self.controller.board.get_shortest_missing_distance_perf(not self.color)
+        except:
+            print(self.current_move, self.winner)
+            raise
 
         if diff > 1:
-            return MORE_THAN_ZERO
+            return MORE_THAN_ZERO * 10
         else:
             return ZERO
 
@@ -387,24 +384,26 @@ class Raw9Env(gym.Env):
 
     @staticmethod
     def _make_self_trained_move(board, opp_model, color: bool) -> None:
+        moves = []
+        obss = []
+        for move in board.legal_moves:
+            moves.append(move)
+            board.push(move)
+            obss.append(board.as_matrix().astype(float32).reshape(1, 9, 9))
+            board.pop()
+
+        scores = opp_model.run(None, {"inputs": np.stack(obss, axis=0)})[0][0]
+
         best_move: Optional[Move] = None
         best_score = None
-        # TODO: stack observations and run batch session
-        for move in board.legal_moves:
-            board.push(move)
-            obs = board.as_matrix().astype(float32).reshape(1, 9, 9)
-            score = opp_model.run(None, {"input": obs})[0][0][0]
+        for move, score in zip(moves, scores):
             if (
                 best_move is None
                 or (color and score > best_score)
                 or (not color and score <= best_score)
             ):
-                if not best_move or random.choice(
-                    (True, False)
-                ):  # randomize a bit which move is selected
-                    best_move = move
-                    best_score = score
-            board.pop()
+                best_move = move
+                best_score = score
 
         board.push(best_move)
 

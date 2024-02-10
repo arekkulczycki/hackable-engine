@@ -56,6 +56,7 @@ class Controller:
         timeout: Optional[float] = None,
         game: Game = Game.CHESS,
         board_size: Optional[int] = None,
+        no_workers: bool = False,
     ):
         """"""
 
@@ -88,6 +89,10 @@ class Controller:
         self.timeout = timeout
 
         self.memory_manager = MemoryManager()
+
+        self.no_workers = no_workers
+        if no_workers:
+            return
 
         self.create_queues()
         self.status_lock = Lock()
@@ -132,7 +137,8 @@ class Controller:
 
         self._setup_board(position, **kwargs)
 
-        self.reset()
+        if not self.no_workers:
+            self.reset()
 
     def _setup_board(self, position: Optional[str] = None, **kwargs) -> None:
         """
