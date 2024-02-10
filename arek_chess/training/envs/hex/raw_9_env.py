@@ -4,7 +4,7 @@ import random
 from collections import defaultdict
 from itertools import cycle
 from random import choice
-from typing import Any, Dict, Generator, Optional, SupportsFloat, Tuple, List
+from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
 
 # import gym
 import gymnasium as gym
@@ -58,10 +58,11 @@ class Raw9Env(gym.Env):
     policy: Optional[ActorCriticPolicy] = None
 
     def __init__(
-        self, *args, controller: Optional[Controller] = None, color: bool = True, models = []
+        self, *args, controller: Optional[Controller] = None, color: bool = True, models: List = []
     ):
         super().__init__()
         self.color = color
+        self.models = models
 
         if controller:
             self._setup_controller(controller)
@@ -92,8 +93,6 @@ class Raw9Env(gym.Env):
         self.best_move: Optional[Tuple[Move, Tuple[float32]]] = None
         self.current_move: Optional[Move] = None
 
-        self.models = models
-
     def _setup_controller(self, controller: Controller):
         self.controller = controller
         self.controller._setup_board(next(openings), size=self.BOARD_SIZE)
@@ -118,8 +117,8 @@ class Raw9Env(gym.Env):
 
         self.opp_model = choice(self.models)
 
-        self.games += 1
         if self.opening:
+            self.games += 1
             self.scores[self.opening] += 1 if self.winner else -1
 
         notation = next(openings)
@@ -447,6 +446,14 @@ class Raw9Env(gym.Env):
             board.pop()
 
         scores = np.asarray(opp_model.run(None, {"inputs": np.stack(obss, axis=0)})).flatten()
+
+        # for move in board.legal_moves:
+        #     moves.append(move)
+        #     board.push(move)
+        #     obss.append(board.as_matrix().astype(float32).reshape(1, 9, 9))
+        #     board.pop()
+        #
+        # scores = opp_model.run(None, {"inputs": np.stack(obss, axis=0)})[0][0]
 
         best_move: Optional[Move] = None
         best_score = None

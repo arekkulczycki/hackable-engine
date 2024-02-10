@@ -111,6 +111,9 @@ def train(
             tensorboard_log=None,  # os.path.join(LOG_PATH, f"{env_name}_tensorboard")
         )
 
+    # model.policy.optimizer.defaults["momentum"] = SGD_MOMENTUM
+    model.policy.optimizer.defaults["weight_decay"] = ADAMW_WEIGHT_DECAY
+
     print("optimizing for intel...")
     original_policy = None
     if device == Device.XPU and hasattr(th, "xpu") and th.xpu.is_available():
@@ -124,9 +127,6 @@ def train(
 #            # fuse_update_step=True,
 #            # auto_kernel_selection=True,
 #        )
-
-        # model.policy.optimizer.defaults["momentum"] = SGD_MOMENTUM
-        model.policy.optimizer.defaults["weight_decay"] = ADAMW_WEIGHT_DECAY
     else:
         model.policy, model.policy.optimizer = ipex.optimize(
             model.policy,
