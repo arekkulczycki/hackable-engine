@@ -11,6 +11,12 @@ from arek_chess.criteria.selection.fast_selector import FastSelector
 # from arek_chess.criteria.selection.exp_probability_selector import ExpProbabilitySelector
 from arek_chess.game_tree.node import Node
 
+# level_to_block: cycle = cycle([3, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0, 0])
+# level_to_block: cycle = cycle([4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1, 0])
+# level_to_block: cycle = cycle([7, 6, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0])
+# level_to_block: cycle = cycle([12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1])
+level_to_block: cycle = cycle([12])
+
 
 class Traverser:
     """
@@ -59,14 +65,9 @@ class Traverser:
         #  define interesting nodes and then cache them
 
         best_node: Node = self.root
-        """The node to be returned if has no children."""
-
         children: List[Node]
-        """Children of the best node."""
 
         while True:
-            # if the node is `only_forcing` it means all forcing children were analysed, but is relevant to check
-            #  its non-forcing children
             if (
                 best_node.only_forcing and not best_node.being_processed
             ):  # actually is not leaf, but has remaining leafs to be evaluated
@@ -75,21 +76,34 @@ class Traverser:
 
             children = best_node.children
             if not children:  # is leaf, then return
-                return self._for_no_children(best_node)
+                if best_node is self.root:
+                    # haven't received child nodes evaluations yet
+                    return None
 
+                if abs(best_node.score) == INF:
+                    # the best path leads to checkmate then don't select anything more
+                    return None
+
+                # is a leaf that hasn't yet been fully looked at (could have recaptures looked at)
+                best_node.being_processed = (
+                    True  # has to be set now to avoid duplicate selection
+                )
+                return best_node
+
+            level = best_node.level
             # free_children = [
             #     node
             #     for node in children
             #     if not node.being_processed and node.level > level  # preventing inf loop over transpositions
             # ]
-            some_children_being_processed = False
+            are_processed = False
             children_to_look_at = []
             for child in children:
-                # comparing level to prevent an infinite loop over transpositions, child level can only go up
-                if not child.being_processed and child.level > best_node.level:
+                # comparing level to prevent an infinite loop over transpositions
+                if not child.being_processed and child.level > level:
                     children_to_look_at.append(child)
                 elif child.being_processed:
-                    some_children_being_processed = True
+                    are_processed = True
 
             if children_to_look_at:
                 best_node = self.select_promising_node(
@@ -100,26 +114,11 @@ class Traverser:
                     return None
 
                 # all children being processed, go up the tree again
-                if some_children_being_processed:
+                if are_processed:
                     best_node.being_processed = True  # marking to not enter this branch, will be unmarked by children
                 best_node = best_node.parent
 
                 continue
-
-    def _for_no_children(self, best_node: Node) -> Optional[Node]:
-        """"""
-
-        if best_node is self.root:
-            # haven't received child nodes evaluations yet
-            return None
-
-        if abs(best_node.score) == INF:
-            # the best path leads to checkmate then don't select anything more
-            return None
-
-        # is a leaf that hasn't yet been fully looked at (could have recaptures looked at)
-        best_node.being_processed = True
-        return best_node
 
     def select_promising_node(self, nodes: List[Node], color: bool) -> Node:
         """

@@ -113,7 +113,6 @@ class HexBoardTestCase(TestCase):
             board.is_black_win()
             t += perf_counter() - t0
 
-        print(t)
         assert t < 0.05  # can check the winner more than 20k times per second even with full board
 
     @parameterized.expand(
@@ -199,6 +198,30 @@ class HexBoardTestCase(TestCase):
 
         assert board.get_shortest_missing_distance(True) == missing_distance_white
         assert board.get_shortest_missing_distance(False) == missing_distance_black
+
+        assert board.get_shortest_missing_distance_perf(True) == missing_distance_white
+        assert board.get_shortest_missing_distance_perf(False) == missing_distance_black
+
+    @parameterized.expand(
+        [
+            ["g1a6g2b6g3c6h3d6i3", 9, 5, 6],
+            ["g1a6g2b6g3c6h3d6i3e6a8f6b8g6b9", 9, 2, 6],
+        ]
+    )
+    def test_get_shortest_missing_distance_no_problems(self, notation, size, missing_distance_white, missing_distance_black) -> None:
+        board = HexBoard(notation, size=size)
+
+        assert board.get_shortest_missing_distance(True) == missing_distance_white
+        assert board.get_shortest_missing_distance(False) == missing_distance_black
+
+    @parameterized.expand(
+        [
+            ["g1a6g2b6g3c6h3d6i3", 9, 8, 7],
+            ["g1a6g2b6g3c6h3d6i3e6a8f6b8g6b9", 9, 9, 9],
+        ]
+    )
+    def test_get_shortest_missing_distance_perf_problems(self, notation, size, missing_distance_white, missing_distance_black) -> None:
+        board = HexBoard(notation, size=size)
 
         assert board.get_shortest_missing_distance_perf(True) == missing_distance_white
         assert board.get_shortest_missing_distance_perf(False) == missing_distance_black

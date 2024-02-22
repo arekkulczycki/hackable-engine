@@ -26,6 +26,7 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         strides: Tuple[int, ...] = (1,),
         activation_func_class: Optional[Type] = None,
     ) -> None:
+        # strides = tuple(stride for _ in kernel_sizes)
         features_dim = self._get_features_number(board_size, output_filters, kernel_sizes, strides)
 
         super().__init__(observation_space, features_dim)
@@ -74,6 +75,7 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         # TODO: incorrect with regard to `strides`
         features_dim = (int((board_size - sum(kernel_sizes)) / strides[-1]) + len(kernel_sizes))**2
         features_dim *= output_filters[-1]
+        # print("FEATURES: ", features_dim)
         return int(features_dim)
 
     def forward(self, observations: th.Tensor) -> th.Tensor:

@@ -56,7 +56,6 @@ class Controller:
         timeout: Optional[float] = None,
         game: Game = Game.CHESS,
         board_size: Optional[int] = None,
-        no_workers: bool = False,
     ):
         """"""
 
@@ -78,6 +77,10 @@ class Controller:
             EvalItem.board_bytes_number = self.board.board_bytes_number
             SelectorItem.board_bytes_number = self.board.board_bytes_number
 
+        self.is_training_run = is_training_run
+        if is_training_run:
+            return
+
         if printing:
             constants.PRINTING = printing
         if tree_params:
@@ -89,10 +92,6 @@ class Controller:
         self.timeout = timeout
 
         self.memory_manager = MemoryManager()
-
-        self.no_workers = no_workers
-        if no_workers:
-            return
 
         self.create_queues()
         self.status_lock = Lock()
@@ -137,7 +136,7 @@ class Controller:
 
         self._setup_board(position, **kwargs)
 
-        if not self.no_workers:
+        if not self.is_training_run:
             self.reset()
 
     def _setup_board(self, position: Optional[str] = None, **kwargs) -> None:
@@ -595,7 +594,8 @@ class Controller:
 
         print("closing engine")
 
-        self.stop_child_processes()
+        if not self.is_training_run:
+            self.stop_child_processes()
 
         self.release_memory()
 

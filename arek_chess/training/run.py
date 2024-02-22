@@ -1,11 +1,10 @@
 import os
 from argparse import ArgumentParser
-from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
-from multiprocessing import Pool, get_context, set_start_method
+from multiprocessing import set_start_method
 from time import perf_counter
 from typing import Union
-#
+import multiprocessing as mp
 import gym
 import intel_extension_for_pytorch as ipex
 import matplotlib.pyplot as plt
@@ -14,6 +13,7 @@ import onnxruntime as ort
 import torch as th
 from RayEnvWrapper import WrapperRayVecEnv
 from stable_baselines3 import PPO
+#from sbx import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import load_results
 from stable_baselines3.common.results_plotter import ts2xy
@@ -23,7 +23,6 @@ from stable_baselines3.common.vec_env import (
     VecMonitor,
 )
 
-from arek_chess.training.faster_vec_env import FasterVecEnv
 from arek_chess.training.policies import policy_kwargs_map
 
 # from stable_baselines3.common.callbacks import (
@@ -33,18 +32,20 @@ from arek_chess.training.policies import policy_kwargs_map
 
 LOG_PATH = "./arek_chess/training/logs/"
 
-N_ENVS = 2**2
-N_ENV_WORKERS = 4
-TOTAL_TIMESTEPS = int(2**24)
-LEARNING_RATE = 1e-4
+N_ENVS = 2**12
+N_ENV_WORKERS = 10
+TOTAL_TIMESTEPS = int(2**27)
+LEARNING_RATE = 1e-2  # lambda p: max(1e-2 * p**3, 1e-6)
 N_EPOCHS = 10
-N_STEPS = 2**14  # batch size per env, total batch size is this times N_ENVS
-BATCH_SIZE = int(N_STEPS * N_ENVS / 2**0)   # mini-batch, recommended to be a factor of (N_STEPS * N_ENVS)
+N_STEPS = 2**7  # batch size per env, total batch size is this times N_ENVS
+BATCH_SIZE = int(N_STEPS * N_ENVS / 2**3)   # mini-batch, recommended to be a factor of (N_STEPS * N_ENVS)
 CLIP_RANGE = 0.2  # 0.1 to 0.3 according to many sources, but I used even 0.9 with beneficial results
 # 1 / (1 - GAMMA) = number of steps to finish the episode, for hex env steps are SIZE^2 * SIZE^2 / 2
-GAMMA = 0.999  # 0.996 for 5x5 hex, 0.999 for 7x7, 0.9997 for 9x9 - !!! values when starting on empty board !!!
+GAMMA = 0.9995  # 0.996 for 5x5 hex, 0.999 for 7x7, 0.9997 for 9x9 - !!! values when starting on empty board !!!
 GAE_LAMBDA = 0.95  # 0.95 to 0.99, controls the trade-off between bias and variance
-ENT_COEF = 0.001  # 0 to 0.01 https://medium.com/aureliantactics/ppo-hyperparameters-and-ranges-6fc2d29bccbe
+ENT_COEF = 0.3  # 0 to 0.01 https://medium.com/aureliantactics/ppo-hyperparameters-and-ranges-6fc2d29bccbe
+SGD_MOMENTUM = 0.5
+ADAMW_WEIGHT_DECAY = 1e-2
 
 SEARCH_LIMIT = 9
 
@@ -56,34 +57,15 @@ class Device(str, Enum):
     XPU = "xpu"  # intel Arc GPU
 
 
-def train(env_name: str = "default", version: int = -1, color: bool = True, device: Device = Device.AUTO.value):
-    # with Pool(
-    #     processes=N_ENV_WORKERS
-    # ) as executor:
-    #     return _train(env_name, version, color, device, executor)
-    return _train(env_name, version, color, device)
-
-
-def _train(
-    env_name: str = "default", version: int = -1, color: bool = True, device: Device = Device.AUTO.value, executor=None
+def train(
+    env_name: str = "default", version: int = -1, color: bool = True, device: Device = Device.AUTO.value
 ):
     t0 = perf_counter()
 
     policy_kwargs = policy_kwargs_map[env_name]
 
-    print("loading models...")
-    models = []
-    color_ext = "Black" if color else "White"
-    for model_version in ["A", "B", "C", "D", "E", "F"]:
-        path = f"Hex9{color_ext}{model_version}.onnx"
-        models.append(
-            ort.InferenceSession(
-                path, providers=["OpenVINOExecutionProvider", "DNNLExecutionProvider", "CPUExecutionProvider"]
-            )
-        )
-
     print("loading env...")
-    # env = get_env(env_name, policy_kwargs.pop("env_class"), version, color, models, executor)
+    # env = get_env(env_name, policy_kwargs.pop("env_class"), version, color)
     env = get_ray_env(env_name, policy_kwargs.pop("env_class"), version, color)
 
     # Stop training if there is no improvement after more than 3 evaluations
@@ -123,6 +105,7 @@ def _train(
             gamma=GAMMA,
             gae_lambda=GAE_LAMBDA,
             ent_coef=ENT_COEF,
+            use_sde=True,
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
             tensorboard_log=None,  # os.path.join(LOG_PATH, f"{env_name}_tensorboard")
@@ -132,15 +115,18 @@ def _train(
     original_policy = None
     if device == Device.XPU and hasattr(th, "xpu") and th.xpu.is_available():
         ...
-        model.policy, model.policy.optimizer = th.xpu.optimize(
-            model.policy,
-            optimizer=model.policy.optimizer,
-            dtype=th.bfloat16,
-            weights_prepack=False,
-            optimize_lstm=True,
-            # fuse_update_step=True,
-            # auto_kernel_selection=True,
-        )
+#        model.policy, model.policy.optimizer = th.xpu.optimize(
+#            model.policy,
+#            optimizer=model.policy.optimizer,
+#            dtype=th.bfloat16,
+#            weights_prepack=False,
+#            optimize_lstm=True,
+#            # fuse_update_step=True,
+#            # auto_kernel_selection=True,
+#        )
+
+        # model.policy.optimizer.defaults["momentum"] = SGD_MOMENTUM
+        model.policy.optimizer.defaults["weight_decay"] = ADAMW_WEIGHT_DECAY
     else:
         model.policy, model.policy.optimizer = ipex.optimize(
             model.policy,
@@ -195,6 +181,7 @@ def loop_train(
 
     print("loading env...")
     env = get_env(env_name, env_class, version, color)
+#    env = get_ray_env(env_name, env_class, version, color)
 
     for _ in range(loops):
         print("setting up model...")
@@ -241,15 +228,15 @@ def loop_train(
         original_policy = None
         if device == Device.XPU and hasattr(th, "xpu") and th.xpu.is_available():
             ...
-            model.policy, model.policy.optimizer = th.xpu.optimize(
-                model.policy,
-                optimizer=model.policy.optimizer,
-                dtype=th.bfloat16,
-                weights_prepack=False,
-                optimize_lstm=True,
-                # fuse_update_step=True,
-                # auto_kernel_selection=True,
-            )
+#            model.policy, model.policy.optimizer = th.xpu.optimize(
+#                model.policy,
+#                optimizer=model.policy.optimizer,
+#                dtype=th.bfloat16,
+#                weights_prepack=False,
+#                optimize_lstm=True,
+#                # fuse_update_step=True,
+#                # auto_kernel_selection=True,
+#            )
         else:
             model.policy, model.policy.optimizer = ipex.optimize(
                 model.policy,
@@ -281,6 +268,7 @@ def loop_train(
                 for e in env.envs:
                     e.controller.tear_down()
             env = get_env(env_name, env_class, version, color)
+#            env = get_ray_env(env_name, env_class, version, color)
         else:
             # on success increment the version and keep learning
             version += 1
@@ -290,6 +278,7 @@ def loop_train(
                 for e in env.envs:
                     e.controller.tear_down()
             env = get_env(env_name, env_class, version, color)
+#            env = get_ray_env(env_name, env_class, version, color)
         finally:
             if original_policy:
                 model.policy = original_policy  # the state_dict is maintained, therefore saving the trained network
@@ -301,14 +290,24 @@ def loop_train(
             e.controller.tear_down()
 
 
-def get_env(env_name, env_class, version, color, models, executor = None) -> gym.Env:
+def get_env(env_name, env_class, version, color) -> gym.Env:
+    print("loading models...")
+    models = []
+    ext = "Black" if color else "White"
+    model_versions = ["A", "B", "C", "D", "E", "F"]
+    for model_version in model_versions:
+        path = f"Hex9{ext}{model_version}.onnx"
+        models.append(ort.InferenceSession(
+            path, providers=["OpenVINOExecutionProvider"]
+        ) if os.path.exists(path) else None)
+
     env: Union[DummyVecEnv, SubprocVecEnv] = make_vec_env(
         lambda: env_class(color=color, models=models),
         # monitor_dir=os.path.join(LOG_PATH, env_name, f"v{version}"),
         n_envs=N_ENVS,
-        vec_env_cls=DummyVecEnv
-        #vec_env_cls=FasterVecEnv,
-        #vec_env_kwargs={"executor": executor, "n_workers": N_ENV_WORKERS},
+        vec_env_cls=DummyVecEnv,
+        # vec_env_cls=FasterVecEnv,
+        # vec_env_kwargs={"executor": executor},
     )
     # env.device = device
 
@@ -319,7 +318,8 @@ def get_env(env_name, env_class, version, color, models, executor = None) -> gym
 
 
 def get_ray_env(env_name, env_class, version, color):
-    env = WrapperRayVecEnv(lambda seed, models: env_class(color=color, models=models), N_ENV_WORKERS, N_ENVS, {"color": color})
+    mp.set_start_method('fork')
+    env = WrapperRayVecEnv(lambda seed, models=[]: env_class(color=color, models=models), N_ENV_WORKERS, int(N_ENVS // N_ENV_WORKERS), color)
     return VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
 
 
@@ -344,7 +344,7 @@ def plot_results(log_folder, title="Learning Curve"):
     """
 
     x, y = ts2xy(load_results(log_folder), "timesteps")
-    y = moving_average(y, window=500)
+    y = moving_average(y, window=int(N_ENVS * 1.5))
     # Truncate x
     x = x[len(x) - len(y) :]
 
