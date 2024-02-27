@@ -16,7 +16,7 @@ Project tested with python 3.8 to 3.11 in debian and arch OS.
 
 ##### For training your model
 
-`pip install -r hackable-engine/training/requirements.txt`
+`pip install -r hackable_engine/training/requirements.txt`
 
 This will take more effort though, as it depends on your hardware. 
 
@@ -25,23 +25,23 @@ For instance as an Intel ArcA770 user I have intel torch extensions. For Nvidia 
 ### Basic Usage - run engine to find the best move in a position
 
 Chess:
-`PYTHONPATH=. python arek_chess -G=chess -p=1 -l=9 -m -n="rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"`
+`PYTHONPATH=. python hackable_engine -G=chess -p=1 -l=9 -m -n="rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"`
 
 Hex size 13:
-`PYTHONPATH=. python arek_chess -G=hex -S=13 -p=1 -l=9 -m -n=a4`
+`PYTHONPATH=. python hackable_engine -G=hex -S=13 -p=1 -l=9 -m -n=a4`
 
 ### Advanced Usage - implement your own criteria
 
 ### Training
 
 To train a model
-`PYTHONPATH=. python arek_chess/training/run.py -t -e=<ENVIRONMENT NAME>`
+`PYTHONPATH=. python hackable_engine/training/run.py -t -e=<ENVIRONMENT NAME>`
 
 To retrain a model
-`PYTHONPATH=. python arek_chess/training/run.py -t -e=<ENVIRONMENT NAME> -v=<VERSION TO LOAD>`
+`PYTHONPATH=. python hackable_engine/training/run.py -t -e=<ENVIRONMENT NAME> -v=<VERSION TO LOAD>`
 
 To plot the training rewards over the training period
-`PYTHONPATH=. python arek_chess/training/run.py -pl -e=<ENVIRONMENT NAME>`
+`PYTHONPATH=. python hackable_engine/training/run.py -pl -e=<ENVIRONMENT NAME>`
 
 To view the tensorboard log if used
 `tensorboard --logdir <PATH TO THE LOG DIRECTORY>`

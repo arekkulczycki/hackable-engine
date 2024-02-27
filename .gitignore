@@ -1,6 +1,6 @@
 .idea
 .pyre
-arek_chess/board/cpp_board/
+hackable_engine/board/cpp_board/
 **/node_modules
 
 hex9*
