@@ -1,26 +1,36 @@
-# The most hackable chess engine
+# The most hackable game engine
 
-The purpose of this project is to provide a chess engine that works in a 
-simple, readable and transparent way and most importantly opens up to the users the means to 
+The purpose of this project is to provide a game engine that works in a 
+simple, readable and transparent way and most importantly opens up to a user means to 
 implement and test their own ideas.
+
+Implemented games: Chess, Hex.
 
 ### Installation
 
-Project developed with python3.8 in debian OS.
+Project tested with python 3.8 to 3.11 in debian and arch OS.
 
-Make sure you have the ./linux_requirements.txt fulfilled.
+##### For running the engine
 
-Run  
-`pip install -r requirements.txt`  
-in your python3.8 virtual environment.
+`pip install -r requirements.txt`
 
-Moreover in the requirements.txt there is a commented instruction how to install larch-pickle, do it as well.
+##### For training your model
 
-### Basic Usage (finding the best move)
+`pip install -r hackable-engine/training/requirements.txt`
 
-`PYTHONPATH=. python arek_chess -p=1 -l=9 -m -f="rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"`
+This will take more effort though, as it depends on your hardware. 
 
-### Advanced Usage (implement own criteria)
+For instance as an Intel ArcA770 user I have intel torch extensions. For Nvidia GPU you may want CUDA-related stuff, etc.
+
+### Basic Usage - run engine to find the best move in a position
+
+Chess:
+`PYTHONPATH=. python arek_chess -G=chess -p=1 -l=9 -m -n="rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"`
+
+Hex size 13:
+`PYTHONPATH=. python arek_chess -G=hex -S=13 -p=1 -l=9 -m -n=a4`
+
+### Advanced Usage - implement your own criteria
 
 ### Training
 
@@ -38,7 +48,9 @@ To view the tensorboard log if used
 
 ### Development directions
 
-GUI with the board and sliders for criteria and move suggestions by the engine with given criteria
+- Build a WASM version to run a Hex bot in a website
+- GUI with the board and sliders for criteria, option to check move suggestions by the engine with given criteria
+- Make a lichess bot
 
 ##### Board handling speed up
 
@@ -64,14 +76,4 @@ In case of failures you will have memory leaks and later get tons of warnings or
 ### Move search/choice criteria
 
 
-### Next steps in order to obtain performance boost
-
-
 ### Additional notes
-
-
-### Key cool libs used:  
-* python-chess  LINK 
-* faster-fifo  LINK
-* larch-pickle  LINK
-* mypyc  LINK

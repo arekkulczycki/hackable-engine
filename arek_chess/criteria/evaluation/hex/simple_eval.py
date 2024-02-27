@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from typing import Optional
 
-from EntropyHub import DispEn2D
 from numpy import asarray, float32, isclose
 
 from arek_chess.board.hex.hex_board import HexBoard
@@ -14,17 +13,20 @@ class SimpleEval(BaseEval[HexBoard]):
     """"""
 
     ACTION_SIZE: int = 8
-    DEFAULT_ACTION: ActionType = asarray((
-        float32(1.0),  # connectedness
-        float32(1.0),  # wingspan
-        float32(5.0),  # balance
-        float32(1.0),  # central_balance
-        # float32(15.0),  # missing distance - the value should roughly be equal to turn bonus
-        float32(5.0),  # two-dimensional entropy
-        float32(15.0),  # turn bonus
-        float32(0.0),  # local pattern eval
-        float32(0.0),  # local pattern confidence
-    ), dtype=float32)
+    DEFAULT_ACTION: ActionType = asarray(
+        (
+            float32(1.0),  # connectedness
+            float32(1.0),  # spacing
+            float32(5.0),  # balance
+            float32(1.0),  # central_balance
+            float32(15.0),  # missing distance - the value should roughly be equal to turn bonus
+            # float32(5.0),  # two-dimensional entropy
+            float32(15.0),  # turn bonus
+            float32(0.0),  # local pattern eval
+            float32(0.0),  # local pattern confidence
+        ),
+        dtype=float32,
+    )
 
     def get_score(
         self, board: HexBoard, is_check: bool, action: Optional[ActionType] = None
@@ -47,39 +49,39 @@ class SimpleEval(BaseEval[HexBoard]):
             (
                 connectedness_white,
                 connectedness_black,
-                wingspan_white,
-                wingspan_black,
-            ) = board.get_connectedness_and_wingspan()
+                spacing_white,
+                spacing_black,
+            ) = board.get_connectedness_and_spacing()
 
             bb, cb = board.get_imbalance(False)
             bw, cw = board.get_imbalance(True)
 
             # (black minus white) because missing distance the smaller the better
-            # missing_distance: int = board.size
-            # if len(board.move_stack) > board.size_square / 4:
-            #     missing_distance = board.get_shortest_missing_distance(False) - board.get_shortest_missing_distance(
-            #         True)
-            # else:
-            #     missing_distance = 0
+            if len(board.move_stack) > board.size_square / 4:
+                missing_distance = board.get_shortest_missing_distance_perf(
+                    False
+                ) - board.get_shortest_missing_distance_perf(True)
+            else:
+                missing_distance = 0
 
-            w_entropy, b_entropy = 0, 0
-            if len(board.move_stack) > 10:
-                w_entropy, _ = DispEn2D(board.color_matrix(True), 2)
-                b_entropy, _ = DispEn2D(board.color_matrix(False), 2)
+            # w_entropy, b_entropy = 0, 0
+            # if len(board.move_stack) > 10:
+            #     w_entropy, _ = DispEn2D(board.color_matrix(True), 2)
+            #     b_entropy, _ = DispEn2D(board.color_matrix(False), 2)
 
-            # (black minus white) because negative of imbalance equals balance
+            # (black minus white) because negative of imbalance is balance
             balance: float32 = bb - bw
             central_balance: float32 = cb - cw
 
             params = asarray(
                 (
                     (connectedness_white - connectedness_black) * non_confidence,
-                    (wingspan_white - wingspan_black) * non_confidence,
+                    (spacing_white - spacing_black) * non_confidence,
                     balance * non_confidence,
                     central_balance * non_confidence,
-                    float32((w_entropy - b_entropy) * 100),  # multiplying artificially to get a value > 1...
+                    missing_distance,  # float32((w_entropy - b_entropy) * 100),  # multiplying artificially to get a value > 1...
                     turn_bonus,
-                    confidence * 100  # multiply to rescale eval from 0-1 to 0-100
+                    confidence * 100,  # multiply to rescale eval from 0-1 to 0-100
                 ),
                 dtype=float32,
             )

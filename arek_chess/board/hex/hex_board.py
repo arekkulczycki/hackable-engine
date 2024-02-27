@@ -9,17 +9,18 @@ from itertools import groupby, product
 from operator import ior
 from typing import Callable, Dict, Generator, Iterable, Iterator, List, Optional, Tuple
 
+import numba
+from astar import find_path
 from nptyping import Int8, NDArray, Shape
 from numpy import asarray, empty, float32, int8, mean, zeros
 
 from arek_chess.board import BitBoard, GameBoardBase
 from arek_chess.board.hex.mixins import BoardShapeError
-from arek_chess.board.hex.mixins.bitboard_utils import generate_masks
+from arek_chess.board.hex.mixins.bitboard_utils import generate_masks, int_to_inverse_binary_array
 from arek_chess.board.hex.mixins.hex_board_serializer_mixin import (
     HexBoardSerializerMixin,
 )
 from arek_chess.common.constants import DEFAULT_HEX_BOARD_SIZE
-from astar import find_path
 
 Cell = int
 
@@ -37,8 +38,8 @@ MINUS_ONE: int8 = int8(-1)
 class CWCounter:
     black_connectedness: int
     white_connectedness: int
-    black_wingspan: int
-    white_wingspan: int
+    black_spacing: int
+    white_spacing: int
 
 
 @dataclass
@@ -401,6 +402,17 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return None
 
+    def winner_no_turn(self) -> Optional[bool]:
+        """"""
+
+        if self.is_black_win():  # last move was black
+            return False
+
+        elif self.is_white_win():  # last move was white
+            return True
+
+        return None
+
     def is_black_win(self) -> bool:
         """"""
 
@@ -615,7 +627,11 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     @property
     def legal_moves(self) -> Generator[Move, None, None]:
-        """"""
+        """
+        Returns a generator of all legal moves, that is, all empty cells on the board.
+
+        It is not considered if the game is over, but only which cells are occupied.
+        """
 
         # if self.winner() is not None:
         #     return self.generate_nothing()
@@ -765,13 +781,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             if not any(
                 self.generate_adjacent_cells(adjacent_black, among=self.unoccupied)
             ):
-                return 2
+                return 1  # TODO: should be 2 if possible to identify nozoki
             return 1
         elif not self.turn and adjacent_white:
             if not any(
                 self.generate_adjacent_cells(adjacent_white, among=self.unoccupied)
             ):
-                return 2
+                return 1
             return 1
 
         return 0
@@ -780,24 +796,24 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         """
         Get if is check.
         TODO: do something about it (should not be required in base class),
-         !!! currently always True to indicate no draw in evaluator !!!
+         currently always True to indicate no draw in evaluator
         """
 
         return True
 
-    def get_connectedness_and_wingspan(self) -> Tuple[int, int, int, int]:
+    def get_connectedness_and_spacing(self) -> Tuple[int, int, int, int]:
         """
         Scan in every of 3 dimensions of the board, in each aggregating series of stones of same color.
 
-        If no stone of opposition color is in-between then stones are considered "connected" and their wingspan is
+        If no stone of opposition color is in-between then stones are considered "connected" and their spacing is
         equal to distance between them.
         """
 
         cw_counter: CWCounter = CWCounter(0, 0, 0, 0)
 
-        self._walk_all_cells(
+        self._walk_all_cells(  # left to right
             cw_counter, True, lambda mask, i: mask << 1
-        )  # left to right
+        )
         self._walk_all_cells(  # top to bottom
             cw_counter,
             False,
@@ -827,8 +843,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         return (
             cw_counter.white_connectedness,
             cw_counter.black_connectedness,
-            cw_counter.white_wingspan,
-            cw_counter.black_wingspan,
+            cw_counter.white_spacing,
+            cw_counter.black_spacing,
         )
 
     def _walk_all_cells(
@@ -837,14 +853,14 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         """
         Walk over all cells using given shift from cell to cell.
 
-        :param cw_counter: connectedness and wingspan counter object
+        :param cw_counter: connectedness and spacing counter object
         :param edge_color: color of the edge (point on start and finish)
         :param mask_shift: function that shifts the mask on every iteration
         """
 
         mask: int = 1
         last_occupied: Optional[bool] = None
-        wingspan_counter: int = 0
+        spacing_counter: int = 0
         ec: Optional[bool]
         """Edge color at the end of iteration."""
 
@@ -856,10 +872,10 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 edge_color is None and (x == self.size - 1 or y == 0)
             ):
                 ec = self._increment_on_finished_column(
-                    cw_counter, edge_color, i, wingspan_counter, last_occupied
+                    cw_counter, edge_color, i, spacing_counter, last_occupied
                 )
 
-                wingspan_counter = 1
+                spacing_counter = 1
                 last_occupied = (
                     edge_color if edge_color is not None else not ec
                 )  # first edge opposite to final edge
@@ -867,24 +883,24 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             if mask & self.occupied_co[False]:
                 if not last_occupied:  # None or False
                     cw_counter.black_connectedness += 1
-                    cw_counter.black_wingspan += wingspan_counter
+                    cw_counter.black_spacing += spacing_counter
 
                 last_occupied = False
-                wingspan_counter = 0
+                spacing_counter = 0
 
             elif mask & self.occupied_co[True]:
                 if last_occupied is None or last_occupied is True:
                     cw_counter.white_connectedness += 1
-                    cw_counter.white_wingspan += wingspan_counter
+                    cw_counter.white_spacing += spacing_counter
 
                 last_occupied = True
-                wingspan_counter = 0
+                spacing_counter = 0
 
             mask = mask_shift(mask, i)
-            wingspan_counter += 1
+            spacing_counter += 1
 
         self._increment_on_finished_column(
-            cw_counter, edge_color, i, wingspan_counter, last_occupied
+            cw_counter, edge_color, i, spacing_counter, last_occupied
         )
 
     def _increment_on_finished_column(
@@ -892,7 +908,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         cw_counter: CWCounter,
         edge_color: Optional[bool],
         i: int,
-        wingspan_counter: int,
+        spacing_counter: int,
         last_occupied: Optional[bool],
     ) -> Optional[bool]:
         """"""
@@ -900,13 +916,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         ec = edge_color if edge_color is not None else self._get_final_edge_color(i)
 
         # increment counters for the connection with the edge at the end of iteration (first iteration excluded)
-        if i != 0 and wingspan_counter <= self.size:
+        if i != 0 and spacing_counter <= self.size:
             if last_occupied is False and not ec:  # None or False
                 cw_counter.black_connectedness += 1
-                cw_counter.black_wingspan += wingspan_counter
+                cw_counter.black_spacing += spacing_counter
             if last_occupied is True and (ec is None or ec is True):
                 cw_counter.white_connectedness += 1
-                cw_counter.white_wingspan += wingspan_counter
+                cw_counter.white_spacing += spacing_counter
 
         return ec
 
@@ -1026,21 +1042,55 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return array
 
-    def as_matrix(self, black_stone_val: Int8 = MINUS_ONE) -> NDArray:
+    def as_matrix(self, black_stone_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO) -> NDArray:
+        """"""
+
+        array: NDArray = empty((1, self.size, self.size), dtype=int8)
+
+        return self._as_matrix(array, int8(self.size), self.occupied_co[True], self.occupied_co[False], black_stone_val, empty_val)
+
+    # @numba.njit()
+    @staticmethod
+    def _as_matrix(array: NDArray[Int8], size: int, o_white: int, o_black: int, black_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO) -> NDArray:
         """"""
 
         mask: BitBoard = 1
-        array: NDArray = empty((self.size, self.size), dtype=int8)
 
-        for row in range(self.size):
-            for col in range(self.size):
-                occupied_white = mask & self.occupied_co[True]
-                occupied_black = mask & self.occupied_co[False]
-                array[row][col] = (
-                    black_stone_val if occupied_black else ONE if occupied_white else ZERO
+        for row in range(size):
+            for col in range(size):
+                occupied_white = mask & o_white
+                occupied_black = mask & o_black
+                array[0][row][col] = (
+                    black_val if occupied_black else ONE if occupied_white else empty_val
                 )
 
                 mask <<= 1
+
+        return array
+
+    def _as_matrix_efficiency(self, array: NDArray[Int8], black_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO) -> NDArray:
+        """"""
+
+        o_white = int_to_inverse_binary_array(self.occupied_co[True], 81)
+        o_black = int_to_inverse_binary_array(self.occupied_co[False], 81)
+        return self._as_matrix_numba(array, int8(self.size), o_white, o_black, black_val, empty_val)
+
+    @staticmethod
+    @numba.njit()
+    def _as_matrix_numba(array: NDArray[Int8], size: Int8, o_white: NDArray[Int8], o_black: NDArray[Int8], black_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO) -> NDArray:
+        """"""
+
+        pos = size**2 - 1
+
+        for row in range(size):
+            for col in range(size):
+                occupied_white = bool(o_white[pos])
+                occupied_black = bool(o_black[pos])
+                array[0][row][col] = (
+                    black_val if occupied_black else ONE if occupied_white else empty_val
+                )
+
+                pos -= 1
 
         return array
 
@@ -1169,6 +1219,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         )
         return min([self.distance_missing(*pair, color) for pair in connection_points_pairs])
 
+    def pair_name(self, pair):
+        """"""
+
+        a = Move(pair[0], size=self.size).get_coord()
+        b = Move(pair[1], size=self.size).get_coord()
+        return f"{a},{b}"
+
     def get_shortest_missing_distance_perf(self, color: bool) -> int:
         """
         Calculate how many stones are missing to finish the connection between two sides.
@@ -1184,8 +1241,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             start_corner = list(generate_masks(self.bb_rows[0] & ~opp))[-1]
             finish_corner = next(generate_masks(self.bb_rows[-1] & ~opp))
 
-        connection_points_start: List[BitBoard] = self._get_start_points(color)
-        connection_points_finish: List[BitBoard] = self._get_finish_points(color)
+        connection_points_start: List[BitBoard] = self._get_start_points_perf(color)
+        connection_points_finish: List[BitBoard] = self._get_finish_points_perf(color)
 
         if not (connection_points_start and connection_points_finish):
             raise ValueError("searching shortest missing distance on game over")
@@ -1197,6 +1254,19 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         return min([self.distance_missing(*pair, color) for pair in connection_points_pairs])
 
     def _get_start_points(self, color: bool) -> List[BitBoard]:
+        """Top row or left column."""
+
+        if color:
+            opp = self.occupied_co[not color]
+            masks = list(generate_masks(self.bb_cols[0] & ~opp))
+            return masks
+
+        else:
+            opp = self.occupied_co[not color]
+            masks = list(generate_masks(self.bb_rows[0] & ~opp))
+            return masks
+
+    def _get_start_points_perf(self, color: bool) -> List[BitBoard]:
         """Top row or left column."""
 
         own = self.occupied_co[color]
@@ -1224,6 +1294,19 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 # return [masks[len(masks)//2]]  # take a single point in the middle of an edge
 
     def _get_finish_points(self, color: bool) -> List[BitBoard]:
+        """Bottom row or right column."""
+
+        if color:
+            opp = self.occupied_co[not color]
+            masks = list(generate_masks(self.bb_cols[-1] & ~opp))
+            return masks
+
+        else:
+            opp = self.occupied_co[not color]
+            masks = list(generate_masks(self.bb_rows[-1] & ~opp))
+            return masks
+
+    def _get_finish_points_perf(self, color: bool) -> List[BitBoard]:
         """Bottom row or right column."""
 
         own = self.occupied_co[color]

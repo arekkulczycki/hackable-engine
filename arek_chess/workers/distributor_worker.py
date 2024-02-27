@@ -2,7 +2,10 @@
 import asyncio
 import contextlib
 from multiprocessing import Lock
-from typing import Any, Generic, List, Optional, Type, TypeVar
+from typing import Any, Generic, List, Optional, Type, TypeVar, Tuple
+
+import numpy as np
+from nptyping import NDArray
 
 from arek_chess.board import GameBoardBase, GameMoveBase
 from arek_chess.common.constants import (
@@ -23,6 +26,8 @@ from arek_chess.workers.base_worker import BaseWorker
 
 TGameBoard = TypeVar("TGameBoard", bound=GameBoardBase)
 TGameMove = TypeVar("TGameMove", bound=GameMoveBase)
+
+ZERO = np.float32(0.0)
 
 
 class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
@@ -188,10 +193,14 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
 
         # TODO: if it could be done efficiently, would be beneficial to check game over here
 
+        parent_board_repr = self.board.as_matrix()
+
         only_forcing_moves = []
         eval_items = []
+        board_reprs = []
         for move in self.board.legal_moves:
             eval_item = self._get_eval_item(item, move)
+            board_repr = self._board_repr_from_parent(parent_board_repr, move)
 
             # forcing_level == -1 means that forcing moves were already taken care of before
             # forcing_level > 0 means that only forcing moves should be returned
@@ -203,19 +212,37 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
 
                 elif item.forcing_level > 0 and eval_item.forcing_level:
                     only_forcing_moves.append(eval_item)
+                    board_reprs.append(board_repr)
 
                 # if captures were analysed already then not adding to eval_items
                 elif item.forcing_level == -1 and not eval_item.forcing_level:
                     eval_items.append(eval_item)
+                    board_reprs.append(board_repr)
 
                 # else pass, as in case forcing_level == -1 we discard forcing moves
             else:
                 eval_items.append(eval_item)
 
-        if item.forcing_level > 0:
-            return only_forcing_moves
+        scores = self._get_eval_scores(board_reprs)
 
-        return eval_items
+        if item.forcing_level > 0:
+            return self._items_with_scores(only_forcing_moves, scores)
+
+        return self._items_with_scores(eval_items, scores)
+
+    def _get_eval_scores(self, board_matrices: List[NDArray]) -> List[np.float32]:
+        """"""
+
+        return [np.float32(0.0) for _ in range(len(board_matrices))]  # TODO: initialize and use a model
+        # return self.model.run(None, {"inputs": np.stack(np.asarray(board_matrices), axis=0)})[0][0]
+
+    @staticmethod
+    def _items_with_scores(items: List[EvalItem], scores: List[np.float32]) -> List[EvalItem]:
+        """"""
+
+        for eval_item, score in zip(items, scores):
+            eval_item.model_score = score
+        return items
 
     def _get_eval_item(self, item: DistributorItem, move: TGameMove) -> EvalItem:
         """"""
@@ -230,8 +257,16 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
             item.node_name,
             move.uci(),
             forcing_level,
+            ZERO,
             self.board.serialize_position(),
         )
-        # self.board.lighter_pop(state)
         self.board.pop()
         return eval_item
+
+    @staticmethod
+    def _board_repr_from_parent(parent_board_repr: NDArray, move: TGameMove) -> NDArray:
+        """"""
+
+        board_repr = parent_board_repr.copy()
+        board_repr[0][move.x][move.y] = 1
+        return board_repr

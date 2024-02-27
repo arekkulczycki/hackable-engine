@@ -17,13 +17,16 @@ from arek_chess.common.constants import (
     INF,
     LOG_INTERVAL,
     PRINT_CANDIDATES,
-    PROCESS_COUNT, Print,
-    QUEUE_THROTTLE, ROOT_NODE_NAME,
+    PROCESS_COUNT,
+    Print,
+    QUEUE_THROTTLE,
+    ROOT_NODE_NAME,
     RUN_ID,
     SLEEP,
     STATUS,
     Status,
-    TREE_PARAMS, WORKER,
+    TREE_PARAMS,
+    WORKER,
 )
 from arek_chess.common.custom_threads import ReturningThread
 from arek_chess.common.exceptions import SearchFailed
@@ -77,13 +80,17 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         selector_queue: QM[SelectorItem],
         distributor_queue: QM[DistributorItem],
         control_queue: QM[ControlItem],
-        memory: Optional[Any] = None
+        memory: Optional[Any] = None,
     ):
         super().__init__()
 
-        self.selector_queue = selector_queue  # or QM("selector_queue", **SelectorItem.get_queue_kwargs())
+        self.selector_queue = (
+            selector_queue  # or QM("selector_queue", **SelectorItem.get_queue_kwargs())
+        )
         self.distributor_queue = distributor_queue  # or QM("distributor_queue", **DistributorItem.get_queue_kwargs())
-        self.control_queue = control_queue  # or QM("control_queue", **ControlItem.get_queue_kwargs())
+        self.control_queue = (
+            control_queue  # or QM("control_queue", **ControlItem.get_queue_kwargs())
+        )
 
         self.queue_throttle = QUEUE_THROTTLE
         self.printing = constants.PRINTING
@@ -92,9 +99,9 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         self.root = None
         # self.nodes_dict: Dict[str, Node] = {}
         self.nodes_dict: Dict[str, Node] = {}  # WeakValueDictionary({})
-        self.transposition_dict: Optional[
-            Dict[bytes, Node]
-        ] = None  # WeakValueDictionary({})
+        self.transposition_dict: Optional[Dict[bytes, Node]] = (
+            None  # WeakValueDictionary({})
+        )
         self.memory_manager = MemoryManager(memory)
 
         self.status_lock = status_lock or contextlib.nullcontext()
@@ -162,9 +169,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
             self._set_new_root(should_use_transposition)
 
         # TODO: random part is added to decrease chance of collision, but another solution is needed to *never* collide
-        self.run_id = (
-            f"{self.root.move}.{run_iteration}.{str(randint(0, 999)).zfill(3)}"  # zfill 3 to fill same space in memory
-        )
+        self.run_id = f"{self.root.move}.{run_iteration}.{str(randint(0, 999)).zfill(3)}"  # zfill 3 to fill same space in memory
         # print("searching with run_id: ", self.run_id)
         with self.status_lock:
             self.memory_manager.set_str(RUN_ID, self.run_id)
@@ -242,7 +247,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
             self.traverser.should_autodistribute = False
             self.limit = 0
         else:
-            self.limit: int = 2 ** limit  # 14 -> 16384, 15 -> 32768
+            self.limit: int = 2**limit  # 14 -> 16384, 15 -> 32768
             if self.board.has_move_limit:
                 uppper_limit = self.board.get_move_limit()
                 if uppper_limit < self.limit:
@@ -269,6 +274,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         self.t_tmp: float = self.t_0
         self.last_evaluated: int = 0
         self.last_distributed: int = 0
+        self.last_external_distributed: int = 0
 
         try:
             # TODO: refactor to use concurrency?
@@ -346,7 +352,10 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         """
 
         with self.counters_lock:
-            self.distributed = self.memory_manager.get_int(DISTRIBUTED)
+            distributed = self.memory_manager.get_int(DISTRIBUTED)
+            if distributed != self.last_external_distributed:
+                self.last_external_distributed = distributed
+                self.distributed = distributed
 
     def _monitor(self) -> bool:
         """
@@ -357,9 +366,11 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
 
         t = time()
 
-        if t > self.t_tmp + LOG_INTERVAL and self.limit != 0:  # TODO: no monitor when limit=0?
-            if self.printing not in [Print.NOTHING, Print.MOVE, Print.LOGS]:
-                os.system("clear")
+        if (
+            t > self.t_tmp + LOG_INTERVAL and self.limit != 0
+        ):  # TODO: no monitor when limit=0?
+            # if self.printing not in [Print.NOTHING, Print.MOVE, Print.LOGS]:
+            #     os.system("clear")
 
             progress = (
                 round(
@@ -388,7 +399,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
                         f"distributed: {self.distributed}, evaluated: {self.evaluated}, "
                         f"selected: {self.selected}, started: {self.started}, finished: {self.finished}"
                     )
-                    self.print_tree(0, 4)
+                    # self.print_tree(0, 4)
                     # self.memory_manager.set_int(DEBUG, 1)
                     with self.status_lock:
                         self.memory_manager.set_int(STATUS, Status.FINISHED, new=False)
@@ -447,20 +458,31 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         gap_ratio = gap / self.distributed  # already checked to not be 0
 
         if i > 10000:  # found in practice that levels below happen normally (not stuck)
-            print("balance load: ", gap, gap_ratio, self.distributed, self.finished, self.limit)
+            print(
+                "balance load: ",
+                gap,
+                gap_ratio,
+                self.distributed,
+                self.evaluated,
+            )
 
         # TODO: find smart conditions instead of that mess - purpose is to identify if should distribute more to eval
-        if not self.finished and self.limit > 0 and (
-            (gap_ratio < 0.1 and gap < 4000)  # always pump when little gap
-            or (
-                gap < 24000  # above this number is impractical to add more
-                and not gap_ratio
-                > 0.5  # evaluated less than half, let's not pump it more
-                and not (
-                    self.distributed
-                    < self.limit // 2  # early part of the analysis doesn't need to rush
-                    and gap > 10000
-                )
+        if (
+            not self.finished
+            and self.limit > 0
+            and (
+                (gap_ratio <= 0.1 and gap < 20000)  # always pump when little gap
+                # or (
+                #     gap < 24000  # above this number is impractical to add more
+                #     and gap_ratio
+                #     < 0.25  # evaluated less than half, let's not pump it more
+                #     and not (
+                #         self.distributed
+                #         < self.limit
+                #         // 2  # early part of the analysis doesn't need to rush
+                #         and gap > 10000
+                #     )
+                # )
             )
         ):
             # feed the eval queues
@@ -472,14 +494,17 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
             ):
                 self._handle_control_queue()
                 self._handle_selector_queue()
+                return False  # breaking the loop
 
-            return False  # breaking the loop
+            return True
 
         # TODO: should it decide between two queues based on something?
         self._handle_control_queue()
         queue_emptied = not self._handle_selector_queue()
 
-        return not (self.finished or queue_emptied)  # breaking the loop if finished or queue empty
+        return not (
+            self.finished or queue_emptied
+        )  # breaking the loop if finished or queue empty
 
     def _is_enough(self) -> bool:
         """"""
@@ -532,7 +557,9 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         :returns: True if should finish the search, False otherwise
         """
 
-        control_items: List[ControlItem] = self.control_queue.get_many(1000, timeout=timeout)
+        control_items: List[ControlItem] = self.control_queue.get_many(
+            1000, timeout=timeout
+        )
         if not control_items:
             return False
 
@@ -580,7 +607,9 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         # print("wait all workers")
         for i in range((PROCESS_COUNT or cpu_count()) - 1):
             attempts = 0
-            while attempts < 1000:  # TODO: why processes take so long to set new status?
+            while (
+                attempts < 1000
+            ):  # TODO: why processes take so long to set new status?
                 attempts += 1
                 with self.finish_lock:
                     worker_status = self.memory_manager.get_bool(f"{WORKER}_{i}")
@@ -601,9 +630,9 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         """"""
 
         try:
-            nodes_to_distribute: List[
-                Node
-            ] = self.traverser.create_nodes_and_autodistribute(candidates)
+            nodes_to_distribute: List[Node] = (
+                self.traverser.create_nodes_and_autodistribute(candidates)
+            )
         except SearchFailed:
             self.print_tree(0, 2)
             raise
@@ -669,7 +698,9 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
                 forcing_level = node.forcing_level
                 node.only_forcing = True
             elif node.only_forcing:  # forcing moves have already been distributed
-                forcing_level = -1  # this will indicate that only non-forcing moves are generated
+                forcing_level = (
+                    -1
+                )  # this will indicate that only non-forcing moves are generated
                 node.only_forcing = False
             else:
                 forcing_level = 0
@@ -689,7 +720,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[TGameBoard]):
         if not forcing_moves_only:
             self.selected += n_nodes
         self.explored += n_nodes
-        self.distributed += n_nodes
+        self.distributed += self.board.size_square * n_nodes  # roughly, because in fact children of those nodes are distributed
 
         distributor_queue.put_many(to_queue)
 

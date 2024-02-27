@@ -144,9 +144,9 @@ class SimpleEnv(gym.Env):
         (
             connectedness_white,
             connectedness_black,
-            wingspan_white,
-            wingspan_black,
-        ) = self.controller.board.get_connectedness_and_wingspan()
+            spacing_white,
+            spacing_black,
+        ) = self.controller.board.get_connectedness_and_spacing()
         balance_white, centrishness_white = self.controller.board.get_imbalance(True)
         balance_black, centrishness_black = self.controller.board.get_imbalance(False)
         n_moves = len(self.controller.board.move_stack)
@@ -156,8 +156,8 @@ class SimpleEnv(gym.Env):
             "global": asarray((
                 connectedness_white,
                 connectedness_black,
-                wingspan_white,
-                wingspan_black,
+                spacing_white,
+                spacing_black,
                 balance_white,
                 balance_black,
                 centrishness_white,
