@@ -153,12 +153,12 @@ class HexBoardTestCase(TestCase):
             ["e5c11i5m13a13", (4, 10, 16, 57)],
         ]
     )
-    def test_get_connectedness_and_wingspan(
+    def test_get_connectedness_and_spacing(
         self, notation: str, expectation: Tuple[int, int, int, int]
     ) -> None:
         board = HexBoard(notation, size=13)
 
-        assert board.get_connectedness_and_wingspan() == expectation
+        assert board.get_connectedness_and_spacing() == expectation
 
     @parameterized.expand(
         [

@@ -18,7 +18,11 @@ Moreover in the requirements.txt there is a commented instruction how to install
 
 ### Basic Usage (finding the best move)
 
-`PYTHONPATH=. python arek_chess -p=1 -l=9 -m -f="rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"`
+Chess:
+`PYTHONPATH=. python arek_chess -G=chess -p=1 -l=9 -m -n="rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"`
+
+Hex size 13:
+`PYTHONPATH=. python arek_chess -G=hex -S=13 -p=1 -l=9 -m -n=a4`
 
 ### Advanced Usage (implement own criteria)
 

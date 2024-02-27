@@ -2,6 +2,9 @@
 import sys
 from typing import Iterator
 
+import numba
+import numpy as np
+
 from arek_chess.board import BitBoard
 
 if sys.version_info[1] <= 9:
@@ -17,6 +20,8 @@ else:
 
 
 def generate_cells(bb: BitBoard) -> Iterator:
+    """"""
+
     while bb:
         r = bb & -bb
         yield r.bit_length() - 1
@@ -24,30 +29,26 @@ def generate_cells(bb: BitBoard) -> Iterator:
 
 
 def generate_masks(bb: BitBoard) -> Iterator:
+    """"""
+
     while bb:
         r = bb & -bb
         yield r
         bb ^= r
 
 
-# is wrong
-# def generate_masks_reversed(bb: BitBoard) -> Iterator:
-#     bit = 1 << get_bit_count(bb)
-#     while bb <= bit:
-#         if bb & bit:
-#             yield
-#         bit >>= 1
+def int_to_binary_array(n: int, size: int):
+    arr = np.zeros(size, dtype=np.int8)
+    i = 0
+    while n:
+        v = n & 1
+        if v:
+            arr[i] = v
+        n >>= 1
+        i += 1
+
+    return arr
 
 
-def generate_neighbours_black(bb: BitBoard) -> Iterator:
-    while bb:
-        r = bb & -bb
-        yield r
-        bb ^= r
-
-
-def generate_neighbours_white(bb: BitBoard) -> Iterator:
-    while bb:
-        r = bb & -bb
-        yield r
-        bb ^= r
+def int_to_inverse_binary_array(n: int, size: int):
+    return np.asarray(list(np.binary_repr(n, width=size)), dtype=np.int8)
