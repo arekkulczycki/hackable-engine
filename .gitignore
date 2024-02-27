@@ -2,3 +2,6 @@
 .pyre
 arek_chess/board/cpp_board/
 **/node_modules
+
+hex9*
+Hex9*

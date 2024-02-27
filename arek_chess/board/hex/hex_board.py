@@ -401,6 +401,17 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return None
 
+    def winner_no_turn(self) -> Optional[bool]:
+        """"""
+
+        if self.is_black_win():  # last move was black
+            return False
+
+        elif self.is_white_win():  # last move was white
+            return True
+
+        return None
+
     def is_black_win(self) -> bool:
         """"""
 
@@ -615,7 +626,11 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     @property
     def legal_moves(self) -> Generator[Move, None, None]:
-        """"""
+        """
+        Returns a generator of all legal moves, that is, all empty cells on the board.
+
+        It is not considered if the game is over, but only which cells are occupied.
+        """
 
         # if self.winner() is not None:
         #     return self.generate_nothing()

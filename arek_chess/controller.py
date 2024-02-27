@@ -77,6 +77,8 @@ class Controller:
             EvalItem.board_bytes_number = self.board.board_bytes_number
             SelectorItem.board_bytes_number = self.board.board_bytes_number
 
+        self.memory_manager = MemoryManager()
+
         self.is_training_run = is_training_run
         if is_training_run:
             return
@@ -90,8 +92,6 @@ class Controller:
         self.original_timeout = timeout
         self.in_thread = in_thread
         self.timeout = timeout
-
-        self.memory_manager = MemoryManager()
 
         self.create_queues()
         self.status_lock = Lock()
