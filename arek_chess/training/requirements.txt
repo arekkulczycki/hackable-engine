@@ -1,0 +1,12 @@
+Shimmy==1.3.*
+gymnasium==0.28.*
+torch==2.1.*
+stable-baselines3==2.*
+shimmy==1.3.*
+sbx-rl
+onnx==1.*
+onnxruntime==1.*
+tensorboard==2.*
+pyqt5==5.15  # for displaying training graphs
+ray==2.9.*
+RayEnvWrapper @ git+https://github.com/arekkulczycki/RayEnvWrapper@master

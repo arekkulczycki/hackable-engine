@@ -4,10 +4,8 @@ from itertools import cycle
 from random import choice
 from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
 
-# import gym
 import gymnasium as gym
 import numpy as np
-import scipy
 import torch as th
 from gymnasium.core import ActType, ObsType, RenderFrame
 from numpy import float32
@@ -23,9 +21,6 @@ ONE: float32 = float32(1)
 MINUS_ONE: float32 = float32(-1)
 THREE: float32 = float32(3)
 
-DESIRED_SCORE_DISTRIBUTION = scipy.stats.norm(loc=0.5, scale=0.1525)
-HIGHEST_DISTRIBUTION_PENALTY: float32 = float32(1000)
-DISTRIBUTION_PENALTY_FACTOR: float32 = float32(0.0003) / HIGHEST_DISTRIBUTION_PENALTY / 10  # remove the last division, just added to be more lenient temporarily
 IMBALANCED_SCORE_PENALTIES = {
     0.49: float(-0.0003),
     0.45: float(-0.0002),

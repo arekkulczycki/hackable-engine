@@ -1,0 +1,10 @@
+### dev
+black==24.*
+mypy==1.*
+mypy-extensions==1.*
+pylint==2.*
+perflint==0.*
+parameterized==0.8.*
+
+### profiling
+pyinstrument==4.*
