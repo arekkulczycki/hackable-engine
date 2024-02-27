@@ -1,7 +1,4 @@
-"""
-Custom utility thread classes.
-"""
-
+# -*- coding: utf-8 -*-
 from threading import Thread, Event
 from typing import Any
 

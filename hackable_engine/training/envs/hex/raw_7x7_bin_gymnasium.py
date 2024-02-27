@@ -27,7 +27,7 @@ DEFAULT_ACTION = asarray(
         float32(0.0),  # local pattern confidence
     )
 )
-ACTION_SIZE: int = 8
+PARAMS_NUMBER: int = 8
 
 LESS_THAN_ZERO: float32 = float32(-0.1)
 ZERO: float32 = float32(0)
@@ -143,7 +143,7 @@ class Raw7x7BinGymnasium(gymnasium.Env):
         super().reset(seed=seed)
 
         self.render()
-        self.controller.reset_board(next(openings), size=self.BOARD_SIZE)
+        self.controller.reset(next(openings), size=self.BOARD_SIZE)
 
         self._prepare_child_moves()
 

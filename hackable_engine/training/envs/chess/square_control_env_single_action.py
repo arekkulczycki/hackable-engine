@@ -8,10 +8,10 @@ import numpy
 from numpy import float32
 
 from hackable_engine.controller import Controller
-from hackable_engine.criteria.evaluation.base_eval import ActionType
+from hackable_engine.criteria.evaluation.base_eval import WeightsType
 from hackable_engine.training.envs.chess.square_control_env_single_action_util import _board_to_obs
 
-DEFAULT_ACTION: ActionType = (
+DEFAULT_ACTION: WeightsType = (
     float32(-0.05),  # king_mobility
     float32(0.05),  # castling_rights
     float32(0.1),  # is_check
@@ -24,7 +24,7 @@ DEFAULT_ACTION: ActionType = (
     float32(0.01),  # opp king proximity square control
     float32(0.15),  # turn
 )
-MEDIUM_ACTION: ActionType = (
+MEDIUM_ACTION: WeightsType = (
     float32(-0.05),  # king_mobility
     float32(0.1),  # castling_rights
     float32(0.1),  # is_check
@@ -36,7 +36,7 @@ MEDIUM_ACTION: ActionType = (
     float32(0.0),  # opp king proximity square control
     float32(0.1),  # turn
 )
-WEAK_ACTION: ActionType = (
+WEAK_ACTION: WeightsType = (
     float32(0.0),  # king_mobility
     float32(0.0),  # castling_rights
     float32(0.1),  # is_check
@@ -48,7 +48,7 @@ WEAK_ACTION: ActionType = (
     float32(0.0),  # opp king proximity square control
     float32(0.1),  # turn
 )
-ACTION_SIZE: int = 10
+PARAMS_NUMBER: int = 10
 INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 EQUAL_MIDDLEGAME_FEN = (
     "r3k2r/1ppbqpp1/pb1p1n1p/n3p3/2B1P2B/2PP1N1P/PPQN1PP1/R3K2R w KQkq - 0 12"
@@ -129,7 +129,7 @@ class SquareControlEnv(gym.Env):
             ]
         )
 
-    def step(self, action: ActionType):
+    def step(self, action: WeightsType):
         action = self.action_upgrade(action)
         self._run_action(action)
 
@@ -160,7 +160,7 @@ class SquareControlEnv(gym.Env):
 
     def reset(self):
         self.render()
-        self.controller.reset_board(next(fens))
+        self.controller.reset(next(fens))
 
         return self.observation()
 
@@ -172,7 +172,7 @@ class SquareControlEnv(gym.Env):
     def observation(self):
         return _board_to_obs(self.controller.board)
 
-    def _run_action(self, action: ActionType) -> None:
+    def _run_action(self, action: WeightsType) -> None:
         try:
             self.controller.make_move(action)
         except RuntimeError:
@@ -187,7 +187,7 @@ class SquareControlEnv(gym.Env):
         return  # maybe some material-based score
 
     @staticmethod
-    def action_upgrade(action: ActionType) -> ActionType:
+    def action_upgrade(action: WeightsType) -> WeightsType:
         return action
 
         # artificially make turn value smaller
@@ -197,7 +197,7 @@ class SquareControlEnv(gym.Env):
         # )
 
     @staticmethod
-    def action_downgrade(action: ActionType) -> ActionType:
+    def action_downgrade(action: WeightsType) -> WeightsType:
         return action
         # return tuple(
         #     (v / 2 + 0.5) if i == 1 else v / 2 if i == 3 else v

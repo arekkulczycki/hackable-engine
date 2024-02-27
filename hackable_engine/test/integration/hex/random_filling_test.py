@@ -2,7 +2,7 @@
 from random import choice
 
 from hackable_engine.board.hex.hex_board import HexBoard, Move
-from hackable_engine.board.hex.mixins.bitboard_utils import generate_masks
+from hackable_engine.board.hex.bitboard_utils import generate_masks
 
 
 class RandomFillingTest:

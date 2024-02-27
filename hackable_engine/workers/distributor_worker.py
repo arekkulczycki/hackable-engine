@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
-import contextlib
-from multiprocessing import Lock
-from typing import Any, Generic, List, Optional, Type, TypeVar, Tuple
+from typing import Generic, List, Optional, Type, TypeVar
 
 import numpy as np
 from nptyping import NDArray
@@ -10,102 +8,77 @@ from nptyping import NDArray
 from hackable_engine.board import GameBoardBase, GameMoveBase
 from hackable_engine.common.constants import (
     DISTRIBUTED,
-    QUEUE_THROTTLE, ROOT_NODE_NAME,
+    QUEUE_THROTTLE,
+    ROOT_NODE_NAME,
     RUN_ID,
     SLEEP,
     STATUS,
     Status,
     WORKER,
+    ZERO,
 )
 from hackable_engine.common.queue.items.control_item import ControlItem
 from hackable_engine.common.queue.items.distributor_item import DistributorItem
 from hackable_engine.common.queue.items.eval_item import EvalItem
-from hackable_engine.common.queue.items.selector_item import SelectorItem
-from hackable_engine.common.queue.manager import QueueManager as QM
 from hackable_engine.workers.base_worker import BaseWorker
+from hackable_engine.workers.configs.worker_locks import WorkerLocks
+from hackable_engine.workers.configs.worker_queues import WorkerQueues
 
-TGameBoard = TypeVar("TGameBoard", bound=GameBoardBase)
-TGameMove = TypeVar("TGameMove", bound=GameMoveBase)
-
-ZERO = np.float32(0.0)
+GameBoardT = TypeVar("GameBoardT", bound=GameBoardBase)
+GameMoveT = TypeVar("GameMoveT", bound=GameMoveBase)
 
 
-class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
+class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
     """
     Distributes to the queue nodes to be calculated by EvalWorkers.
     """
 
-    status_lock: Lock
-    counters_lock: Lock
-
-    distributor_queue: QM[DistributorItem]
-    eval_queue: QM[EvalItem]
-    selector_queue: QM[SelectorItem]
-    control_queue: QM[ControlItem]
-
     def __init__(
         self,
-        status_lock: Lock,
-        finish_lock: Lock,
-        counters_lock: Lock,
-        distributor_queue: QM[DistributorItem],
-        eval_queue: QM[EvalItem],
-        selector_queue: QM[SelectorItem],
-        control_queue: QM[ControlItem],
-        board_class: Type[TGameBoard],
+        locks: WorkerLocks,
+        queues: WorkerQueues,
+        board_class: Type[GameBoardT],
         board_size: Optional[int],
-        memory: Optional[Any] = None
     ):
-        """"""
+        super().__init__()
 
-        super().__init__(memory)
+        self.locks: WorkerLocks = locks
+        self.queues: WorkerQueues = queues
 
-        self.status_lock = status_lock or contextlib.nullcontext()
-        self.finish_lock = finish_lock or contextlib.nullcontext()
-        self.counters_lock = counters_lock or contextlib.nullcontext()
+        self.board: GameBoardT = (
+            board_class(size=board_size) if board_size else board_class()
+        )
 
-        self.distributor_queue = distributor_queue
-        self.eval_queue = eval_queue
-        self.selector_queue = selector_queue
-        self.control_queue = control_queue
-
-        self.board: TGameBoard = board_class(size=board_size) if board_size else board_class()
+        self.distributed = 0
 
     def _set_control_wasm_port(self, port) -> None:
         """"""
 
-        self.control_queue.set_destination(port)
+        self.queues.control_queue.set_destination(port)
 
     def _set_eval_wasm_ports(self, ports) -> None:
         """"""
 
-        self.eval_queue.set_mixed_destination(ports)
-
-    def setup(self):
-        """"""
-
-        self.distributed = 0
-
-        # self._profile_code()
+        self.queues.eval_queue.set_mixed_destination(ports)
 
     async def _run(self):
         """"""
 
-        self.setup()
+        # self._profile_code()
 
         get_items = self.get_items
         finished = True
         run_id: Optional[str] = None
 
         if self.pid:  # is None in WASM
-            with self.status_lock:
+            with self.locks.status_lock:
                 self.memory_manager.set_int(str(self.pid), 1)
 
-        with self.counters_lock:
+        with self.locks.counters_lock:
             self.memory_manager.set_int(DISTRIBUTED, 0, new=False)
 
         while True:
-            with self.status_lock:
+            with self.locks.status_lock:
                 status: int = self.memory_manager.get_int(STATUS)
 
             if status == Status.STARTED:
@@ -114,7 +87,7 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
 
                 if items:
                     if run_id is None:
-                        with self.status_lock:
+                        with self.locks.status_lock:
                             run_id: str = self.memory_manager.get_str(RUN_ID)
                     self.distribute_items(items, run_id)
 
@@ -137,10 +110,10 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
                 while get_items(QUEUE_THROTTLE):
                     pass
 
-                with self.counters_lock:
+                with self.locks.counters_lock:
                     self.memory_manager.set_int(DISTRIBUTED, 0, new=False)
 
-                with self.finish_lock:
+                with self.locks.finish_lock:
                     self.memory_manager.set_bool(f"{WORKER}_0", True, new=False)
 
                 self.distributed = 0
@@ -151,7 +124,7 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
     def get_items(self, queue_throttle: int) -> List[DistributorItem]:
         """"""
 
-        return self.distributor_queue.get_many(queue_throttle, SLEEP)
+        return self.queues.distributor_queue.get_many(queue_throttle, SLEEP)
 
     def distribute_items(self, items: List[DistributorItem], run_id: str) -> None:
         """
@@ -168,20 +141,22 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
 
             eval_items = self._get_eval_items(item)
 
-            if item.node_name == ROOT_NODE_NAME and len(eval_items) == 1:  # only 1 root child, so just play it
-                self.control_queue.put(ControlItem(item.run_id, item.node_name))
+            if (
+                item.node_name == ROOT_NODE_NAME and len(eval_items) == 1
+            ):  # only 1 root child, so just play it
+                self.queues.control_queue.put(ControlItem(item.run_id, item.node_name))
                 return
 
             if eval_items:
                 queue_items += eval_items
             else:  # no children of this move, game over
-                self.control_queue.put(ControlItem(item.run_id, item.node_name))
+                self.queues.control_queue.put(ControlItem(item.run_id, item.node_name))
 
         if queue_items:
             self.distributed += len(queue_items)
-            self.eval_queue.put_many(queue_items)
+            self.queues.eval_queue.put_many(queue_items)
 
-            with self.counters_lock:
+            with self.locks.counters_lock:
                 self.memory_manager.set_int(DISTRIBUTED, self.distributed, new=False)
 
     def _get_eval_items(self, item: DistributorItem) -> List[EvalItem]:
@@ -210,7 +185,7 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
                     #  therefore we can break and discard the rest
                     break
 
-                elif item.forcing_level > 0 and eval_item.forcing_level:
+                if item.forcing_level > 0 and eval_item.forcing_level:
                     only_forcing_moves.append(eval_item)
                     board_reprs.append(board_repr)
 
@@ -233,18 +208,22 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
     def _get_eval_scores(self, board_matrices: List[NDArray]) -> List[np.float32]:
         """"""
 
-        return [np.float32(0.0) for _ in range(len(board_matrices))]  # TODO: initialize and use a model
+        return [
+            ZERO for _ in range(len(board_matrices))
+        ]  # TODO: initialize and use a model
         # return self.model.run(None, {"inputs": np.stack(np.asarray(board_matrices), axis=0)})[0][0]
 
     @staticmethod
-    def _items_with_scores(items: List[EvalItem], scores: List[np.float32]) -> List[EvalItem]:
+    def _items_with_scores(
+        items: List[EvalItem], scores: List[np.float32]
+    ) -> List[EvalItem]:
         """"""
 
         for eval_item, score in zip(items, scores):
             eval_item.model_score = score
         return items
 
-    def _get_eval_item(self, item: DistributorItem, move: TGameMove) -> EvalItem:
+    def _get_eval_item(self, item: DistributorItem, move: GameMoveT) -> EvalItem:
         """"""
 
         # checking before the move is pushed, because it will change after
@@ -264,9 +243,9 @@ class DistributorWorker(BaseWorker, Generic[TGameBoard, TGameMove]):
         return eval_item
 
     @staticmethod
-    def _board_repr_from_parent(parent_board_repr: NDArray, move: TGameMove) -> NDArray:
+    def _board_repr_from_parent(parent_board_repr: NDArray, move: GameMoveT) -> NDArray:
         """"""
 
         board_repr = parent_board_repr.copy()
-        board_repr[0][move.x][move.y] = 1
+        board_repr[move.x][move.y] = 1
         return board_repr

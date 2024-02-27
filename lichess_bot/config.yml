@@ -6,7 +6,7 @@ engine:                      # Engine settings.
   name: "HackableBot"        # Binary name of the engine to use.
   engine_options:
   working_dir: ""            # Directory where the chess engine will read and write files. If blank or missing, the current directory is used.
-  protocol: "homemade"            # "uci", "xboard" or "homemade"
+  protocol: "homemade"            # "ui", "xboard" or "homemade"
   ponder: true               # Think on opponent's time.
   polyglot:
     enabled: false           # Activate polyglot book.

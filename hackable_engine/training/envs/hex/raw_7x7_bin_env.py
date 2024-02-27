@@ -135,7 +135,7 @@ class Raw7x7BinEnv(gym.Env):
         # super().reset(seed=seed)
 
         self.render()
-        self.controller.reset_board(next(openings), size=self.BOARD_SIZE)
+        self.controller.reset(next(openings), size=self.BOARD_SIZE)
 
         self._prepare_child_moves()
 

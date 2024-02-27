@@ -22,7 +22,7 @@ DEFAULT_ACTION = asarray((
     float32(0.0),  # local pattern eval
     float32(0.0),  # local pattern confidence
 ))
-ACTION_SIZE: int = 8
+PARAMS_NUMBER: int = 8
 
 ZERO: float32 = float32(0)
 ONE: float32 = float32(1)
@@ -67,7 +67,7 @@ class SimpleEnv(gym.Env):
         }
     )
     # action_space = gymnasium.spaces.Box(ZERO, ONE, (6,), float32)
-    action_space = gym.spaces.Box(ZERO, ONE, (ACTION_SIZE,), float32)
+    action_space = gym.spaces.Box(ZERO, ONE, (PARAMS_NUMBER,), float32)
 
     winner: Optional[bool]
 
@@ -101,7 +101,7 @@ class SimpleEnv(gym.Env):
         # super().reset(seed=seed)
 
         self.render()
-        self.controller.reset_board(next(openings))
+        self.controller.reset(next(openings))
 
         # return self.observation_from_board(), {}
         return self.observation_from_board()

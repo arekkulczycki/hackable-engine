@@ -6,13 +6,13 @@ from numpy import eye, float32, int8, reshape
 from onnxruntime import InferenceSession
 
 from hackable_engine.board.hex.hex_board import HexBoard
-from hackable_engine.criteria.evaluation.base_eval import ActionType, BaseEval
+from hackable_engine.criteria.evaluation.base_eval import WeightsType, BaseEval
 
 
 class ModelEval(BaseEval[HexBoard]):
     """"""
 
-    ACTION_SIZE: int = 8
+    PARAMS_NUMBER: int = 8
 
     def __init__(self, size: int, model_path: str):
         """"""
@@ -22,12 +22,12 @@ class ModelEval(BaseEval[HexBoard]):
         self.ort_session = InferenceSession(model_path, providers=['OpenVINOExecutionProvider', 'CPUExecutionProvider'])
 
     def get_score(
-        self, board: HexBoard, is_check: bool, action: Optional[ActionType] = None
+        self, board: HexBoard, is_check: bool, weights: Optional[WeightsType] = None
     ) -> float32:
         """"""
 
-        action, value = self.ort_session.run(None, {"input": self.observation_from_board(board)})
-        return action
+        weights, value = self.ort_session.run(None, {"input": self.observation_from_board(board)})
+        return weights
 
     def observation_from_board(self, board: HexBoard) -> NDArray:
         """"""

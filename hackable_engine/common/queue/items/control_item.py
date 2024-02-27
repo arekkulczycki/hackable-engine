@@ -10,10 +10,6 @@ class ControlItem(BaseItem):
     Item passed through ControlQueue.
     """
 
-    # __slots__ = ("run_id", "control_value")
-
-    # control_value: str
-
     def __init__(self, run_id: str, control_value: str) -> None:
         self.run_id: str = run_id
         self.control_value: str = control_value

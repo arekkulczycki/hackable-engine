@@ -140,7 +140,7 @@ class Raw9Env(gym.Env):
 
         notation = next(openings)
         self.opening = notation
-        self.controller.reset_board(
+        self.controller.reset(
             notation, size=self.BOARD_SIZE, init_move_stack=True
         )
 

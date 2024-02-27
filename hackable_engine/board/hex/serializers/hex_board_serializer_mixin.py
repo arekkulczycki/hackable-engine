@@ -3,9 +3,7 @@ from struct import pack, unpack
 from typing import Tuple
 
 from hackable_engine.board import BitBoard
-from hackable_engine.board.hex.mixins import HexBoardProtocol
-
-VEC_1: int = 2**13 - 1
+from hackable_engine.board.hex.serializers import HexBoardProtocol
 
 
 class HexBoardSerializerMixin:
@@ -68,7 +66,7 @@ class HexBoardSerializerMixin:
 
         self.turn = unpack("?", turn)[0]
 
-    def get_occupied_in_components(self: HexBoardProtocol, color: bool) -> Tuple[BitBoard]:
+    def get_occupied_in_components(self: HexBoardProtocol, color: bool) -> Tuple[BitBoard, ...]:
         """"""
 
         if self.size < 9:
@@ -80,9 +78,8 @@ class HexBoardSerializerMixin:
         else:
             raise NotImplementedError("Larger than 24x24 board size not implemented")
 
-    def split_bitboard_in_two_components(
-        self: HexBoardProtocol, b: BitBoard
-    ) -> Tuple[BitBoard, BitBoard]:
+    @staticmethod
+    def split_bitboard_in_two_components(b: BitBoard) -> Tuple[BitBoard, BitBoard]:
         """
         :returns: last (right) N bytes and first (left) N (or N+1) bytes
         """
@@ -90,9 +87,8 @@ class HexBoardSerializerMixin:
         one = (1 << 64) - 1
         return b & one, b >> 64
 
-    def split_bitboard_in_three_components(
-        self: HexBoardProtocol, b: BitBoard
-    ) -> Tuple[BitBoard, BitBoard, BitBoard]:
+    @staticmethod
+    def split_bitboard_in_three_components(b: BitBoard) -> Tuple[BitBoard, BitBoard, BitBoard]:
         """
         :returns: last (right) N bytes, middle N bytes and first (left) N (or N+1) bytes
         """

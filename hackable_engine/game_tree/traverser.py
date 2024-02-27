@@ -159,21 +159,17 @@ class Traverser:
             #     not finished or self._is_good_recapture(parent, candidate.captured, candidate.score)
             # )
 
-            # this may include a problem caused by transpositions, but not for hex as transp have same number of stones
-            if parent.level < 1:
-                should_search = True
+            if candidate.forcing_level > 1:
+                benchmark_score = parent.parent.score if parent.parent else self.root.score
+                should_search = (
+                    (self.root.color and bool(candidate.score > benchmark_score))
+                    or (not self.root.color and bool(candidate.score < benchmark_score))
+                )
+            # elif candidate.forcing_level == 1:
+            #     # only search if is the first forcing move in a row
+            #     should_search = parent.forcing_level < 1
             else:
-                if candidate.forcing_level > 1:
-                    benchmark_score = parent.parent.score if parent.parent else self.root.score
-                    should_search = (
-                        (self.root.color and bool(candidate.score > benchmark_score))
-                        or (not self.root.color and bool(candidate.score < benchmark_score))
-                    )
-                # elif candidate.forcing_level == 1:
-                #     # only search if is the first forcing move in a row
-                #     should_search = parent.forcing_level < 1
-                else:
-                    should_search = False
+                should_search = False
 
             if node is not None:
                 # using transpositions, node already existed from different parent

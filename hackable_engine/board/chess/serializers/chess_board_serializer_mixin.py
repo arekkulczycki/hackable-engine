@@ -2,7 +2,7 @@
 from struct import pack, unpack
 from typing import Optional
 
-from hackable_engine.board.chess.mixins import ChessBoardProtocol
+from hackable_engine.board.chess.serializers import ChessBoardProtocol
 
 CHESS_BOARD_BYTES_NUMBER = 75
 NONE_EP_SQUARE = 64

@@ -21,6 +21,7 @@ class GameBoardBase(ABC):
     turn: bool
     move_stack: List
     legal_moves: Any
+    has_draws: bool = True
     has_move_limit: bool = False
     """Some games can be played forever, others are limited like for instance Hex: up until the board is filled."""
 

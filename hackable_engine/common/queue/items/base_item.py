@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 from dataclasses import astuple
 from typing import Callable, Dict, Iterator, Tuple, TypeVar
 
-
 BaseItemT = TypeVar("BaseItemT")
 
 
@@ -14,9 +13,6 @@ class BaseItem(ABC):
     """
     Item passed through DispatcherQueue.
     """
-
-    # run_id: str
-    SEPARATOR: bytes = b"@@@@@"
 
     def __iter__(self) -> Iterator:
         return iter(astuple(self))

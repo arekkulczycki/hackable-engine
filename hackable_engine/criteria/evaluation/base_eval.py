@@ -10,12 +10,11 @@ from hackable_engine.board import GameBoardBase
 PENALIZER: float32 = float32(0.99)
 REVERSE_PENALIZER: float32 = float32(1.01)
 
-# ActionType = Tuple[float32, ...]
-ActionType = NDArray[Shape, Single]
-T = TypeVar('T', bound=GameBoardBase)
+WeightsType = NDArray[Shape, Single]
+GameBoardT = TypeVar("GameBoardT", bound=GameBoardBase)
 
 
-class BaseEval(ABC, Generic[T]):
+class BaseEval(ABC, Generic[GameBoardT]):
     """
     Inherit from this class to implement your own evaluator.
 
@@ -28,17 +27,19 @@ class BaseEval(ABC, Generic[T]):
     Any eval model should be designed for a specific training observation method.
     """
 
+    PARAMS_NUMBER: int
+    
     @abstractmethod
     def get_score(
         self,
-        board: T,
+        board: GameBoardT,
         is_check: bool,
-        action: Optional[ActionType] = None,
+        weights: Optional[WeightsType] = None,
     ) -> float32:
         """
         :param board
         :param is_check:
-        :param action:
+        :param weights:
 
         :returns: score given to the candidate move in the current position
         """
@@ -47,14 +48,14 @@ class BaseEval(ABC, Generic[T]):
 
     @staticmethod
     def get_for_both_players(
-        function: Callable[[bool], ActionType]
+        function: Callable[[bool], WeightsType]
     ) -> Tuple[float32, ...]:
         """"""
 
         return tuple(float32(a - b) for a, b in zip(function(True), function(False)))
 
     @staticmethod
-    def calculate_score(action: ActionType, params: ActionType) -> float32:
-        score = dot(action, params)
+    def calculate_score(weights: WeightsType, params: WeightsType) -> float32:
+        score = dot(weights, params)
 
         return score

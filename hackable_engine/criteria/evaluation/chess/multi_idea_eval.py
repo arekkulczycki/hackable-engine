@@ -41,7 +41,7 @@ from typing import Tuple, Optional
 from numpy import float32, dot
 
 from hackable_engine.board.board import Board
-from hackable_engine.criteria.evaluation.base_eval import ActionType, BaseEval
+from hackable_engine.criteria.evaluation.base_eval import WeightsType, BaseEval
 
 ACTION_TYPE = Tuple[
     double,
@@ -63,7 +63,7 @@ ACTION_TYPE = Tuple[
 class MultiIdeaEval(BaseEval):
     """"""
 
-    DEFAULT_ACTION: ActionType = (
+    DEFAULT_ACTION: WeightsType = (
         double(10.0),  # is_check
         double(100.0),  # material
         double(5.0),  # mobility
@@ -81,7 +81,7 @@ class MultiIdeaEval(BaseEval):
         double(0.0),
         double(0.0),
     )
-    ACTION_SIZE: int = 16
+    PARAMS_NUMBER: int = 16
 
     def get_score(
         self,
@@ -89,7 +89,7 @@ class MultiIdeaEval(BaseEval):
         move_str: str,
         captured_piece_type: int,
         is_check: bool,
-        action: Optional[ActionType] = None,
+        action: Optional[WeightsType] = None,
     ) -> double:
         """"""
 
@@ -147,6 +147,6 @@ class MultiIdeaEval(BaseEval):
 
     @staticmethod
     def calculate_score(
-        action: ActionType, params: ActionType
+        action: WeightsType, params: WeightsType
     ) -> double:
         return dot(action, params)

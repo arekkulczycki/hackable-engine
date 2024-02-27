@@ -139,7 +139,7 @@ class Raw7Env(gym.Env):
 
         notation = next(openings)
         self.opening = notation
-        self.controller.reset_board(notation, size=self.BOARD_SIZE, init_move_stack=True)
+        self.controller.reset(notation, size=self.BOARD_SIZE, init_move_stack=True)
 
         if self.controller.board.turn != self.color:
             self._make_self_trained_move(not self.color)

@@ -10,7 +10,7 @@ from hackable_engine.common.constants import MEMORY_HANDLER, MemoryHandler
 
 from hackable_engine.common.memory.base_memory import BaseMemory
 from hackable_engine.common.queue.items.base_item import BaseItem
-from hackable_engine.criteria.evaluation.base_eval import ActionType
+from hackable_engine.criteria.evaluation.base_eval import WeightsType
 
 if MEMORY_HANDLER == MemoryHandler.SHARED_MEM:
     from hackable_engine.common.memory.adapters.shared_memory_adapter import SharedMemoryAdapter
@@ -39,14 +39,12 @@ class MemoryManager:
         elif MEMORY_HANDLER == MemoryHandler.WASM:
             self.memory: BaseMemory = WasmAdapter(memory)
 
-    def get_action(self, size: int) -> ActionType:
+    def get_weights(self, size: int) -> WeightsType:
         action_bytes = self.memory.get("action")
 
-        action = ndarray(shape=(size,), dtype=float32, buffer=action_bytes).tolist()
+        return ndarray(shape=(size,), dtype=float32, buffer=action_bytes)
 
-        return action
-
-    def set_action(self, action: ActionType, size: int) -> None:
+    def set_action(self, action: WeightsType, size: int) -> None:
         data = ndarray(shape=(size,), dtype=float32)
         data[:] = (*action,)
 
@@ -95,31 +93,8 @@ class MemoryManager:
     def set_str(self, key: str, value: str, *, new: bool = True) -> None:
         self.memory.set(key, value.encode(), new=new)
 
-    def in_last_positions(self, board_bytes: bytes) -> bool:
-        """"""
-
-        return board_bytes in self.get_last_positions()
-
-    def get_last_positions(self) -> List[bytes]:
-        """"""
-
-        positions_bytes = self.memory.get("positions")
-        return positions_bytes.split(BaseItem.SEPARATOR) if positions_bytes else []
-
-    def set_last_positions(self, board: GameBoardBase) -> None:
-        """"""
-
-        positions: bytes = self.memory.get("positions")
-
-        positions_list: List[bytes] = positions.split(BaseItem.SEPARATOR)
-        new_positions_list: List[bytes] = positions_list[-3:] + [
-            board.serialize_position()
-        ]
-
-        self.memory.set("positions", BaseItem.SEPARATOR.join(new_positions_list))
-
     def remove(self, key: str) -> None:
         self.memory.remove(key)
 
-    def clean(self, except_prefix: str = "", silent: bool = False):
-        self.memory.clean(except_prefix, silent)
+    def clean(self, except_prefix: str = ""):
+        self.memory.clean(except_prefix)

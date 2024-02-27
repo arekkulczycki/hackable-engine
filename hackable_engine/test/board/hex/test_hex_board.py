@@ -8,6 +8,7 @@ from numpy import asarray, array_equal, int8
 from parameterized import parameterized
 
 from hackable_engine.board.hex.hex_board import HexBoard, Move
+from hackable_engine.board.hex.move import CWCounter
 
 """
 TEMPLATE
@@ -297,3 +298,10 @@ class HexBoardTestCase(TestCase):
             pass
             # print(board.get_neighbourhood(neighbourhood_size))
         assert board.get_notation() == notation
+
+    def test_walk_all_cells(self):
+        board = HexBoard("e2e1i9b6f9c6b9h2h8h7d9c3a8e3g6c7e6e5a5h4i5h6a2d3e9d5c1i1g1g3f8d6c9d1d8e4f7a1g9a7a4f2a9c2h9f5i8i6e7g7e8b2g8i4c8b4c5a6d7", size=9)
+
+        cw_counter: CWCounter = CWCounter(0, 0, 0, 0)
+
+        board._walk_all_cells(cw_counter, True, lambda mask, _: mask << 1)

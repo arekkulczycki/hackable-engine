@@ -27,7 +27,7 @@ DEFAULT_ACTION = asarray(
         float32(0.0),  # local pattern confidence
     )
 )
-ACTION_SIZE: int = 8
+PARAMS_NUMBER: int = 8
 
 ZERO: float32 = float32(0)
 ONE: float32 = float32(1)
@@ -127,7 +127,7 @@ class Raw5x5BinEnv(gym.Env):
 
         self.render()
         self.opening = next(openings)
-        self.controller.reset_board(self.opening, size=self.BOARD_SIZE)
+        self.controller.reset(self.opening, size=self.BOARD_SIZE)
 
         self._prepare_child_moves()
 

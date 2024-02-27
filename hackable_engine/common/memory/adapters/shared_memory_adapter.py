@@ -140,12 +140,10 @@ class SharedMemoryAdapter(BaseMemory):
     def get_action(self):
         return self.get("action")
 
-    def clean(self, except_prefix: str = "", silent: bool = False) -> None:
+    def clean(self, except_prefix: str = "") -> None:
         """"""
 
         if len(except_prefix) > MAX_LENGTH:
-            if not silent:
-                print("OK")
             return  # FIXME: change node identification method
 
         for filename in os.listdir(
@@ -173,11 +171,6 @@ class SharedMemoryAdapter(BaseMemory):
         # for c in "abcdefgh":
         #     for d in "12345678":
         #         os.system(f"rm /dev/shm/{c}{d}*")
-
-        if not silent:
-            if except_prefix:
-                print(f"OK (skipped {except_prefix}*)")
-            print("OK")  # just to align with what Redis does :)
 
 
 class DangerousSharedMemory:

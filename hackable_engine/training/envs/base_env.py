@@ -4,14 +4,13 @@ from typing import Tuple
 import gym
 import numpy
 
-from hackable_engine.common.constants import Print
-from hackable_engine.main.controller import Controller
+from hackable_engine.controller import Controller
 
 
 class BaseEnv(gym.Env, ABC):
     # metadata = {}
 
-    ACTION_SIZE = 7
+    PARAMS_NUMBER = 7
     REWARDS = {
         '*': 0.0,
         '1/2-1/2': 0.0,
@@ -19,7 +18,7 @@ class BaseEnv(gym.Env, ABC):
         '0-1': - 1.0,
     }
 
-    def __init__(self, initial_fen: str):
+    def __init__(self):
         super().__init__()
 
         self.reward_range = (-1, 1)
@@ -27,8 +26,8 @@ class BaseEnv(gym.Env, ABC):
         self.action_space = self._get_action_space()
         self.observation_space = self._get_observation_space()
 
-        self.controller = Controller(Print.NOTHING)
-        self.controller.boot_up(initial_fen)
+        self.controller = Controller()
+        self.controller.boot_up()
 
         self.obs = self.observation()
 
@@ -64,4 +63,4 @@ class BaseEnv(gym.Env, ABC):
         return self.REWARDS[self.controller.board.result()]
 
     def _get_intermediate_reward(self):
-        return # maybe some material-based score
+        return  # maybe some material-based score

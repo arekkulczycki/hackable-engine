@@ -62,7 +62,7 @@ class SquareControlEval(BaseEval[ChessBoard]):
         float32(0.025),  # opp king proximity square control
         float32(0.15),  # turn
     ), dtype=float32)
-    ACTION_SIZE: int = 10
+    PARAMS_NUMBER: int = 10
 
     def get_score(
         self,

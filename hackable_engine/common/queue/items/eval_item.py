@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from numpy import float32
 
-from hackable_engine.board.chess.mixins.chess_board_serializer_mixin import (
+from hackable_engine.board.chess.serializers.chess_board_serializer_mixin import (
     CHESS_BOARD_BYTES_NUMBER,
 )
 from hackable_engine.common.queue.items.base_item import BaseItem
@@ -18,16 +18,16 @@ class EvalItem(BaseItem):
     Item passed through EvalQueue.
     """
 
-    # __slots__ = ("run_id", "node_name", "move_str")
-
-    # node_name: str
-    # move_str: str
-    # captured: int
-    # board: bytes
     board_bytes_number: ClassVar[int] = CHESS_BOARD_BYTES_NUMBER
 
     def __init__(
-        self, run_id: str, parent_node_name: str, move_str: str, forcing_level: int, model_score: float32, board: bytes
+        self,
+        run_id: str,
+        parent_node_name: str,
+        move_str: str,
+        forcing_level: int,
+        model_score: float32,
+        board: bytes,
     ) -> None:
         self.run_id: str = run_id
         self.parent_node_name: str = parent_node_name
@@ -46,7 +46,7 @@ class EvalItem(BaseItem):
         float_part = bytes_[
             -board_and_float_bytes_number : -EvalItem.board_bytes_number
         ]
-        board = bytes_[-EvalItem.board_bytes_number:]
+        board = bytes_[-EvalItem.board_bytes_number :]
         values = string_part.decode("utf-8").split(";")
 
         return EvalItem(

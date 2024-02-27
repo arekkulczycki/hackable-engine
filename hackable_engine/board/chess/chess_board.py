@@ -15,7 +15,7 @@ from nptyping import Int, NDArray, Shape, Single
 from numpy import empty, float32, zeros
 
 from hackable_engine.board import GameBoardBase
-from hackable_engine.board.chess.mixins.chess_board_serializer_mixin import ChessBoardSerializerMixin
+from hackable_engine.board.chess.serializers.chess_board_serializer_mixin import ChessBoardSerializerMixin
 
 # fmt: off
 SQUARES = [

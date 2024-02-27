@@ -4,7 +4,7 @@ from typing import Optional
 from numpy import asarray, float32, isclose
 
 from hackable_engine.board.hex.hex_board import HexBoard
-from hackable_engine.criteria.evaluation.base_eval import ActionType, BaseEval
+from hackable_engine.criteria.evaluation.base_eval import WeightsType, BaseEval
 
 ONE: float32 = float32(1)
 
@@ -12,8 +12,8 @@ ONE: float32 = float32(1)
 class SimpleEval(BaseEval[HexBoard]):
     """"""
 
-    ACTION_SIZE: int = 8
-    DEFAULT_ACTION: ActionType = asarray(
+    PARAMS_NUMBER: int = 8
+    DEFAULT_WEIGHTS: WeightsType = asarray(
         (
             float32(1.0),  # connectedness
             float32(1.0),  # spacing
@@ -29,14 +29,14 @@ class SimpleEval(BaseEval[HexBoard]):
     )
 
     def get_score(
-        self, board: HexBoard, is_check: bool, action: Optional[ActionType] = None
+        self, board: HexBoard, is_check: bool, weights: Optional[WeightsType] = None
     ) -> float32:
         """"""
 
-        if action is None:
-            action = self.DEFAULT_ACTION
+        if weights is None:
+            weights = self.DEFAULT_WEIGHTS
 
-        confidence: float32 = action[-1]
+        confidence: float32 = weights[-1]
         non_confidence: float32 = ONE - confidence
 
         turn_bonus = ONE if board.turn else -ONE
@@ -86,4 +86,4 @@ class SimpleEval(BaseEval[HexBoard]):
                 dtype=float32,
             )
 
-        return self.calculate_score(action[:-1], params)
+        return self.calculate_score(weights[:-1], params)

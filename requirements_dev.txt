@@ -2,7 +2,7 @@
 black==24.*
 mypy==1.*
 mypy-extensions==1.*
-pylint==2.*
+pylint==3.*
 perflint==0.*
 parameterized==0.8.*
 

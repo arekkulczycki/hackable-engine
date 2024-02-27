@@ -3,9 +3,9 @@ import numpy
 
 from hackable_engine.common.constants import Print
 from hackable_engine.controller import Controller
-from hackable_engine.criteria.evaluation.base_eval import ActionType
+from hackable_engine.criteria.evaluation.base_eval import WeightsType
 
-DEFAULT_ACTION: ActionType = (
+DEFAULT_ACTION: WeightsType = (
     numpy.double(100.0),
     numpy.double(1.0),
     numpy.double(-1.0),
@@ -19,7 +19,7 @@ DEFAULT_ACTION: ActionType = (
 class SimpleEnv(gym.Env):
     # metadata = {}
 
-    ACTION_SIZE = 7
+    PARAMS_NUMBER = 7
     REWARDS = {
         "*": 0.0,
         "1/2-1/2": 0.0,
@@ -42,14 +42,14 @@ class SimpleEnv(gym.Env):
 
     def _get_action_space(self):
         return gym.spaces.Box(
-            numpy.array([-1 for _ in range(self.ACTION_SIZE)], dtype=numpy.double),
-            numpy.array([1 for _ in range(self.ACTION_SIZE)], dtype=numpy.double),
+            numpy.array([-1 for _ in range(self.PARAMS_NUMBER)], dtype=numpy.double),
+            numpy.array([1 for _ in range(self.PARAMS_NUMBER)], dtype=numpy.double),
         )
 
     def _get_observation_space(self):
         return gym.spaces.Box(numpy.array([0]), numpy.array([1]))
 
-    def step(self, action: ActionType):
+    def step(self, action: WeightsType):
         self._run_action(tuple(action))
 
         result = self.controller.board.result()
@@ -81,7 +81,7 @@ class SimpleEnv(gym.Env):
         )
         return numpy.double(own_material / 40)
 
-    def _run_action(self, action: ActionType) -> None:
+    def _run_action(self, action: WeightsType) -> None:
         self.controller.make_move(action)
 
     def _get_reward(self, result):

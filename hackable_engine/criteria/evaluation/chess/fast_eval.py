@@ -6,21 +6,21 @@ to balance risk/reward of pushing forward.
 from numpy import float32
 
 from hackable_engine.board.board import Board
-from hackable_engine.criteria.evaluation.base_eval import ActionType, BaseEval
+from hackable_engine.criteria.evaluation.base_eval import WeightsType, BaseEval
 
 
 class FastEval(BaseEval):
     """"""
 
     # material, space, is_check
-    DEFAULT_ACTION: ActionType = (double(100.0), double(1.0), double(10.0))
+    DEFAULT_ACTION: WeightsType = (double(100.0), double(1.0), double(10.0))
 
     def get_score(
         self,
         board: Board,
         move_str: str,
         captured_piece_type: int,
-        action: ActionType = None
+        action: WeightsType = None
     ) -> double:
         """"""
 

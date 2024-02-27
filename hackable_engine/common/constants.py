@@ -6,6 +6,7 @@ from numpy import float32
 
 INF: float32 = float32(1000000.0)
 DRAW: float32 = float32(0.0)
+ZERO: float32 = float32(0.0)
 SLEEP: float = 0.001
 LOG_INTERVAL: float = 0.5
 BREAK_INTERVAL: float = 3.0
@@ -32,7 +33,7 @@ class Print(IntEnum):
     LOGS: int = 4
 
 
-PRINT_CANDIDATES = 10
+PRINT_CANDIDATES = 5
 
 
 class QueueHandler(IntEnum):
@@ -70,9 +71,10 @@ class Status(IntEnum):
 # MEMORY_HANDLER = MemoryHandler.WASM
 QUEUE_HANDLER = QueueHandler.FASTER_FIFO
 MEMORY_HANDLER = MemoryHandler.SHARED_MEM
-PROCESS_COUNT = 8
-QUEUE_MEMORY_MB = 1
+PROCESS_COUNT = 6
+QUEUE_MEMORY_MB = 100
 
 QUEUE_THROTTLE = 64
-PRINTING: Print = Print.LOGS
+PRINTING: Print = Print.CANDIDATES
 TREE_PARAMS: str = "3,5,"
+SEARCH_LIMIT: int = 16

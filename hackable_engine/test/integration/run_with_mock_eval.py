@@ -10,7 +10,7 @@ from numpy import float32
 from hackable_engine.board import GameBoardBase
 from hackable_engine.common.constants import Print
 from hackable_engine.controller import Controller
-from hackable_engine.criteria.evaluation.base_eval import ActionType
+from hackable_engine.criteria.evaluation.base_eval import WeightsType
 from hackable_engine.workers.eval_worker import EvalWorker
 
 evaluated = 0
@@ -93,11 +93,11 @@ class EvalWorkerSpecificPath(EvalWorker):
     eval = float32(1.5)
 
     def evaluate(
-        self, board: GameBoardBase, is_check: bool, action: Optional[ActionType]
+        self, board: GameBoardBase, is_check: bool, action: Optional[WeightsType]
     ) -> float32:
         """"""
 
-        # moves = list(move.uci() for move in board.move_stack) + [move_str]
+        # moves = list(move.ui() for move in board.move_stack) + [move_str]
         # nm = len(moves)
         # if all([a == b for a, b in zip(reversed(moves), list(self.PATH.keys())[:nm])]):
         #     # self.RETURNED_ONCE = True
