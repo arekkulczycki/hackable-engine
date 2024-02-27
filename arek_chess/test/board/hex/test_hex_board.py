@@ -93,6 +93,20 @@ class HexBoardTestCase(TestCase):
         assert board.is_black_win() is False
         assert board.is_white_win() is True
 
+    @parameterized.expand(
+        [
+            ["a8a7f9f8i9a9d8b7b8e7b5b4e8b6d2e1f3d1g9c3f5c2i4e2i2d3g1f1d4f2i5h3i1g2i3e3e4h2c5h1d6f4d9g3a6e5g5h4f7c4a2a1h7a3d5b1h8b2d7h5i6"],
+            ["i4h4g1g4i3h5c2c3i2b3e1h1i1f1h7d1c1g8a1a2e3h3i6h2g9f2d6d2a3d3g3b1i7f3c9e2e9b2g7e4c7d4a6b5a5b4b8g2i5d7b7e5i9d5h9e6c8f4e8a7b6a4f5c5g5a8h6g6i8"],
+        ]
+    )
+    def test_is_win(self, notation) -> None:
+        """"""
+
+        board = HexBoard(notation=notation, size=9, init_move_stack=True)
+
+        assert board.is_black_win() is True
+        assert board.is_white_win() is False
+
     @staticmethod
     def test_is_black_win_perf() -> None:
         """"""
@@ -113,7 +127,6 @@ class HexBoardTestCase(TestCase):
             board.is_black_win()
             t += perf_counter() - t0
 
-        print(t)
         assert t < 0.05  # can check the winner more than 20k times per second even with full board
 
     @parameterized.expand(
@@ -199,6 +212,30 @@ class HexBoardTestCase(TestCase):
 
         assert board.get_shortest_missing_distance(True) == missing_distance_white
         assert board.get_shortest_missing_distance(False) == missing_distance_black
+
+        assert board.get_shortest_missing_distance_perf(True) == missing_distance_white
+        assert board.get_shortest_missing_distance_perf(False) == missing_distance_black
+
+    @parameterized.expand(
+        [
+            ["g1a6g2b6g3c6h3d6i3", 9, 5, 6],
+            ["g1a6g2b6g3c6h3d6i3e6a8f6b8g6b9", 9, 2, 6],
+        ]
+    )
+    def test_get_shortest_missing_distance_no_problems(self, notation, size, missing_distance_white, missing_distance_black) -> None:
+        board = HexBoard(notation, size=size)
+
+        assert board.get_shortest_missing_distance(True) == missing_distance_white
+        assert board.get_shortest_missing_distance(False) == missing_distance_black
+
+    @parameterized.expand(
+        [
+            ["g1a6g2b6g3c6h3d6i3", 9, 8, 7],
+            ["g1a6g2b6g3c6h3d6i3e6a8f6b8g6b9", 9, 9, 9],
+        ]
+    )
+    def test_get_shortest_missing_distance_perf_problems(self, notation, size, missing_distance_white, missing_distance_black) -> None:
+        board = HexBoard(notation, size=size)
 
         assert board.get_shortest_missing_distance_perf(True) == missing_distance_white
         assert board.get_shortest_missing_distance_perf(False) == missing_distance_black

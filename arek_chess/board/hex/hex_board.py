@@ -402,6 +402,17 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return None
 
+    def winner_no_turn(self) -> Optional[bool]:
+        """"""
+
+        if self.is_black_win():  # last move was black
+            return False
+
+        elif self.is_white_win():  # last move was white
+            return True
+
+        return None
+
     def is_black_win(self) -> bool:
         """"""
 
@@ -616,7 +627,11 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     @property
     def legal_moves(self) -> Generator[Move, None, None]:
-        """"""
+        """
+        Returns a generator of all legal moves, that is, all empty cells on the board.
+
+        It is not considered if the game is over, but only which cells are occupied.
+        """
 
         # if self.winner() is not None:
         #     return self.generate_nothing()
@@ -1027,17 +1042,16 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return array
 
-    def as_matrix(self, black_stone_val: Int8 = MINUS_ONE) -> NDArray:
+    def as_matrix(self, black_stone_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO) -> NDArray:
         """"""
 
         array: NDArray = empty((1, self.size, self.size), dtype=int8)
 
-        # return self._as_matrix_efficiency(array, black_stone_val)
-        return self._as_matrix(array, int8(self.size), self.occupied_co[True], self.occupied_co[False], black_stone_val)
+        return self._as_matrix(array, int8(self.size), self.occupied_co[True], self.occupied_co[False], black_stone_val, empty_val)
 
     # @numba.njit()
     @staticmethod
-    def _as_matrix(array: NDArray[Int8], size: int, o_white: int, o_black: int, val: Int8 = MINUS_ONE) -> NDArray:
+    def _as_matrix(array: NDArray[Int8], size: int, o_white: int, o_black: int, black_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO) -> NDArray:
         """"""
 
         mask: BitBoard = 1
@@ -1047,23 +1061,23 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 occupied_white = mask & o_white
                 occupied_black = mask & o_black
                 array[0][row][col] = (
-                    val if occupied_black else ONE if occupied_white else ZERO
+                    black_val if occupied_black else ONE if occupied_white else empty_val
                 )
 
                 mask <<= 1
 
         return array
 
-    def _as_matrix_efficiency(self, array: NDArray[Int8], val: Int8 = MINUS_ONE) -> NDArray:
+    def _as_matrix_efficiency(self, array: NDArray[Int8], black_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO) -> NDArray:
         """"""
 
         o_white = int_to_inverse_binary_array(self.occupied_co[True], 81)
         o_black = int_to_inverse_binary_array(self.occupied_co[False], 81)
-        return self._as_matrix_numba(array, int8(self.size), o_white, o_black, val)
+        return self._as_matrix_numba(array, int8(self.size), o_white, o_black, black_val, empty_val)
 
     @staticmethod
     @numba.njit()
-    def _as_matrix_numba(array: NDArray[Int8], size: Int8, o_white: NDArray[Int8], o_black: NDArray[Int8], val: Int8 = MINUS_ONE) -> NDArray:
+    def _as_matrix_numba(array: NDArray[Int8], size: Int8, o_white: NDArray[Int8], o_black: NDArray[Int8], black_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO) -> NDArray:
         """"""
 
         pos = size**2 - 1
@@ -1073,7 +1087,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 occupied_white = bool(o_white[pos])
                 occupied_black = bool(o_black[pos])
                 array[0][row][col] = (
-                    val if occupied_black else ONE if occupied_white else ZERO
+                    black_val if occupied_black else ONE if occupied_white else empty_val
                 )
 
                 pos -= 1
@@ -1205,6 +1219,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         )
         return min([self.distance_missing(*pair, color) for pair in connection_points_pairs])
 
+    def pair_name(self, pair):
+        """"""
+
+        a = Move(pair[0], size=self.size).get_coord()
+        b = Move(pair[1], size=self.size).get_coord()
+        return f"{a},{b}"
+
     def get_shortest_missing_distance_perf(self, color: bool) -> int:
         """
         Calculate how many stones are missing to finish the connection between two sides.
@@ -1220,8 +1241,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             start_corner = list(generate_masks(self.bb_rows[0] & ~opp))[-1]
             finish_corner = next(generate_masks(self.bb_rows[-1] & ~opp))
 
-        connection_points_start: List[BitBoard] = self._get_start_points(color)
-        connection_points_finish: List[BitBoard] = self._get_finish_points(color)
+        connection_points_start: List[BitBoard] = self._get_start_points_perf(color)
+        connection_points_finish: List[BitBoard] = self._get_finish_points_perf(color)
 
         if not (connection_points_start and connection_points_finish):
             raise ValueError("searching shortest missing distance on game over")
@@ -1233,6 +1254,19 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         return min([self.distance_missing(*pair, color) for pair in connection_points_pairs])
 
     def _get_start_points(self, color: bool) -> List[BitBoard]:
+        """Top row or left column."""
+
+        if color:
+            opp = self.occupied_co[not color]
+            masks = list(generate_masks(self.bb_cols[0] & ~opp))
+            return masks
+
+        else:
+            opp = self.occupied_co[not color]
+            masks = list(generate_masks(self.bb_rows[0] & ~opp))
+            return masks
+
+    def _get_start_points_perf(self, color: bool) -> List[BitBoard]:
         """Top row or left column."""
 
         own = self.occupied_co[color]
@@ -1260,6 +1294,19 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 # return [masks[len(masks)//2]]  # take a single point in the middle of an edge
 
     def _get_finish_points(self, color: bool) -> List[BitBoard]:
+        """Bottom row or right column."""
+
+        if color:
+            opp = self.occupied_co[not color]
+            masks = list(generate_masks(self.bb_cols[-1] & ~opp))
+            return masks
+
+        else:
+            opp = self.occupied_co[not color]
+            masks = list(generate_masks(self.bb_rows[-1] & ~opp))
+            return masks
+
+    def _get_finish_points_perf(self, color: bool) -> List[BitBoard]:
         """Bottom row or right column."""
 
         own = self.occupied_co[color]

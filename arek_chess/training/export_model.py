@@ -38,9 +38,7 @@ class OnnxablePolicy(th.nn.Module):
         self.value_net = policy.value_net
 
     def forward(self, observation: th.Tensor):
-        """
-        !!! should maybe pre-process observation to have it discrete !!!
-        """
+        """"""
         # NOTE: You may have to process (normalize) observation in the correct
         #       way before using this. See `common.preprocessing.preprocess_obs`
 
@@ -55,8 +53,8 @@ class OnnxablePolicy(th.nn.Module):
         # features = HexCnnFeaturesExtractor(self.policy.observation_space(), 9, (128,), (5,), (2,)).forward(observation.reshape(1, observation.shape[0], observation.shape[0]))
         features = self.features_extractor(observation)
         action_hidden, value_hidden = self.extractor(features)
-        # return self.action_net(action_hidden), self.value_net(value_hidden)
-        return th.nn.functional.relu(self.action_net(action_hidden), inplace=True)
+        return self.action_net(action_hidden)  #, self.value_net(value_hidden)
+        #return th.nn.functional.relu(self.action_net(action_hidden), inplace=True)
 
 
 # Example: model = PPO("MlpPolicy", "Pendulum-v1")
@@ -85,22 +83,45 @@ th.onnx.export(
 onnx_model = onnx.load(onnx_model_path)
 onnx.checker.check_model(onnx_model)
 
-ort_session = ort.InferenceSession(
-    onnx_model_path, providers=["OpenVINOExecutionProvider", "DNNLExecutionProvider", "CPUExecutionProvider"]
+ort_session_cpu = ort.InferenceSession(
+    onnx_model_path, providers=["CPUExecutionProvider"]
+)
+
+import jax
+from onnxruntime import backend as OrtBackend
+numpy_obs = observation.numpy()
+obs_stack = np.stack([numpy_obs for _ in range(20)], axis=0).squeeze()
+sb = model.predict(numpy_obs, deterministic=True)
+rt = OrtBackend.run(onnx_model, numpy_obs)
+rts = ort_session_cpu.run(None, {"inputs": obs_stack})
+print(sb, rt, rts)
+exit(0)
+
+ort_session_openvino = ort.InferenceSession(
+    onnx_model_path, providers=["OpenVINOExecutionProvider"]
 )
 
 from time import perf_counter
 
 numpy_obs = observation.numpy()
+print(numpy_obs.shape)
 
 t0 = perf_counter()
-for i in range(1000):
+for i in range(100):
     action_sb2 = model.predict(numpy_obs, deterministic=True)
 print(perf_counter() - t0)
 # action_sb2 = model.predict(observation, deterministic=True)
+
 t0 = perf_counter()
-for i in range(1000):
-    action_onnx = ort_session.run(None, {"inputs": np.stack([numpy_obs, numpy_obs, numpy_obs, numpy_obs], axis=0).squeeze()})
+for i in range(100):
+    action_onnx = ort_session_cpu.run(None, {"inputs": np.stack([numpy_obs for _ in range(20)], axis=0).squeeze()})
 print(perf_counter() - t0)
-print(action_sb2)
-print(action_onnx)
+
+t0 = perf_counter()
+for i in range(100):
+    action_onnx_openvino = ort_session_openvino.run(None, {"inputs": np.stack([numpy_obs for _ in range(20)], axis=0).squeeze()})
+#    action_onnx = ort_session.run(None, {"input": numpy_obs})
+print(perf_counter() - t0)
+#print(action_sb2)
+#print(action_onnx)
+#print(action_onnx_openvino)
