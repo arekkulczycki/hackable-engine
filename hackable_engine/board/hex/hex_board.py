@@ -14,17 +14,15 @@ from nptyping import Int8, NDArray, Shape
 from numpy import asarray, empty, float32, int8, mean, zeros
 
 from hackable_engine.board import BitBoard, GameBoardBase
-from hackable_engine.board.hex.serializers import BoardShapeError
 from hackable_engine.board.hex.bitboard_utils import (
     generate_masks,
-    int_to_inverse_binary_array,
-)
+    int_to_inverse_binary_array, )
+from hackable_engine.board.hex.move import Move, CWCounter
+from hackable_engine.board.hex.serializers import BoardShapeError
 from hackable_engine.board.hex.serializers.hex_board_serializer_mixin import (
     HexBoardSerializerMixin,
 )
-from hackable_engine.board.hex.move import Move, CWCounter
 from hackable_engine.common.constants import DEFAULT_HEX_BOARD_SIZE
-
 
 Cell = int
 
@@ -1125,40 +1123,25 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         unoccupied_count = self.unoccupied.bit_count()
         return math.factorial(unoccupied_count)
 
-    def distance(self, m1: BitBoard, m2: BitBoard, color: bool) -> int:
-        """
-        Calculate distance from one cell to another, assuming that stepping on opposition stones is prohibited.
-        """
-
-        path = find_path(
-            m1,
-            m2,
-            neighbors_fnct=lambda m: self.generate_adjacent_cells(
-                m, among=self.unoccupied | self.occupied_co[color]
-            ),
-        )
-        if path is None:
-            raise ValueError("Path does not exist between the given points")
-        return len(path) - 1
-
-    def distance_missing(self, m1: BitBoard, m2: BitBoard, color: bool) -> int:
+    def distance_missing(self, mask_from: BitBoard, mask_to: BitBoard, color: bool) -> int:
         """
         Calculate how many stones are missing to finish the connection from one cell to another.
         """
 
+        un_oc = self.unoccupied
+        oc_co = self.occupied_co[color]
+        gen = self.generate_adjacent_cells
+        among = un_oc | oc_co
+
         path = find_path(
-            m1,
-            m2,
-            neighbors_fnct=lambda m: self.generate_adjacent_cells(
-                m, among=self.unoccupied | self.occupied_co[color]
+            mask_from,
+            mask_to,
+            neighbors_fnct=lambda mask: gen(
+                mask, among=among
             ),
-            distance_between_fnct=lambda m1, m2: (
-                1
-                if self.unoccupied
-                & (m1 | m2)  # additional cost so that it avoids stepping on empty
-                else 0
+            distance_between_fnct=lambda m_from, m_to: (  # this function doesn't seem to be taken by astar
+                0.0 if m_to & oc_co else 1.0
             ),
-            heuristic_cost_estimate_fnct=lambda a, b: 0,
         )
 
         if path is None:

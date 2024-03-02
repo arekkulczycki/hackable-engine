@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import sys
-from typing import Iterator
+from typing import Iterator, Generator
 
 import numba
 import numpy as np
@@ -27,7 +27,6 @@ def generate_cells(bb: BitBoard) -> Iterator:
         yield r.bit_length() - 1
         bb ^= r
 
-
 def generate_masks(bb: BitBoard) -> Iterator:
     """"""
 
@@ -52,3 +51,12 @@ def int_to_binary_array(n: int, size: int):
 
 def int_to_inverse_binary_array(n: int, size: int):
     return np.asarray(list(np.binary_repr(n, width=size)), dtype=np.int8)
+
+
+def exhaust_generator(g: Generator) -> int:
+    """Get the number of elements from a generator."""
+
+    i = 0
+    for _ in g:
+        i += 1
+    return i

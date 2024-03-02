@@ -4,20 +4,20 @@ import torch as th
 from hackable_engine.training.envs.hex.raw_7_env import Raw7Env
 from hackable_engine.training.envs.hex.raw_9_env import Raw9Env
 from hackable_engine.training.envs.hex.raw_9x9_env import Raw9x9Env
-from arek_chess.training.hex_cnn_features_extractor import HexCnnFeaturesExtractor
+from hackable_engine.training.hex_cnn_features_extractor import HexCnnFeaturesExtractor
 from hackable_engine.training.hyperparams import *
 
 cnn_base = dict(
     policy="CnnPolicy",
-   optimizer_class=th.optim.AdamW,
-   optimizer_kwargs=dict(weight_decay=ADAMW_WEIGHT_DECAY),
-#     optimizer_class=th.optim.SGD,
-#     optimizer_kwargs=dict(momentum=SGD_MOMENTUM),
+   # optimizer_class=th.optim.AdamW,
+   # optimizer_kwargs=dict(weight_decay=ADAMW_WEIGHT_DECAY[0]),
+    optimizer_class=th.optim.SGD,
+    optimizer_kwargs=dict(momentum=SGD_MOMENTUM[0], dampening=SGD_DAMPENING[0], nesterov=True),
     features_extractor_class=HexCnnFeaturesExtractor,
     features_extractor_kwargs=dict(board_size=7, n_filters=(32,), kernel_sizes=(3,)),
     should_preprocess_obs=False,
     net_arch=[64, 64],
-    # use_expln=True,
+    use_expln=True,
 )
 
 # POLICY_KWARGS["activation_fn"] = "tanh"
@@ -66,7 +66,6 @@ policy_kwargs_map = {
     },
     "hex9cnnD": {
         **cnn_base,
-"optimizer_kwargs": dict(weight_decay=1e-4),
         "env_class": Raw9Env,
         "features_extractor_kwargs": dict(
             board_size=9, output_filters=(128,), kernel_sizes=(5,), strides=(2,), activation_func_class=th.nn.Tanh

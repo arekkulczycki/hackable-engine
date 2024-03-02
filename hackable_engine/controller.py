@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from multiprocessing import cpu_count
 from time import sleep
-from typing import List, Optional, TypeVar, Generic, Any, Dict
+from typing import List, Optional, TypeVar, Generic, Any, Dict, Type
 
 from hackable_engine.board import GameBoardBase
 from hackable_engine.board.chess.chess_board import ChessBoard
@@ -107,15 +107,22 @@ class Controller(Generic[GameBoardT]):
         self._start_child_processes()
         self.setup_search_worker()
 
-    def reset(self, position: Optional[str] = None, **kwargs) -> None:
+    def reset(self, board_kwargs: Dict) -> None:
         """Prepare playing board and caches as if started from scratch."""
 
-        self._setup_board(position, **kwargs)
+        self.reset_board(**board_kwargs)
 
         self._reset_cache()
 
+        self.setup_search_worker(run_iteration=0)
+
+    def reset_board(self, **board_kwargs):
+        """"""
+
+        self._setup_board(self.board.__class__, **board_kwargs)
+
     @staticmethod
-    def _setup_board(board_class, **kwargs) -> None:
+    def _setup_board(board_class: Type[GameBoardT], **kwargs) -> None:
         """
         Initialize the board with an optionally preset position.
 
@@ -240,14 +247,12 @@ class Controller(Generic[GameBoardT]):
         else:
             self.color_tree_cache.white = search_tree_cache
 
-    def _reset_cache(self, run_iteration: int = 0) -> None:
+    def _reset_cache(self) -> None:
         """"""
 
         self.color_tree_cache = SideTreeCache(
             SearchTreeCache(None, {}), SearchTreeCache(None, {})
         )
-
-        self.setup_search_worker(run_iteration)
 
     @staticmethod
     def _create_queues():

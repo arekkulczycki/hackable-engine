@@ -15,21 +15,23 @@ from hackable_engine.board.hex.hex_board import HexBoard, Move
 from hackable_engine.common.constants import Game, Print
 from hackable_engine.controller import Controller
 
-MORE_THAN_ZERO: float32 = float32(0.025)
 ZERO: float32 = float32(0)
 ONE: float32 = float32(1)
 MINUS_ONE: float32 = float32(-1)
 THREE: float32 = float32(3)
 
 IMBALANCED_SCORE_PENALTIES = {
-    0.49: float(-0.0003),
-    0.45: float(-0.0002),
-    0.4: float(-0.0001),
+    0.01: float32(-0.0001),
+    0.05: float32(-0.00005),
+    0.1: float32(-0.000025),
 }
 """
 Give at most penalty equal to float32(0.0003) = HIGHEST_DISTRIBUTION_PENALTY * DISTRIBUTION_PENALTY_FACTOR
 A 9x9 game can take ~3250 evaluations, so maximum total penalty could sum up to 1 at worst,
 """
+
+BEING_CLOSER_BONUS: float32 = float32(0.025)
+BALANCED_POSITION_BONUS: float32 = float32(0.05 / (3/4 * 9))
 
 # fmt: off
 openings = cycle(
@@ -73,19 +75,11 @@ class Raw9Env(gym.Env):
         self.models = models
 
         if controller:
-            self._setup_controller(controller)
+            self.controller = controller
         else:
-            self._setup_controller(
-                Controller(
-                    printing=Print.NOTHING,
-                    # tree_params="4,4,",
-                    search_limit=9,
-                    is_training_run=True,
-                    in_thread=False,
-                    timeout=3,
-                    game=Game.HEX,
-                    board_size=self.BOARD_SIZE,
-                )
+            self.controller = Controller.configure_for_hex(
+                board_kwargs=dict(size=self.BOARD_SIZE),
+                is_training=True,
             )
         # self.obs = self.observation_from_board(self.controller.board)
 
@@ -101,16 +95,6 @@ class Raw9Env(gym.Env):
         # self.moves_list: List[Move] = []
         self.best_move: Optional[Tuple[Move, Tuple[float32]]] = None
         self.current_move: Optional[Move] = None
-
-        self.actions: List[float32] = []
-
-    def _setup_controller(self, controller: Controller):
-        """"""
-
-        self.controller = controller
-        self.controller._setup_board(next(openings), size=self.BOARD_SIZE)
-        # don't boot up if theres no need for engine to run, but to train on multiple processes
-        # self.controller.boot_up()
 
     def render(self, mode="human", close=False) -> RenderFrame:
         """"""
@@ -140,8 +124,8 @@ class Raw9Env(gym.Env):
 
         notation = next(openings)
         self.opening = notation
-        self.controller.reset(
-            notation, size=self.BOARD_SIZE, init_move_stack=True
+        self.controller.reset_board(
+            notation=notation, size=self.BOARD_SIZE, init_move_stack=True
         )
 
         if self.controller.board.turn != self.color:
@@ -229,7 +213,6 @@ class Raw9Env(gym.Env):
         legal_moves_exhausted = False
 
         score = action[0]
-        self.actions.append(score)
         self.generations += 1
 
         if self.best_move is None:
@@ -237,7 +220,7 @@ class Raw9Env(gym.Env):
         else:
             best_score = self.best_move[1]
             current_score = score
-            p = 1 if self.generations < 3 else 0.75 if self.generations < 6 else 0.5 if self.generations < 10 else 0.25
+            p = 1 if self.generations < 6 else 0.75 if self.generations < 12 else 0.5 if self.generations < 20 else 0.25
             if current_score > best_score and np.random.choice([True, False], p=[p, 1 - p]):
                 self.best_move = (self.current_move, score)
 
@@ -298,7 +281,7 @@ class Raw9Env(gym.Env):
 
         reward = self._get_reward(winner, score, legal_moves_exhausted)
 
-        return self.obs, reward, winner is not None, False, {"action": score, "winner": winner, "reward": ZERO if winner is None else reward, "opening": self.opening, "pseudo_reward": reward if winner is None else ZERO}
+        return self.obs, reward, winner is not None, False, {"action": score, "winner": winner, "reward": reward, "opening": self.opening}
 
     def _get_obs_and_score(self, move: Move) -> Tuple[th.Tensor, float32]:
         """"""
@@ -438,9 +421,11 @@ class Raw9Env(gym.Env):
         else:
             # the reward when game is being continued, 0 except when we want to punish or encourage some choices
             bonus = ZERO
-            if is_final_selection and n_moves > 0 and n_moves % 8 == (0 if self.color else 1):  # `n_moves` is `n_moves/2` full moves
-                bonus = self._get_reward_for_whos_closer(n_moves, 33)
+            if is_final_selection and n_moves > 0 and n_moves % 6 == (0 if self.color else 1):  # `n_moves` is `n_moves/2` full moves
+                bonus = self._get_reward_for_whos_closer(n_moves, 31) + self._principle_bonus()
+                # bonus = self._principle_bonus()
 
+            # return ZERO
             return self._imbalanced_score_penalty(score) + bonus if score is not None else bonus
 
         return float32(reward)
@@ -450,16 +435,23 @@ class Raw9Env(gym.Env):
 
         return max(0, (n_moves - 18)) / 126
 
-    def _imbalanced_score_penalty(self, score: float32):
-        """Negative value of penalty given for a score that is an outsider from a desired normal score distribution."""
+    def _principle_bonus(self) -> float32:
+        """Balanced distribution of stones is always preferred. 3/4 of board size is the highest value."""
 
-        # percentile = DESIRED_SCORE_DISTRIBUTION.cdf(score)
-        # distance_to_egde = percentile if percentile < 0.5 else 1 - percentile
-        # return (-0.5 / distance_to_egde + 1) * DISTRIBUTION_PENALTY_FACTOR
+        imbalance, central_imbalance = self.controller.board.get_imbalance(self.color)
+        return float32(self.controller.board.size * 3 / 4 - imbalance - central_imbalance) * BALANCED_POSITION_BONUS
 
-        distance_to_mean = abs(1 - score)
+    @staticmethod
+    def _imbalanced_score_penalty(score: float32) -> float32:
+        """Negative value of penalty given for a score that is an outsider from a desired score distribution."""
+
+        pessimism = abs(1 - score)
+        """How far from the highest possible score the prediction is. 
+        The idea is for the model to be pessimistic and evaluate highly rarely, 
+        as there are few strong moves, but plenty of losing moves."""
+
         for threshold, penalty in IMBALANCED_SCORE_PENALTIES.items():
-            if distance_to_mean > threshold:
+            if pessimism < threshold:
                 return penalty
         return ZERO
 
@@ -472,8 +464,8 @@ class Raw9Env(gym.Env):
         else:
             c = self.controller.board.get_shortest_missing_distance(self.color)
             nc = self.controller.board.get_shortest_missing_distance(not self.color)
-        c_closer_by = nc - c
-        return MORE_THAN_ZERO * c_closer_by if abs(c_closer_by) > 1 else ZERO
+        c_closer_by = float32(nc - c)
+        return BEING_CLOSER_BONUS * c_closer_by if abs(c_closer_by) > 2 else ZERO
 
     @staticmethod
     def _make_random_move(board):

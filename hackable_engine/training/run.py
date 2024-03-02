@@ -98,12 +98,13 @@ def train(
             # use_sde=True,
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
-            tensorboard_log=os.path.join(LOG_PATH, f"{env_name}_tensorboard")
+            tensorboard_log=None, #os.path.join(LOG_PATH, f"{env_name}_tensorboard")
         )
 
-    # model.policy.optimizer.defaults["momentum"] = SGD_MOMENTUM
-    model.policy.optimizer.defaults["weight_decay"] = ADAMW_WEIGHT_DECAY
-    model.policy.optimizer.defaults["lr"] = LEARNING_RATE
+    model.policy.optimizer.defaults["momentum"] = SGD_MOMENTUM[1]
+    model.policy.optimizer.defaults["dampening"] = SGD_DAMPENING[1]
+    # model.policy.optimizer.defaults["weight_decay"] = ADAMW_WEIGHT_DECAY[1]
+    # model.policy.optimizer.defaults["lr"] = LEARNING_RATE
 
     print("optimizing for intel...")
     original_policy = None
@@ -195,7 +196,6 @@ def get_env(env_name, env_class, version, color) -> gym.Env:
 
 
 def get_ray_env(env_name, env_class, version, color):
-    mp.set_start_method('fork')
     env = WrapperRayVecEnv(lambda seed, models=[]: env_class(color=color, models=models), N_ENV_WORKERS, int(N_ENVS // N_ENV_WORKERS), color)
     return VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
 

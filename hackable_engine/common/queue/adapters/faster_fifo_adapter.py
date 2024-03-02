@@ -72,6 +72,11 @@ class FasterFifoAdapter(BaseQueue):
         except Empty:
             return None
 
+    def get_blocking(self, timeout) -> Optional[BaseItem]:
+        """"""
+
+        return self.queue.get(block=True, timeout=timeout)
+
     def get_many(self, max_messages_to_get: int, timeout: float = 0) -> List[BaseItem]:
         """"""
 

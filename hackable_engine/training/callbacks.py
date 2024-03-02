@@ -50,7 +50,7 @@ class TensorboardActionHistogramCallback(BaseCallback):
                 self.rewards.append(env_info["reward"])
                 # self.openings[env_info["opening"]] += int_winner if int_winner else -1
             # else:
-            #     pseudo_rewards.append(env_info["pseudo_reward"])
+                # pseudo_rewards.append(env_info["pseudo_reward"])
 
         if self.n_calls % self._log_freq == 0:
             self.tb_formatter.writer.add_scalar("rollout/win_rate", np.mean(np.asarray(self.winners)), self.num_timesteps)

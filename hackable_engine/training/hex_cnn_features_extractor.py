@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 from itertools import cycle
-from typing import Optional, Tuple, Type, Union
+from typing import Optional, Tuple, Type
 
 import gym
 import numpy as np
 import torch as th
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from torch.nn import BatchNorm2d
 
 
 class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
@@ -27,7 +28,7 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         activation_func_class: Optional[Type] = None,
     ) -> None:
         # strides = tuple(stride for _ in kernel_sizes)
-        features_dim = self._get_features_number(board_size, output_filters, kernel_sizes, strides)
+        features_dim = 1152 #self._get_features_number(board_size, output_filters, kernel_sizes, strides)
 
         super().__init__(observation_space, features_dim)
 
@@ -49,7 +50,9 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
             for i_f, o_f, ks, stride in zip(input_filters, output_filters, kernel_sizes, strides)
         )
         if activation_func_class:
-            layers = sum(zip(layers, cycle((activation_func_class(),))), ())
+            layers = sum(zip(layers, (BatchNorm2d(o_f) for o_f in output_filters), cycle((activation_func_class(),))), ())
+        else:
+            layers = sum(zip(layers, (BatchNorm2d(o_f) for o_f in output_filters)), ())
 
         self.cnn = th.nn.Sequential(
             *layers,
@@ -58,9 +61,10 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
 
         # Compute shape by doing one forward pass
         with th.no_grad():
+            obs = th.as_tensor(observation_space.sample())
             n_flatten = (
                 self.cnn(
-                    th.as_tensor(observation_space.sample().astype(np.float32)[None])
+                    th.as_tensor(th.reshape(obs.to(th.float32), (1, 1, obs.size(dim=0), obs.size(dim=0))))
                 ).shape[1]
                 * output_filters[-1]
             )
@@ -72,11 +76,10 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
 
     @staticmethod
     def _get_features_number(board_size, output_filters, kernel_sizes, strides):
-        # TODO: incorrect with regard to `strides`
-        features_dim = (int((board_size - sum(kernel_sizes)) / strides[-1]) + len(kernel_sizes))**2
-        features_dim *= output_filters[-1]
-        # print("FEATURES: ", features_dim)
-        return int(features_dim)
+        # for of, ks, s in zip(output_filters, kernel_sizes, strides):
+        #     output_size = (size - ks) // s + 1
+        #     filters = of * output_size
+        return output_filters[0] * ((board_size - kernel_sizes[0]) // strides[0] + 1)**2
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
         board_size = observations.size(dim=1)
