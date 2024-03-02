@@ -21,7 +21,7 @@ class UI(Generic[GameBoardT]):
     """
 
     def __init__(self, game: Game, board_size: int, position: str) -> None:
-        self.controller = CONTOLLER_CONFIGURATION_METHODS[game](position=position, board_size=board_size)
+        self.controller = CONTOLLER_CONFIGURATION_METHODS[game](dict(notation=position, size=board_size))
         self.controller.boot_up()
 
     def run(self) -> None:

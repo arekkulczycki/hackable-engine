@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from dataclasses import dataclass
 from struct import pack, unpack
 from typing import ClassVar
 
@@ -12,13 +13,19 @@ from hackable_engine.board.chess.serializers.chess_board_serializer_mixin import
 from hackable_engine.common.queue.items.base_item import BaseItem
 
 
-# @dataclass
+@dataclass(slots=True)
 class SelectorItem(BaseItem):
     """
     Item passed through SelectorQueue.
     """
 
     board_bytes_number: ClassVar[int] = CHESS_BOARD_BYTES_NUMBER
+    run_id: str
+    parent_node_name: str
+    move_str: str
+    forcing_level: int
+    score: float32
+    board: bytes
 
     def __init__(
         self,
@@ -36,8 +43,8 @@ class SelectorItem(BaseItem):
         self.score: float32 = score
         self.board: bytes = board
 
-    @staticmethod
-    def loads(bytes_: bytes) -> SelectorItem:
+    @classmethod
+    def loads(cls, bytes_: bytes) -> SelectorItem:
         """"""
 
         board_and_float_bytes_number = SelectorItem.board_bytes_number + 4
@@ -58,14 +65,13 @@ class SelectorItem(BaseItem):
             board,
         )
 
-    @staticmethod
-    def dumps(obj: SelectorItem) -> bytes:
+    def dumps(self: SelectorItem) -> bytes:
         """"""
 
-        score_bytes = pack("f", obj.score)
+        score_bytes = pack("f", self.score)
 
         return (
-            f"{obj.run_id};{obj.parent_node_name};{obj.move_str};{obj.forcing_level}".encode()
+            f"{self.run_id};{self.parent_node_name};{self.move_str};{self.forcing_level}".encode()
             + score_bytes
-            + obj.board
+            + self.board
         )

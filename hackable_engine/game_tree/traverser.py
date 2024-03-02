@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
-from typing import Dict, Generator, List, Optional
+from typing import Generator, List, Optional, cast
 
-from numpy import abs, float32
+from numpy import abs as np_abs, float32
 
 from hackable_engine.common.constants import INF
 from hackable_engine.common.exceptions import SearchFailed
 from hackable_engine.common.queue.items.selector_item import SelectorItem
 from hackable_engine.criteria.selection.fast_selector import FastSelector
+
 # from hackable_engine.criteria.selection.exp_probability_selector import ExpProbabilitySelector
 from hackable_engine.game_tree.node import Node
+from hackable_engine.workers.configs.search_tree_cache import SearchTreeCache
 
 
 class Traverser:
@@ -16,20 +18,14 @@ class Traverser:
     Tree traversal model.
     """
 
-    root: Node
-
     def __init__(
         self,
-        root: Node,
-        nodes_dict: Dict,  # WeakValueDictionary,
-        transposition_dict: Optional[Dict] = None,  # WeakValueDictionary,
-        should_autodistribute: bool = True
+        node_cache: SearchTreeCache,
+        should_autodistribute: bool = True,
     ) -> None:
         super().__init__()
 
-        self.root = root
-        self.nodes_dict: Dict[str, Node] = nodes_dict
-        self.transposition_dict: Optional[Dict[bytes, Node]] = transposition_dict
+        self.node_cache: SearchTreeCache = node_cache
         self.should_autodistribute: bool = should_autodistribute
 
         # self.selector: LinearProbabilitySelector = LinearProbabilitySelector()
@@ -57,7 +53,7 @@ class Traverser:
         # TODO: cache best node (level>1) and start from it instead of starting from scratch
         #  define interesting nodes and then cache them
 
-        best_node: Node = self.root
+        best_node: Node = cast(Node, self.node_cache.root)  # at this point is never `None`
         """The node to be returned if has no children."""
 
         children: List[Node]
@@ -108,11 +104,11 @@ class Traverser:
     def _for_no_children(self, best_node: Node) -> Optional[Node]:
         """"""
 
-        if best_node is self.root:
+        if best_node is self.node_cache.root:
             # haven't received child nodes evaluations yet
             return None
 
-        if abs(best_node.score) == INF:
+        if np_abs(best_node.score) == INF:
             # the best path leads to checkmate then don't select anything more
             return None
 
@@ -135,7 +131,6 @@ class Traverser:
         candidate: SelectorItem
         parent: Node
         node: Optional[Node]
-        level: int
         nodes_to_distribute: List[Node] = []
 
         # best_score = math.inf if color else -math.inf
@@ -144,14 +139,14 @@ class Traverser:
                 # print(candidate.parent_node_name, candidate.move_str)
                 parent = self.get_node(candidate.parent_node_name)
                 node = (
-                    self.transposition_dict.get(candidate.board)
-                    if self.transposition_dict is not None
+                    self.node_cache.transposition_dict.get(candidate.board)
+                    if self.node_cache.transposition_dict is not None
                     else None
                 )
             except KeyError as e:
                 raise SearchFailed(
                     f"node not found in items: {candidate.parent_node_name}, "
-                    f"{candidate.run_id}, {candidate.move_str}, {self.root.move}"
+                    f"{candidate.run_id}, {candidate.move_str}, {self.node_cache.root.move}"
                 ) from e
 
             # should_search_recaptures: bool = self._is_good_capture_in_top_branch(parent, candidate.captured, finished)
@@ -160,10 +155,15 @@ class Traverser:
             # )
 
             if candidate.forcing_level > 1:
-                benchmark_score = parent.parent.score if parent.parent else self.root.score
+                benchmark_score = (
+                    parent.parent.score if parent.parent else self.node_cache.root.score
+                )
                 should_search = (
-                    (self.root.color and bool(candidate.score > benchmark_score))
-                    or (not self.root.color and bool(candidate.score < benchmark_score))
+                    self.node_cache.root.color
+                    and bool(candidate.score > benchmark_score)
+                ) or (
+                    not self.node_cache.root.color
+                    and bool(candidate.score < benchmark_score)
                 )
             # elif candidate.forcing_level == 1:
             #     # only search if is the first forcing move in a row
@@ -174,12 +174,12 @@ class Traverser:
             if node is not None:
                 # using transpositions, node already existed from different parent
                 node_name = ".".join((candidate.parent_node_name, candidate.move_str))
-                self.nodes_dict[node_name] = node
+                self.node_cache.nodes_dict[node_name] = node
 
                 parent.children.append(node)
                 parent.being_processed = False
                 parent.propagate_being_processed_up()
-                parent.propagate_score(node.score, None)
+                parent.inherit_score(node.score, None)
 
             else:
                 node = self.create_node(
@@ -218,13 +218,13 @@ class Traverser:
             board=board,
         )
 
-        self.nodes_dict[node.name] = node
-        if self.transposition_dict is not None:
-            self.transposition_dict[board] = node
+        self.node_cache.nodes_dict[node.name] = node
+        if self.node_cache.transposition_dict is not None:
+            self.node_cache.transposition_dict[board] = node
 
         return node
 
     def get_node(self, node_name: str) -> Node:
         """"""
 
-        return self.nodes_dict[node_name]
+        return self.node_cache.nodes_dict[node_name]

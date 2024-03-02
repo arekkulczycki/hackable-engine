@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from dataclasses import dataclass
 from struct import pack, unpack
 from typing import ClassVar
 
@@ -12,13 +13,18 @@ from hackable_engine.board.chess.serializers.chess_board_serializer_mixin import
 from hackable_engine.common.queue.items.base_item import BaseItem
 
 
-# @dataclass
+@dataclass(slots=True)
 class DistributorItem(BaseItem):
     """
     Item passed through DistributorQueue.
     """
 
     board_bytes_number: ClassVar[int] = CHESS_BOARD_BYTES_NUMBER
+    run_id: str
+    node_name: str
+    forcing_level: int
+    score: float32
+    board: bytes
 
     def __init__(
         self,
@@ -30,12 +36,12 @@ class DistributorItem(BaseItem):
     ) -> None:
         self.run_id: str = run_id
         self.node_name: str = node_name
-        self.score: float32 = score
         self.forcing_level: int = forcing_level
+        self.score: float32 = score
         self.board: bytes = board
 
-    @staticmethod
-    def loads(bytes_: bytes) -> DistributorItem:
+    @classmethod
+    def loads(cls, bytes_: bytes) -> DistributorItem:
         """"""
 
         board_and_float_bytes_number = DistributorItem.board_bytes_number + 4
@@ -47,23 +53,21 @@ class DistributorItem(BaseItem):
         board = bytes_[-DistributorItem.board_bytes_number :]
         values = string_part.decode("utf-8").split(";")
 
-        item = DistributorItem(
+        return DistributorItem(
             values[0],
             values[1],
             int(values[2]),
             unpack("f", float_part)[0],
             board,
         )
-        return item
 
-    @staticmethod
-    def dumps(obj: DistributorItem) -> bytes:
+    def dumps(self: DistributorItem) -> bytes:
         """"""
 
-        score_bytes = pack("f", obj.score)
+        score_bytes = pack("f", self.score)
 
         return (
-            f"{obj.run_id};{obj.node_name};{obj.forcing_level}".encode()
+            f"{self.run_id};{self.node_name};{self.forcing_level}".encode()
             + score_bytes
-            + obj.board
+            + self.board
         )

@@ -3,22 +3,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import astuple
-from typing import Callable, Dict, Iterator, Tuple, TypeVar
-
-BaseItemT = TypeVar("BaseItemT")
+from dataclasses import dataclass
+from typing import Callable, Dict, Self
 
 
+@dataclass
 class BaseItem(ABC):
     """
     Item passed through DispatcherQueue.
     """
-
-    def __iter__(self) -> Iterator:
-        return iter(astuple(self))
-
-    def as_tuple(self) -> Tuple:
-        return astuple(self)  #[1:]  # skipping run_id
 
     @classmethod
     def get_queue_kwargs(cls) -> Dict[str, Callable]:
@@ -27,12 +20,11 @@ class BaseItem(ABC):
             "dumper": cls.dumps,
         }
 
-    @staticmethod
+    @classmethod
     @abstractmethod
-    def loads(b: memoryview) -> BaseItemT:
+    def loads(cls, b: memoryview) -> Self:
         """"""
 
-    @staticmethod
     @abstractmethod
-    def dumps(obj: BaseItemT) -> bytes:
+    def dumps(self: Self) -> bytes:
         """"""

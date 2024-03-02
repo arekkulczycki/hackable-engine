@@ -2,7 +2,6 @@
 import sys
 from typing import Iterator, Generator
 
-import numba
 import numpy as np
 
 from hackable_engine.board import BitBoard

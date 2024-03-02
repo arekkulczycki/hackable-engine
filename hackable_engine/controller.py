@@ -59,7 +59,7 @@ class Controller(Generic[GameBoardT]):
         self.worker_locks: WorkerLocks = WorkerLocks()
 
         self.search_worker: SearchWorker = SearchWorker(
-            self.worker_locks, self.worker_queues
+            self.board, self.worker_locks, self.worker_queues
         )
         self.child_processes: List = []
 
@@ -105,7 +105,6 @@ class Controller(Generic[GameBoardT]):
         """Prepare all the workers of the engine."""
 
         self._start_child_processes()
-        self.setup_search_worker()
 
     def reset(self, board_kwargs: Dict) -> None:
         """Prepare playing board and caches as if started from scratch."""

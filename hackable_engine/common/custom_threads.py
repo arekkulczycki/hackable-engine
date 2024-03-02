@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from threading import Thread, Event
-from typing import Any
+from typing import Any, Optional
 
 
 class ReturningThread(Thread):
@@ -12,7 +12,7 @@ class ReturningThread(Thread):
     def stop(self):
         self._stop_event.set()
 
-    def join(self, timeout: float = None) -> Any:
+    def join(self, timeout: Optional[float] = None) -> Any:
         super().join(timeout)
 
         return self._return

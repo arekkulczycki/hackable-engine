@@ -22,4 +22,4 @@ mypyc hackable_engine/criteria/evaluation/hex/simple_eval.py
 mypyc hackable_engine/game_tree/node.py
 mypyc hackable_engine/game_tree/traverser.py
 mypyc hackable_engine/training/envs/chess/square_control_env_util.py
-mypyc hackable_engine/training/envs/chess/square_control_env_single_action_util.py
+mypyc hackable_engine/training/envs/hex/raw_9_env.py

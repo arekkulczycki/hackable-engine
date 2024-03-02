@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
-from typing import Generic, List, Optional, Type, TypeVar
+from typing import cast, Generic, List, Optional, Type, TypeVar
 
 import numpy as np
 from nptyping import NDArray
@@ -61,7 +61,7 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
 
         self.queues.eval_queue.set_mixed_destination(ports)
 
-    async def _run(self):
+    async def _run(self) -> None:
         """"""
 
         # self._profile_code()
@@ -88,8 +88,8 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
                 if items:
                     if run_id is None:
                         with self.locks.status_lock:
-                            run_id: str = self.memory_manager.get_str(RUN_ID)
-                    self.distribute_items(items, run_id)
+                            run_id = self.memory_manager.get_str(RUN_ID)
+                    self.distribute_items(items, cast(str, run_id))
 
                 if finished is True and items:
                     # could switch without items too, but this is for debug purposes

@@ -8,7 +8,6 @@ from itertools import groupby, product
 from operator import ior
 from typing import Callable, Dict, Generator, Iterator, List, Optional, Tuple
 
-import numba
 from astar import find_path
 from nptyping import Int8, NDArray, Shape
 from numpy import asarray, empty, float32, int8, mean, zeros
@@ -16,7 +15,8 @@ from numpy import asarray, empty, float32, int8, mean, zeros
 from hackable_engine.board import BitBoard, GameBoardBase
 from hackable_engine.board.hex.bitboard_utils import (
     generate_masks,
-    int_to_inverse_binary_array, )
+    int_to_inverse_binary_array,
+)
 from hackable_engine.board.hex.move import Move, CWCounter
 from hackable_engine.board.hex.serializers import BoardShapeError
 from hackable_engine.board.hex.serializers.hex_board_serializer_mixin import (
@@ -29,10 +29,10 @@ Cell = int
 SIZE = 13
 
 NEIGHBOURHOOD_DIAMETER: int = 7
-ZERO: int8 = int8(0)
-ONE: int8 = int8(1)
-TWO: int8 = int8(2)
-MINUS_ONE: int8 = int8(-1)
+ZERO: Int8 = int8(0)
+ONE: Int8 = int8(1)
+TWO: Int8 = int8(2)
+MINUS_ONE: Int8 = int8(-1)
 
 
 class HexBoard(HexBoardSerializerMixin, GameBoardBase):
@@ -57,7 +57,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def __init__(
         self,
-        notation: Optional[str] = None,
+        notation: str = "",
         *,
         size: int = DEFAULT_HEX_BOARD_SIZE,
         init_move_stack: bool = False,
@@ -152,6 +152,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def mask_at(self, x: int, y: int) -> BitBoard:
         """"""
+
+        return Move.from_xy(x, y, self.size).mask
 
     def color_at_mask(self, mask: BitBoard) -> Optional[bool]:
         """"""
@@ -491,10 +493,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         Generate moves directly adjacent to the last move.
         """
 
-        for adjacent_mask in self.generate_adjacent_cells(
-            last_move_mask, among=self.unoccupied
-        ):
-            yield adjacent_mask
+        yield from self.generate_adjacent_cells(last_move_mask, among=self.unoccupied)
 
     def generate_bridge_moves(
         self, visited: BitBoard = 0
@@ -979,7 +978,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return self._as_matrix(
             array,
-            int8(self.size),
+            self.size,
             self.occupied_co[True],
             self.occupied_co[False],
             black_stone_val,
@@ -989,7 +988,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     # @numba.njit()
     @staticmethod
     def _as_matrix(
-        array: NDArray[Int8],
+        array: NDArray[Shape, Int8],
         size: int,
         o_white: int,
         o_black: int,
@@ -1015,23 +1014,23 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         return array
 
     def _as_matrix_efficiency(
-        self, array: NDArray[Int8], black_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO
+        self, array: NDArray[Shape, Int8], black_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO
     ) -> NDArray:
         """"""
 
-        o_white = int_to_inverse_binary_array(self.occupied_co[True], 81)
-        o_black = int_to_inverse_binary_array(self.occupied_co[False], 81)
+        o_white = int_to_inverse_binary_array(self.occupied_co[True], self.size_square)
+        o_black = int_to_inverse_binary_array(self.occupied_co[False], self.size_square)
         return self._as_matrix_numba(
-            array, int8(self.size), o_white, o_black, black_val, empty_val
+            array, self.size, o_white, o_black, black_val, empty_val
         )
 
     @staticmethod
-    @numba.njit()
+    # @numba.njit()
     def _as_matrix_numba(
-        array: NDArray[Int8],
-        size: Int8,
-        o_white: NDArray[Int8],
-        o_black: NDArray[Int8],
+        array: NDArray[Shape, Int8],
+        size: int,
+        o_white: NDArray[Shape, Int8],
+        o_black: NDArray[Shape, Int8],
         black_val: Int8 = MINUS_ONE,
         empty_val: Int8 = ZERO,
     ) -> NDArray:
@@ -1056,12 +1055,12 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     def _x(self, mask: BitBoard) -> int:
         """"""
 
-        return Move._x(mask, self.size)
+        return Move.get_x(mask, self.size)
 
     def _y(self, mask: BitBoard) -> int:
         """"""
 
-        return Move._y(mask, self.size)
+        return Move.get_y(mask, self.size)
 
     def _get_short_diagonal_mask(self) -> BitBoard:
         """
@@ -1123,7 +1122,9 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         unoccupied_count = self.unoccupied.bit_count()
         return math.factorial(unoccupied_count)
 
-    def distance_missing(self, mask_from: BitBoard, mask_to: BitBoard, color: bool) -> int:
+    def distance_missing(
+        self, mask_from: BitBoard, mask_to: BitBoard, color: bool
+    ) -> int:
         """
         Calculate how many stones are missing to finish the connection from one cell to another.
         """
@@ -1136,9 +1137,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         path = find_path(
             mask_from,
             mask_to,
-            neighbors_fnct=lambda mask: gen(
-                mask, among=among
-            ),
+            neighbors_fnct=lambda mask: gen(mask, among=among),
             distance_between_fnct=lambda m_from, m_to: (  # this function doesn't seem to be taken by astar
                 0.0 if m_to & oc_co else 1.0
             ),
@@ -1164,7 +1163,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             connection_points_start, connection_points_finish
         )
         return min(
-            [self.distance_missing(*pair, color) for pair in connection_points_pairs]
+            self.distance_missing(*pair, color) for pair in connection_points_pairs
         )
 
     def pair_name(self, pair):
@@ -1200,7 +1199,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         ] + [(start, finish_corner) for start in connection_points_start]
 
         return min(
-            [self.distance_missing(*pair, color) for pair in connection_points_pairs]
+            self.distance_missing(*pair, color) for pair in connection_points_pairs
         )
 
     def _get_start_points(self, color: bool) -> List[BitBoard]:

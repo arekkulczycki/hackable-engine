@@ -8,7 +8,7 @@ Implemented games: Chess, Hex.
 
 ### Installation
 
-Project tested with python 3.8 to 3.11 in debian and arch OS.
+Project tested with python 3.8 to 3.12 in debian and arch OS.
 
 ##### For running the engine
 
@@ -52,23 +52,14 @@ To view the tensorboard log if used
 - GUI with the board and sliders for criteria, option to check move suggestions by the engine with given criteria
 - Make a lichess bot
 
-##### Board handling speed up
+##### Speeding up for python < 3.11
 
-Before running the engine there is one more step left in order to power-up the performance.  
+The best performance is provided by python 3.11. 
 
-In the board/mypy_chess.py file there is the python-chess library with injected code of board/board.py.  
-Combination of those can then be compiled into a C shared object thanks to the mighty mypyc project.  
+In case you use a different version there is a `compile.py` script that uses mypyc to compile shared libraries for python.
 
-Temporarily rename board/mypy_chess.py to board/board.py (or copy contents into board.py),  
-in the board directory run  
-`mypyc board.py`  
-Copy compiled <i>board.(...).so<i/> classes into board directory and revert board.py to the original state.  
-The interpreter will now use the compiled board class which is 200-300% faster.  
-
-##### Memory leaks
-
-The engine uses shared memory to handle common data between processes.  
-In case of failures you will have memory leaks and later get tons of warnings or errors with regard to not cleaned memory.
+The compilation will only work if all types are correctly assigned in the code. 
+This may require some additional work as with py3.11 I got lazy and didn't watch types carefully anymore.
 
 ### Run engine
 
