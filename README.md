@@ -1,4 +1,4 @@
-# The most hackable game engine
+# The most hackable game engine (wannabe)
 
 The purpose of this project is to provide a game engine that works in a 
 simple, readable and transparent way and most importantly opens up to a user means to 
@@ -32,7 +32,11 @@ Hex size 13:
 
 ### Advanced Usage - implement your own criteria
 
+WIP
+
 ### Training
+
+The model files are saved into current working directory.
 
 To train a model
 `PYTHONPATH=. python hackable_engine/training/run.py -t -e=<ENVIRONMENT NAME>`
@@ -43,8 +47,10 @@ To retrain a model
 To plot the training rewards over the training period
 `PYTHONPATH=. python hackable_engine/training/run.py -pl -e=<ENVIRONMENT NAME>`
 
-To view the tensorboard log if used
+To view the tensorboard log, if used
 `tensorboard --logdir <PATH TO THE LOG DIRECTORY>`
+
+Add custom tensorboard logs in `hackable_engine/training/callbacks.py`.
 
 ### Development directions
 
@@ -60,11 +66,3 @@ In case you use a different version there is a `compile.py` script that uses myp
 
 The compilation will only work if all types are correctly assigned in the code. 
 This may require some additional work as with py3.11 I got lazy and didn't watch types carefully anymore.
-
-### Run engine
-
-
-### Move search/choice criteria
-
-
-### Additional notes
