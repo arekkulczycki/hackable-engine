@@ -28,7 +28,7 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         activation_func_class: Optional[Type] = None,
     ) -> None:
         # strides = tuple(stride for _ in kernel_sizes)
-        features_dim = 1152 #self._get_features_number(board_size, output_filters, kernel_sizes, strides)
+        features_dim = self._get_features_number(board_size, output_filters, kernel_sizes, strides)
 
         super().__init__(observation_space, features_dim)
 

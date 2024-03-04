@@ -87,6 +87,12 @@ policy_kwargs_map = {
         "env_class": Raw9Env,
         "features_extractor_kwargs": dict(board_size=9, output_filters=(64, 32, 32), kernel_sizes=(3, 3, 3)),
     },
+    "hex9cnnH": {
+        **cnn_base,
+        "net_arch": [16, 16],
+        "env_class": Raw9Env,
+        "features_extractor_kwargs": dict(board_size=9, output_filters=(32, 16), kernel_sizes=(3, 3), strides=(3, 1)),
+    },
     "hex9raw": {
         "env_class": Raw9x9Env,
         "net_arch": [162, 81],

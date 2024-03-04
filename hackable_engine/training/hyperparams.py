@@ -5,10 +5,10 @@ N_ENVS = 2**12
 TOTAL_TIMESTEPS = int(2**30)
 LEARNING_RATE = 4e-2  # lambda p: max(1e-2 * p**3, 1e-6)
 N_EPOCHS = 1
-N_STEPS = 2**8
+N_STEPS = 2**7
 """Batch size per env, ie. will update policy every `N_STEPS` iterations, total batch size is this times `N_ENVS`."""
 
-BATCH_SIZE = int(N_ENVS // N_ENV_WORKERS * N_ENV_WORKERS * N_STEPS / 2**2)
+BATCH_SIZE = int(N_ENVS // N_ENV_WORKERS * N_ENV_WORKERS * N_STEPS / 2**0)
 """So called mini-batch, size taken into GPU at once, recommended to be a factor of (`N_STEPS * N_ENVS`)."""
 
 CLIP_RANGE = 0.3

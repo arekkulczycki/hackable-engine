@@ -119,17 +119,7 @@ class Controller(Generic[GameBoardT]):
     def reset_board(self, **board_kwargs):
         """"""
 
-        self._setup_board(self.board.__class__, **board_kwargs)
-
-    @staticmethod
-    def _setup_board(board_class: Type[GameBoardT], **kwargs) -> None:
-        """
-        Initialize the board with an optionally preset position.
-
-        :param position: string representation, for instance fen for chess
-        """
-
-        return board_class(**kwargs)
+        self.board = self.board.__class__(**board_kwargs)
 
     def _start_child_processes(self) -> None:
         """"""
