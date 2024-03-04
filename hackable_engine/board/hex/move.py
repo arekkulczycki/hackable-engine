@@ -93,10 +93,10 @@ class Move:
     def x(self) -> int:
         """"""
 
-        return self._x(self.mask, self.size)
+        return self.get_x(self.mask, self.size)
 
     @staticmethod
-    def _x(mask: BitBoard, size: int):
+    def get_x(mask: BitBoard, size: int):
         """"""
 
         return (mask.bit_length() - 1) % size
@@ -105,10 +105,10 @@ class Move:
     def y(self) -> int:
         """"""
 
-        return self._y(self.mask, self.size)
+        return self.get_y(self.mask, self.size)
 
     @staticmethod
-    def _y(mask: BitBoard, size: int) -> int:
+    def get_y(mask: BitBoard, size: int) -> int:
         """"""
 
         return (mask.bit_length() - 1) // size

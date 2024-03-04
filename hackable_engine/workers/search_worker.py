@@ -4,7 +4,7 @@ import os
 from multiprocessing import cpu_count
 from random import randint
 from time import time
-from typing import ClassVar, Generic, List, Optional, Tuple, TypeVar
+from typing import Generic, List, Optional, Tuple, TypeVar
 
 from numpy import abs as np_abs, float32
 
@@ -25,7 +25,8 @@ from hackable_engine.common.constants import (
     Status,
     TREE_PARAMS,
     WORKER,
-    PRINTING, SEARCH_LIMIT,
+    PRINTING,
+    SEARCH_LIMIT,
 )
 from hackable_engine.common.custom_threads import ReturningThread
 from hackable_engine.common.exceptions import SearchFailed
@@ -38,11 +39,11 @@ from hackable_engine.common.queue.manager import QueueManager as QM
 from hackable_engine.game_tree.node import Node
 from hackable_engine.game_tree.renderer import PrunedTreeRenderer
 from hackable_engine.game_tree.traverser import Traverser
-from hackable_engine.workers.configs.search_worker_counters import SearchWorkerCounters
-from hackable_engine.workers.configs.search_worker_flags import SearchWorkerFlags
 from hackable_engine.workers.configs.search_tree_cache import (
     SearchTreeCache,
 )
+from hackable_engine.workers.configs.search_worker_counters import SearchWorkerCounters
+from hackable_engine.workers.configs.search_worker_flags import SearchWorkerFlags
 from hackable_engine.workers.configs.worker_locks import WorkerLocks
 from hackable_engine.workers.configs.worker_queues import WorkerQueues
 
@@ -54,15 +55,11 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
     Handles the in-memory game tree and controls all tree expansion logic and progress logging.
     """
 
-    board: GameBoardT
-    root: Optional[Node]
-    run_id: str
     limit: int
-
-    debug_log: ClassVar[List] = []
 
     def __init__(
         self,
+        board: GameBoardT,
         locks: WorkerLocks,
         queues: WorkerQueues,
     ):
@@ -70,19 +67,19 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
 
         self.memory_manager = MemoryManager()
 
+        self.board: GameBoardT = board
         self.locks: WorkerLocks = locks
         self.queues: WorkerQueues = queues
 
         self.counters: SearchWorkerCounters = SearchWorkerCounters()
         self.flags: SearchWorkerFlags = SearchWorkerFlags()
-        self.node_cache = SearchTreeCache(None, {})
 
-        self.traverser: Traverser = Traverser(
-            self.node_cache.root,
-            self.node_cache.nodes_dict,
-            self.node_cache.transposition_dict,
-        )
+        root = self._create_root()
+        self.node_cache = SearchTreeCache(root, {ROOT_NODE_NAME: root})
 
+        self.traverser: Traverser = Traverser(self.node_cache)
+
+        self.run_id = self._get_run_id()
         self._reset_counters()
 
     def _reset_counters(self) -> None:
@@ -101,6 +98,8 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
                     f"{WORKER}_{i}", False
                 )
 
+        with self.locks.status_lock:
+            self.memory_manager.set_str(RUN_ID, self.run_id)
         # with self.counters_lock:  # TODO: unclear if is needed
         #     self.memory_manager.set_int(DISTRIBUTED, 0)
 
@@ -127,48 +126,45 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
         else:
             self._set_new_root()
 
-        # TODO: random part is added to decrease chance of collision, but another solution is needed to *never* collide
-        # zfill 3 to fill constant space in memory
-        self.run_id = f"{self.node_cache.root.move}.{run_iteration}.{str(randint(0, 999)).zfill(3)}"
-        # print("searching with run_id: ", self.run_id)
+        self.run_id = self._get_run_id(run_iteration)
         with self.locks.status_lock:
             self.memory_manager.set_str(RUN_ID, self.run_id)
 
-        self.traverser: Traverser = Traverser(
-            self.node_cache.root,
-            self.node_cache.nodes_dict,
-            self.node_cache.transposition_dict,
-        )
+        self.traverser = Traverser(self.node_cache)
+
+    def _get_run_id(self, run_iteration: int = 0) -> str:
+        """"""
+
+        # TODO: random part is added to decrease chance of collision, but another solution is needed to *never* collide
+        # zfill 3 to fill constant space in memory
+        return f"{Node, self.node_cache.root.move}.{run_iteration}.{str(randint(0, 999)).zfill(3)}"
 
     def _reuse_node_cache(self, node_cache: SearchTreeCache) -> None:
         """"""
 
-        # TODO: must be a bug in setting being_processed back to False for nodes after processing
-        # new_root.propagate_being_processed_down()  # TODO: can this run in infinite loop?...
-
         self.node_cache = node_cache
 
-        self.node_cache.root.parent = None  # gc.collect needed ?
+        self.node_cache.root.parent = None
         self.node_cache.nodes_dict = node_cache.nodes_dict
         self.node_cache.transposition_dict = node_cache.transposition_dict
+
+    def _create_root(self) -> Node:
+        """"""
+
+        return Node(
+            parent=None,
+            move=self.board.move_stack[-1].uci() if self.board.move_stack else ROOT_NODE_NAME,
+            score=-INF/2 if self.board.turn else INF/2,
+            forcing_level=0,
+            color=self.board.turn,
+            board=self.board.serialize_position(),
+        )
 
     def _set_new_root(self) -> None:
         """"""
 
-        score = -INF if self.board.turn else INF
-        move = (
-            self.board.move_stack[-1].uci() if self.board.move_stack else ROOT_NODE_NAME
-        )
-
         serialized_board = self.board.serialize_position()
-        self.node_cache.root = Node(
-            parent=None,
-            move=move,
-            score=score / 2,  # divided by 2 to differentiate from checkmate
-            forcing_level=0,
-            color=self.board.turn,
-            board=serialized_board,
-        )
+        self.node_cache.root = self._create_root()
 
         self.node_cache.nodes_dict = {ROOT_NODE_NAME: self.node_cache.root}
         self.node_cache.transposition_dict = self.node_cache.transposition_dict and {
@@ -207,7 +203,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
             if self.board.has_move_limit:
                 limit = min(limit, self.board.get_move_limit())
 
-            self.limit: int = 2**limit  # 14 -> 16384, 15 -> 32768
+            self.limit = 2**limit  # 14 -> 16384, 15 -> 32768
 
         # must set status started before putting the element on queue or else will be discarded
         with self.locks.status_lock:
@@ -233,7 +229,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
                 self.flags.finished
                 and self.counters.evaluated >= self.counters.distributed
             ):  # TODO: should check for equality maybe, but this is safer
-                if await self.main_loop():
+                if await self.main_loop(self.node_cache.root):
                     break
                 await asyncio.sleep(0)
 
@@ -243,7 +239,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
 
         return self.finish_up(time() - t_0)
 
-    async def main_loop(self) -> bool:
+    async def main_loop(self, root: Node) -> bool:
         """
         :returns: if should break the loop
         """
@@ -255,19 +251,19 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
 
         self._update_counters()
 
-        if self._monitor():
+        if self._monitor(root):
             # on a signal to stop the thread
             return True
 
         if self.counters.distributed == 0:
-            if self.node_cache.root.children and not self.flags.started:
-                t = self._select_from_tree(min((4, len(self.node_cache.root.children))))
+            if root.children and not self.flags.started:
+                t = self._select_from_tree(min((4, len(root.children))))
                 print("selecting")
                 if not t:
                     # TODO: leafs sometimes are left `being_processed=True`, fix it
                     print("resetting tree")
                     self.print_tree(0, 3)
-                    self.node_cache.root.propagate_being_processed_down()
+                    root.propagate_being_processed_down()
                 else:
                     self.flags.started = True
 
@@ -281,7 +277,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
                     "raised when: ",
                     self.flags.started,
                     self.run_id,
-                    self.node_cache.root.children,
+                    root.children,
                 )
                 raise
 
@@ -307,7 +303,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
                 self.counters.last_external_distributed = distributed
                 self.counters.distributed = distributed
 
-    def _monitor(self) -> bool:
+    def _monitor(self, root: Node) -> bool:
         """
         Monitor search progress and log events.
 
@@ -367,13 +363,9 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
 
             if PRINTING in [Print.CANDIDATES, Print.TREE]:
                 sorted_children: List[Node] = sorted(
-                    [
-                        child
-                        for child in self.node_cache.root.children
-                        if not child.only_forcing
-                    ],
+                    [child for child in root.children if not child.only_forcing],
                     key=lambda node: node.score,
-                    reverse=self.node_cache.root.color,
+                    reverse=root.color,
                 )
 
                 for child in sorted_children[:PRINT_CANDIDATES]:
@@ -404,7 +396,6 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
         :returns: if should repeat
         """
 
-        # pylint: disable=pointless-string-statement
         gap = self.counters.distributed - self.counters.evaluated
         """
         Goal is to keep this value on a relatively constant level appropriate to processing speed. 
@@ -533,7 +524,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
             # propagate here at the end of capture-fest
             node.being_processed = False
             node.propagate_being_processed_up()
-            node.parent.propagate_score(node.score, None)
+            node.parent.inherit_score(node.score, None)
 
         return False
 

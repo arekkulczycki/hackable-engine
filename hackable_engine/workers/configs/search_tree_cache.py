@@ -11,7 +11,7 @@ class SearchTreeCache:
     Holds data during and after a finished tree search.
     """
 
-    root: Optional[Node]
+    root: Node
     nodes_dict: Dict[str, Node]  # WeakValueDictionary
     transposition_dict: Optional[Dict[bytes, Node]] = None
     """If None then transpositions will not be used in the search process."""
@@ -35,7 +35,7 @@ class SideTreeCache:
     def get_tree_branch(search_tree: SearchTreeCache, move_uci: str) -> SearchTreeCache:
         """Get a branch from the current search tree, depending on the move that has been played."""
 
-        search_tree.root = SideTreeCache._get_next_root(search_tree, move_uci)
+        search_tree.root = search_tree.root and SideTreeCache._get_next_root(search_tree, move_uci)
         search_tree.nodes_dict = SideTreeCache._remap_nodes_dict(
             search_tree.nodes_dict, search_tree.root
         )
@@ -60,7 +60,7 @@ class SideTreeCache:
 
         old_root = self.black.root if color else self.white.root
         old_nodes_dict = self.black.nodes_dict if color else self.white.nodes_dict
-        search_tree.root = SideTreeCache._get_next_grandroot(
+        search_tree.root = old_root and SideTreeCache._get_next_grandroot(
             old_root, child_move, grandchild_move
         )
         if search_tree.root and search_tree.root.children:
@@ -135,7 +135,7 @@ class SideTreeCache:
             if grand and (
                 split_len < 4  # discard first and second level children
                 # discard all nodes that are not descendants of `next_root`
-                or key_split[1] != next_root.parent.move
+                or key_split[1] != (next_root.parent and next_root.parent.move)
                 or key_split[2] != next_root.move
             ):
                 continue

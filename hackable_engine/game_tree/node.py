@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access  #-> complains about protected access to _score, but accessed within the same class
 from __future__ import annotations
 
 from functools import reduce
-from typing import ClassVar, Dict, Generator, List, Optional, Tuple
+from typing import ClassVar, Generator, List, Optional, Tuple
 
 from numpy import float32
 
@@ -26,12 +27,12 @@ class Node:
     """This node has only forcing children generated so far."""
 
     board: bytes
+    """Serialized board representation."""
 
     children: List[Node]
     leaf_color: bool
     leaf_level: int
 
-    # debug_log: ClassVar[Dict] = {}
     debug_log: ClassVar[List] = []
     total: int = 0
 
@@ -63,17 +64,16 @@ class Node:
         self.leaf_color = color
         self.leaf_level = self.level
 
-        # if parent:
-        #     self.debug_log.append(
-        #         ("create", self.name, "\n")
-        #     )
         self.propagate_being_processed_up()
 
+        # assign last because requires other attributes initiated
         self.score = score
-        """assign last because requires other attributes initiated"""
 
     def __repr__(self):
-        return f"Node({self.level}, {self.name}, {self.move}, {round(self._score, 3)}, ini: {round(self.init_score, 3)}, {self.being_processed})"
+        return (
+            f"Node({self.level}, {self.name}, {self.move}, {round(self._score, 3)}, "
+            f"ini: {round(self.init_score, 3)}, {self.being_processed})"
+        )
 
     @property
     def name(self) -> str:
@@ -83,7 +83,9 @@ class Node:
         name: str = self.move
         parent: Optional[Node] = self.parent
         while parent:
-            name = f"{parent.move}.{name}" if parent.parent else f"{ROOT_NODE_NAME}.{name}"
+            name = (
+                f"{parent.move}.{name}" if parent.parent else f"{ROOT_NODE_NAME}.{name}"
+            )
             parent = parent.parent
 
         return name
@@ -105,6 +107,12 @@ class Node:
 
     @score.setter
     def score(self, value: float32, parallel_propagation: bool = True) -> None:
+        """
+        Set score and propagate it up the tree.
+
+        Parallel propagation is an idea in progress, does nothing right now.
+        """
+
         old_value: Optional[float32] = getattr(
             self, "_score", None
         )  # None means is a leaf
@@ -116,104 +124,13 @@ class Node:
             if parallel_propagation:
                 self.propagate_parallel(value, old_value)
             else:
-                parent.propagate_score(value, old_value)
+                parent.inherit_score(value, old_value)
 
-    def propagate_parallel(self, value: float32, old_value: float32):
-        """
-        The idea was to somehow vectorize and run with GPU, but so far it's not yet so.
-        """
+    def inherit_score(self, value: float32, old_value: Optional[float32]) -> None:
+        """Assign the score to self from a given value or children."""
 
-        parents_list: List[Tuple[Node, List[Node]]] = list(self.generate_parents())
-
-        for node, children in parents_list:
-            if node.color:
-                if node.only_forcing:
-                    if value < node.score:
-                        self.set_score(value)
-                    else:
-                        break
-                else:
-                    if value > node.score:
-                        # score increased, propagate immediately
-                        self.set_score(value)
-                    elif old_value is not None and value < old_value < node.score:
-                        # score decreased, but old score indicates an insignificant node
-                        break
-                    else:
-                        # score decreased, propagate the highest child score
-                        self.set_score(reduce(self.maximal, children)._score)
-            else:
-                if node.only_forcing:
-                    if value < node.score:
-                        self.set_score(value)
-                    else:
-                        break
-                else:
-                    if value < node.score:
-                        # score increased (relatively), propagate immediately
-                        self.set_score(value)
-                    elif old_value is not None and value > old_value > node.score:
-                        # score decreased (relatively), but old score indicates an insignificant node
-                        break
-                    else:
-                        # score decreased, propagate the lowest child score
-                        self.set_score(reduce(self.minimal, children)._score)
-
-    def generate_parents(self) -> Generator[Tuple[Node, List[Node]], None, None]:
-        """"""
-
-        node = self.parent
-        while node:
-            yield node, node.children
-            node = node.parent
-
-    # @property
-    # def being_processed(self) -> bool:
-    #     return self._being_processed
-    #
-    # @being_processed.setter
-    # def being_processed(self, v: bool) -> None:
-    #     self.debug_log.append(
-    #         ("process", self.name, str(v), "\n")
-    #     )
-    #     self._being_processed = v
-
-    def propagate_being_processed_up(self) -> None:
-        """"""
-
-        if self.parent:
-            if self.leaf_level > self.parent.leaf_level:
-                self.parent.leaf_level = self.leaf_level
-                self.parent.leaf_color = self.leaf_color
-
-            if not self.being_processed and self.parent.being_processed:
-                # switch parent to not being processed if node is not being processed anymore
-                self.parent.being_processed = False
-
-            self.parent.propagate_being_processed_up()
-
-    def propagate_being_processed_down(self) -> None:
-        """"""
-
-        self.being_processed = False
-        for child in self.children:
-            child.propagate_being_processed_down()
-
-    def propagate_score(
-        self, value: float32, old_value: Optional[float32]
-    ) -> None:
-        """"""
-
-        score: Optional[float32]
-        propagating_children: List[Node]
-
-        children = self.children
-
-        if not children:
-            self.set_score(value)
-
-        elif self.being_processed:
-            # if being processed it means not all forcing children have finished processing, therefore can wait
+        if self.being_processed:
+            # if being processed it means not all children have finished processing, therefore can wait
             pass
 
         elif self.parent is not None:
@@ -222,22 +139,31 @@ class Node:
             if self.only_forcing:
                 self.propagate_only_forcing(value)
             else:
-                self.propagate_optimal(children, parent_score, value, old_value)
+                self.propagate_optimal(self.children, parent_score, value, old_value)
 
     def propagate_only_forcing(self, value: float32) -> None:
         """
         Propagate score to this node knowing that all children are forcing moves.
-        In such case the value can only go one way (forcing moves are assumed to be "good" by definition).
-        """
 
-        if not self.color:
-            if value < self.score:
-                self.score = value
-        else:
+        In such case the value can only go one way (forcing moves are assumed to be "good" by definition).
+        If for whatever reason the score does not improve we keep the old one and skip propagation.
+        """
+        # pylint: disable=consider-using-max-builtin,consider-using-min-builtin
+
+        if self.color:
             if value > self.score:
                 self.score = value
+        else:
+            if value < self.score:
+                self.score = value
 
-    def propagate_optimal(self, children: List[Node], parent_score: float32, value: float32, old_value: float32):
+    def propagate_optimal(
+        self,
+        children: List[Node],
+        parent_score: float32,
+        value: float32,
+        old_value: Optional[float32],
+    ):
         """"""
 
         if self.color:
@@ -259,16 +185,72 @@ class Node:
             else:
                 self.score = reduce(self.minimal, children)._score
 
+    def propagate_parallel(self, value: float32, old_value: Optional[float32]):
+        """
+        The idea was to somehow vectorize and run with GPU, but so far it's not yet so.
+
+        Work in progress...
+        """
+
+        parents_list: List[Tuple[Node, List[Node]]] = list(self.generate_parents())
+
+        for node, children in parents_list:
+            if node.only_forcing:
+                # @see `propagate_only_forcing`
+                self.set_score(value)
+
+            elif node.color:
+                if value > node.score:
+                    # score increased, propagate immediately
+                    self.set_score(value)
+                elif old_value is not None and value < old_value < node.score:
+                    # score decreased, but old score indicates an insignificant node
+                    break
+                else:
+                    # score decreased, propagate the highest child score
+                    self.set_score(reduce(self.maximal, children)._score)
+            else:
+                if value < node.score:
+                    # score increased (relatively, for black), propagate immediately
+                    self.set_score(value)
+                elif old_value is not None and value > old_value > node.score:
+                    # score decreased (relatively, for black), but old score indicates an insignificant node
+                    break
+                else:
+                    # score decreased, propagate the lowest child score
+                    self.set_score(reduce(self.minimal, children)._score)
+
+    def generate_parents(self) -> Generator[Tuple[Node, List[Node]], None, None]:
+        node = self.parent
+        while node:
+            yield node, node.children
+            node = node.parent
+
+    def propagate_being_processed_up(self) -> None:
+        """Propagate the node feature up the tree to keep track of which branches are free to be processed."""
+
+        if self.parent:
+            if self.leaf_level > self.parent.leaf_level:
+                self.parent.leaf_level = self.leaf_level
+                self.parent.leaf_color = self.leaf_color
+
+            if not self.being_processed and self.parent.being_processed:
+                # switch parent to not being processed if node is not being processed anymore
+                self.parent.being_processed = False
+
+            self.parent.propagate_being_processed_up()
+
+    def propagate_being_processed_down(self) -> None:
+        """Propagate recursively down the tree simply to switch the value in the entire tree."""
+
+        self.being_processed = False
+        for child in self.children:
+            child.propagate_being_processed_down()
+
     def set_score(self, value: float32) -> None:
-        """Set score skipping property setter (propagation)."""
+        """Set score skipping property setter for performance."""
 
         self._score = value
-
-    def has_grand_children(self) -> bool:
-        for child in self.children:
-            if child.children:
-                return True
-        return False
 
     @staticmethod
     def minimal(x: Node, y: Node) -> Node:
@@ -279,6 +261,8 @@ class Node:
         return x if x._score > y._score else y
 
     def is_descendant_of(self, node: Node) -> bool:
+        """Tell if `self` is a descendant of a given node,"""
+
         expected = self.parent
         while expected:
             if expected is node:

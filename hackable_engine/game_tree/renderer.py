@@ -38,11 +38,12 @@ class PrunedTreeRenderer(RenderTree):
     def __next(self, node: Node, continues, level=0) -> Generator:
         """"""
 
-        yield self._RenderTree__item(node, continues, self.style)
+        yield self._RenderTree__item(  # pylint: disable=no-member
+            node, continues, self.style
+        )
         children = node.children
         new_children = ()
-        for i in range(len(children)):
-            child = children[i]
+        for child in children:
             if (
                 self.path
                 and (level > 0)
@@ -57,10 +58,7 @@ class PrunedTreeRenderer(RenderTree):
         if children and (self.maxlevel is None or level < self.maxlevel):
             children = self.childiter(children)
             for child, is_last in _is_last(children):
-                for grandchild in self.__next(
-                    child, continues + (not is_last,), level=level
-                ):
-                    yield grandchild
+                yield from self.__next(child, continues + (not is_last,), level=level)
 
     def has_deep_family(self, node: Node) -> bool:
         """"""

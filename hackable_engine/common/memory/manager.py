@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 from struct import pack, unpack
-from typing import Any, List, Optional
+from typing import Any, Optional
 
-# from larch.pickle.pickle import dumps, loads
+from nptyping import NDArray
+
 from numpy import float32, ndarray
 
 from hackable_engine.board import GameBoardBase
 from hackable_engine.common.constants import MEMORY_HANDLER, MemoryHandler
-
 from hackable_engine.common.memory.base_memory import BaseMemory
-from hackable_engine.common.queue.items.base_item import BaseItem
 from hackable_engine.criteria.evaluation.base_eval import WeightsType
 
 if MEMORY_HANDLER == MemoryHandler.SHARED_MEM:
-    from hackable_engine.common.memory.adapters.shared_memory_adapter import SharedMemoryAdapter
+    from hackable_engine.common.memory.adapters.shared_memory_adapter import (
+        SharedMemoryAdapter,
+    )
 elif MEMORY_HANDLER == MemoryHandler.REDIS:
     from hackable_engine.common.memory.adapters.redis_adapter import RedisAdapter
 elif MEMORY_HANDLER == MemoryHandler.WASM:
@@ -45,7 +46,7 @@ class MemoryManager:
         return ndarray(shape=(size,), dtype=float32, buffer=action_bytes)
 
     def set_action(self, action: WeightsType, size: int) -> None:
-        data = ndarray(shape=(size,), dtype=float32)
+        data: NDArray = ndarray(shape=(size,), dtype=float32)
         data[:] = (*action,)
 
         self.memory.set("action", data.tobytes())

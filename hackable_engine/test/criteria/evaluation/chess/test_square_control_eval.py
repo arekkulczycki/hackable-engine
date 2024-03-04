@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# type: ignore
 from itertools import cycle
 from time import perf_counter
 from unittest import TestCase

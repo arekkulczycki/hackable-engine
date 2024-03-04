@@ -71,12 +71,14 @@ class HexBoardSerializerMixin:
 
         if self.size < 9:
             return (self.occupied_co[color],)
-        elif self.size < 12:
+
+        if self.size < 12:
             return self.split_bitboard_in_two_components(self.occupied_co[color])
-        elif self.size < 14:
+
+        if self.size < 14:
             return self.split_bitboard_in_three_components(self.occupied_co[color])
-        else:
-            raise NotImplementedError("Larger than 24x24 board size not implemented")
+
+        raise NotImplementedError("Larger than 24x24 board size not implemented")
 
     @staticmethod
     def split_bitboard_in_two_components(b: BitBoard) -> Tuple[BitBoard, BitBoard]:
@@ -101,13 +103,15 @@ class HexBoardSerializerMixin:
 
         if self.size < 9:
             return unpack("Q", bytes_)[0]
-        elif self.size < 12:
+
+        if self.size < 12:
             return unpack("Q", bytes_[:8])[0] + (unpack("Q", bytes_[8:])[0] << 64)
-        elif self.size < 14:
+
+        if self.size < 14:
             return (
                 unpack("Q", bytes_[:8])[0]
                 + (unpack("Q", bytes_[8:16])[0] << 64)
                 + (unpack("Q", bytes_[16:])[0] << 2 * 64)
             )
-        else:
-            raise NotImplementedError("Larger than 24x24 board size not implemented")
+
+        raise NotImplementedError("Larger than 24x24 board size not implemented")
