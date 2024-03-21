@@ -2,20 +2,22 @@
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from copy import copy
 from functools import reduce
 from itertools import groupby, product
 from operator import ior
-from typing import Callable, Dict, Generator, Iterator, List, Optional, Tuple
+from random import randint
+from typing import Callable, Dict, Generator, Iterator, List, Optional, Tuple, Iterable
 
-from astar import find_path
-from nptyping import Int8, NDArray, Shape
+from astar import find_path, SearchNode
+from nptyping import Int8, NDArray, Shape, Float32
 from numpy import asarray, empty, float32, int8, mean, zeros
 
 from hackable_engine.board import BitBoard, GameBoardBase
 from hackable_engine.board.hex.bitboard_utils import (
     generate_masks,
-    int_to_inverse_binary_array,
+    int_to_inverse_binary_array, get_random_mask,
 )
 from hackable_engine.board.hex.move import Move, CWCounter
 from hackable_engine.board.hex.serializers import BoardShapeError
@@ -29,10 +31,10 @@ Cell = int
 SIZE = 13
 
 NEIGHBOURHOOD_DIAMETER: int = 7
-ZERO: Int8 = int8(0)
-ONE: Int8 = int8(1)
-TWO: Int8 = int8(2)
-MINUS_ONE: Int8 = int8(-1)
+ZERO: Float32 = float32(0)
+ONE: Float32 = float32(1)
+TWO: Float32 = float32(2)
+MINUS_ONE: Float32 = float32(-1)
 
 
 class HexBoard(HexBoardSerializerMixin, GameBoardBase):
@@ -73,11 +75,11 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         """Half of cells except the short diagonal."""
 
         self.bb_rows: List[BitBoard] = [
-            reduce(ior, [1 << (col + row * size) for col in range(size)])
+            reduce(ior, self._generate_row_masks(row))
             for row in range(size)
         ]
         self.bb_cols: List[BitBoard] = [
-            reduce(ior, [(1 << col) << (row * size) for row in range(size)])
+            reduce(ior, self._generate_col_masks(col))
             for col in range(size)
         ]
         self.vertical_coeff = 2**self.size
@@ -87,8 +89,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         if notation:
             self.initialize_notation(notation, init_move_stack)
 
-        self.short_diagonal_mask = self._get_short_diagonal_mask()
-        self.long_diagonal_mask = self._get_long_diagonal_mask()
+        # self.short_diagonal_mask = self._get_short_diagonal_mask()
+        # self.long_diagonal_mask = self._get_long_diagonal_mask()
 
     def initialize_notation(self, notation: str, init_move_stack: bool = False) -> None:
         """"""
@@ -310,7 +312,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         if self.is_black_win():  # last move was black
             return False
 
-        elif self.is_white_win():  # last move was white
+        if self.is_white_win():  # last move was white
             return True
 
         return None
@@ -546,6 +548,18 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         """"""
 
         yield from ()
+
+    def get_random_move(self) -> Move:
+        """"""
+
+        return Move(self.get_random_unoccupied_mask(self.size_square - len(self.move_stack)), self.size)
+
+    def get_random_unoccupied_mask(self, empty_cells: Optional[int] = None) -> BitBoard:
+        """"""
+
+        empty_cells = empty_cells or self.size_square
+
+        return get_random_mask(self.unoccupied, randint(0, empty_cells - 1))
 
     def generate_moves(self) -> Generator[Move, None, None]:
         """
@@ -970,11 +984,11 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         return array
 
     def as_matrix(
-        self, black_stone_val: Int8 = MINUS_ONE, empty_val: Int8 = ZERO
-    ) -> NDArray:
+        self, black_stone_val: Float32 = MINUS_ONE, empty_val: Float32 = ZERO
+    ) -> NDArray[Shape, Float32]:
         """"""
 
-        array: NDArray = empty((self.size, self.size), dtype=int8)
+        array: NDArray[Shape, Float32] = empty((1, self.size, self.size), dtype=float32)
 
         return self._as_matrix(
             array,
@@ -988,12 +1002,47 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     # @numba.njit()
     @staticmethod
     def _as_matrix(
+        array: NDArray[Shape, Float32],
+        size: int,
+        occupied_white: int,
+        occupied_black: int,
+        black_val: Float32 = MINUS_ONE,
+        empty_val: Float32 = ZERO,
+    ) -> NDArray[Shape, Float32]:
+        """"""
+
+        mask: BitBoard = 1
+
+        for row in range(size):
+            for col in range(size):
+                array[0][row][col] = (
+                    black_val
+                    if mask & occupied_black
+                    else ONE if mask & occupied_white else empty_val
+                )
+
+                mask <<= 1
+
+        return array
+
+    def as_matrix_channelled(self) -> NDArray:
+        """"""
+
+        array: NDArray = empty((2, self.size, self.size), dtype=int8)
+
+        return self._as_matrix_channelled(
+            array,
+            self.size,
+            self.occupied_co[True],
+            self.occupied_co[False],
+        )
+
+    @staticmethod
+    def _as_matrix_channelled(
         array: NDArray[Shape, Int8],
         size: int,
-        o_white: int,
-        o_black: int,
-        black_val: Int8 = MINUS_ONE,
-        empty_val: Int8 = ZERO,
+        occupied_white: int,
+        occupied_black: int,
     ) -> NDArray:
         """"""
 
@@ -1001,13 +1050,10 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         for row in range(size):
             for col in range(size):
-                occupied_white = mask & o_white
-                occupied_black = mask & o_black
-                array[row][col] = (
-                    black_val
-                    if occupied_black
-                    else ONE if occupied_white else empty_val
-                )
+                if occupied_white & mask:
+                    array[1][row][col] = 1
+                elif occupied_black & mask:
+                    array[0][row][col] = 1
 
                 mask <<= 1
 
@@ -1114,6 +1160,38 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return mask
 
+    def _generate_row_masks(self, row: int) -> Generator[BitBoard, None, None]:
+        """"""
+
+        yield from (1 << (col + row * self.size) for col in range(self.size))
+
+    def _generate_col_masks(self, col: int) -> Generator[BitBoard, None, None]:
+        """"""
+
+        yield from ((1 << col) << (row * self.size) for row in range(self.size))
+
+    def get_area_moves(self, col_range: Tuple[int, int], row_range: Tuple[int, int]) -> List[Move]:
+        """"""
+
+        return [Move(mask, self.size) for mask in generate_masks(self.get_area_mask(col_range, row_range))]
+
+    def get_area_mask(self, col_range: Tuple[int, int], row_range: Tuple[int, int]) -> BitBoard:
+        """"""
+
+        return reduce(ior, self.generate_masks_from_area(col_range, row_range)) & self.occupied
+
+    def generate_masks_from_area(self, col_range: Tuple[int, int], row_range: Tuple[int, int]) -> Generator[BitBoard, None, None]:
+        """"""
+
+        yield from (1 << (col + row * self.size) for col in range(*col_range) for row in range(*row_range))
+
+    def generate_moves_from_area(self, col_range: Tuple[int, int], row_range: Tuple[int, int], visited: BitBoard = 0) -> Generator[Move, None, None]:
+        """"""
+
+        for mask in self.generate_masks_from_area(col_range, row_range):
+            if mask & self.unoccupied & ~visited:
+                yield Move(mask, self.size)
+
     def get_move_limit(self) -> int:
         """
         :returns: number of permutations how the board can be filled
@@ -1124,9 +1202,11 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def distance_missing(
         self, mask_from: BitBoard, mask_to: BitBoard, color: bool
-    ) -> int:
+    ) -> Tuple[int, List[BitBoard]]:
         """
         Calculate how many stones are missing to finish the connection from one cell to another.
+
+        The astar algorithm is imperfect, a wrong result example is written in tests for this module.
         """
 
         un_oc = self.unoccupied
@@ -1138,15 +1218,16 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             mask_from,
             mask_to,
             neighbors_fnct=lambda mask: gen(mask, among=among),
-            distance_between_fnct=lambda m_from, m_to: (  # this function doesn't seem to be taken by astar
+            distance_between_fnct=lambda m_from, m_to: (
                 0.0 if m_to & oc_co else 1.0
             ),
         )
 
         if path is None:
-            return self.size
+            return (self.size_square, [])
 
-        return len([mask for mask in path if mask & self.unoccupied])
+        masks = [mask for mask in path if mask & self.unoccupied]
+        return len(masks), masks
 
     def get_shortest_missing_distance(self, color: bool) -> int:
         """
@@ -1163,8 +1244,46 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             connection_points_start, connection_points_finish
         )
         return min(
-            self.distance_missing(*pair, color) for pair in connection_points_pairs
+            d for d, p in (self.distance_missing(*pair, color) for pair in connection_points_pairs)
         )
+
+    def get_short_missing_distances(self, color: bool) -> Tuple[int, Dict[int, int]]:
+        """
+        Calculate how many stones are missing to finish the connection between two sides.
+        """
+
+        connection_points_start: List[BitBoard] = self._get_start_points(color)
+        connection_points_finish: List[BitBoard] = self._get_finish_points(color)
+
+        if not (connection_points_start and connection_points_finish):
+            raise ValueError("searching shortest missing distance on game over")
+
+        connection_points_pairs: product[Tuple[BitBoard, BitBoard]] = product(
+            connection_points_start, connection_points_finish
+        )
+
+        shortest_distance = self.size_square
+        variants = defaultdict(lambda: 0)
+        unique_paths = set()
+        shortest_path = set()
+        for pair in connection_points_pairs:
+            length, path = self.distance_missing(*pair, color)
+            if not path:
+                continue
+
+            if length < shortest_distance:
+                shortest_distance = length
+                shortest_path = set(path)
+                unique_paths = {p for p in unique_paths if not shortest_path.issubset(p)}
+
+            masks = tuple(path)
+            if length < self.size and masks not in unique_paths and (length == shortest_distance or not shortest_path.issubset(set(masks))):
+                unique_paths.add(masks)
+
+        for p in unique_paths:
+            variants[len(p)] += 1
+
+        return shortest_distance, variants
 
     def pair_name(self, pair):
         """"""
@@ -1199,19 +1318,18 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         ] + [(start, finish_corner) for start in connection_points_start]
 
         return min(
-            self.distance_missing(*pair, color) for pair in connection_points_pairs
+            (distance for distance, path in (self.distance_missing(*pair, color) for pair in connection_points_pairs))
         )
 
     def _get_start_points(self, color: bool) -> List[BitBoard]:
         """Top row or left column."""
 
+        opp = self.occupied_co[not color]
         if color:
-            opp = self.occupied_co[not color]
             masks = list(generate_masks(self.bb_cols[0] & ~opp))
             return masks
 
         else:
-            opp = self.occupied_co[not color]
             masks = list(generate_masks(self.bb_rows[0] & ~opp))
             return masks
 

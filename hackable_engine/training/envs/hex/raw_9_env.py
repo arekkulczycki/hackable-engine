@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 from collections import defaultdict
 from itertools import cycle
-from random import choice
+from random import choice, shuffle
 from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
 
 import gymnasium as gym
 import numpy as np
 import torch as th
 from gymnasium.core import ActType, ObsType, RenderFrame
+from gymnasium.envs.registration import register
+from nptyping import NDArray, Shape, Float32
 from numpy import float32
 from stable_baselines3.common.policies import ActorCriticPolicy
 
 from hackable_engine.board.hex.hex_board import HexBoard, Move
-from hackable_engine.common.constants import Game, Print
 from hackable_engine.controller import Controller
 
 ZERO: float32 = float32(0)
@@ -30,8 +31,9 @@ Give at most penalty equal to float32(0.0003) = HIGHEST_DISTRIBUTION_PENALTY * D
 A 9x9 game can take ~3250 evaluations, so maximum total penalty could sum up to 1 at worst,
 """
 
-BEING_CLOSER_BONUS: float32 = float32(0.025)
-BALANCED_POSITION_BONUS: float32 = float32(0.05 / (3/4 * 9))
+BEING_CLOSER_BONUS: float32 = float32(0.005)
+BEING_CLOSER_SCORE: float32 = float32(0.01)
+BALANCED_POSITION_BONUS: float32 = float32(0.01 / (3/4 * 9))
 
 # fmt: off
 openings = cycle(
@@ -54,9 +56,9 @@ class Raw9Env(gym.Env):
         False: MINUS_ONE,
     }
 
-    reward_range = (REWARDS[False], REWARDS[True])
+    reward_range = (2 * REWARDS[False], 2 * REWARDS[True])
     observation_space = gym.spaces.Box(
-        -1, 1, shape=(BOARD_SIZE, BOARD_SIZE), dtype=float32
+        -1, 1, shape=(1, BOARD_SIZE, BOARD_SIZE), dtype=float32
     )  # should be int8
     action_space = gym.spaces.Box(ZERO, ONE, shape=(1,), dtype=float32)
 
@@ -66,13 +68,16 @@ class Raw9Env(gym.Env):
     policy: Optional[ActorCriticPolicy] = None
 
     def __init__(
-        self, *args, controller: Optional[Controller] = None, color: bool = True, models: List = []
+        self, *args, render_mode = None, controller: Optional[Controller] = None, color: bool = True, models: List = []
     ):
         """"""
 
         super().__init__()
         self.color = color
-        self.models = models
+        self.models = models if isinstance(models, List) else models()
+        self.agent_num = 1
+        self.parallel_env_num = 1
+        self.env_name = "raw9hex"
 
         if controller:
             self.controller = controller
@@ -93,16 +98,21 @@ class Raw9Env(gym.Env):
 
         self.moves: Generator[Move, None, None] = HexBoard.generate_nothing()
         # self.moves_list: List[Move] = []
-        self.best_move: Optional[Tuple[Move, Tuple[float32]]] = None
+        self.best_move: Optional[Tuple[Move, float32]] = None
         self.current_move: Optional[Move] = None
+
+        self.PRINCIPLE_BONUS_PARAM = self.controller.board.size * 3 / 4
 
     def render(self, mode="human", close=False) -> RenderFrame:
         """"""
 
-        notation = self.controller.board.get_notation()
-        print("render: ", self.winner, notation, self._get_reward(self.winner))
-        print("moves done: ", self.moves_done)
-        return notation
+        if self.controller.board.move_stack:
+            notation = self.controller.board.get_notation()
+            self.controller.board.pop()
+            bonus = self._get_score_for_whos_closer(len(self.controller.board.move_stack), 6, early_finish=False)
+            print("render: ", self.winner, notation, bonus)  #, self._get_reward(self.winner, None, True))
+            return notation
+        return ""
 
     def reset(
         self,
@@ -117,10 +127,7 @@ class Raw9Env(gym.Env):
         self.render()
 
         self.opp_model = choice(self.models)
-
-        # if self.opening:
-        #     self.games += 1
-        #     self.scores[self.opening] += 1 if self.winner else -1
+        self.winner = None
 
         notation = next(openings)
         self.opening = notation
@@ -142,61 +149,14 @@ class Raw9Env(gym.Env):
     def _prepare_child_moves(self) -> None:
         """Reset generator and play the first option to be evaluated."""
 
-        self.moves = self.controller.board.legal_moves  # returns new generator
+        shuffled_moves = list(self.controller.board.legal_moves)
+        shuffle(shuffled_moves)
+        self.moves = (move for move in shuffled_moves)  # returns new generator
         self.current_move = next(self.moves)
-        # self.moves_list = list(self.moves)
-        # self.current_move = self.moves_list[random.randint(0, len(self.moves_list) - 1)]
-        # self.moves_list.remove(self.current_move)
 
         self.best_move = None
         self.generations = 1
         self.controller.board.push(self.current_move)
-
-    def _step_aggregated(
-        self, action: ActType
-    ) -> Tuple[ObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
-        """
-        Perform policy evaluation on each legal move before finishing the step.
-
-        Takes significantly more RAM as each environment independently loads policy weights.
-
-        Action is disregarded because gives a score of an initial position (not of any actual move to be analysed).
-        """
-
-        best_move: Tuple[float32, Move, th.Tensor] = (
-            action[0],
-            self.current_move,
-            self.obs,
-        )
-        self.controller.board.pop()  # popping the current move which is on the board since reset
-
-        for move in self.moves:
-            observation, score = self._get_obs_and_score(move)
-
-            if not best_move or score > best_move[0]:
-                best_move = (score, move, observation)
-
-        scr, _, obs = best_move
-        winner = self.controller.board.winner()
-
-        # if the last move didn't conclude the game, now play opponent move
-        if winner is None:
-            # self.controller.make_move(DEFAULT_ACTION)
-#            self._make_random_move(self.controller.board)
-            self._make_self_trained_move(self.controller.board, self.opp_model, not self.color)
-
-            winner = self.controller.board.winner()
-
-            # if the opponent move didn't conclude, reset move generator and play the first option to be evaluated
-            if winner is None:
-                self._prepare_child_moves()
-
-        reward = self._get_reward(winner, scr)
-
-        self.winner = winner
-        self.moves_done += 1
-
-        return obs, reward, winner is not None, False, {}
 
     def _step_legacy(
         self,
@@ -210,6 +170,9 @@ class Raw9Env(gym.Env):
         To play training moves no engine search is required - a move is selected based on direct evaluation (0 depth).
         """
 
+        if self.winner is not None:
+            return self.obs, ONE if self.winner else ZERO, True, False, {}
+
         legal_moves_exhausted = False
 
         score = action[0]
@@ -220,13 +183,23 @@ class Raw9Env(gym.Env):
         else:
             best_score = self.best_move[1]
             current_score = score
-            p = 1 if self.generations < 6 else 0.75 if self.generations < 12 else 0.5 if self.generations < 20 else 0.25
-            if current_score > best_score and np.random.choice([True, False], p=[p, 1 - p]):
+            # p = 1 if self.generations < 6 else 0.75 if self.generations < 12 else 0.5 if self.generations < 20 else 0.25
+            # if current_score > best_score and np.random.choice([True, False], p=[p, 1 - p]):
+            if current_score > best_score:
                 self.best_move = (self.current_move, score)
 
         try:
+            # if the move gets maximum score then stop searching for a better one
+            if self.best_move[1] >= 1:  # np.isclose(self.best_move[1], 1):
+                raise StopIteration
             # if doesn't raise then there are still moves to be evaluated
             self.current_move = next(self.moves)
+        except StopIteration:
+            winner = self._on_stop_iteration()
+
+            legal_moves_exhausted = True
+        else:
+            # continue with the `self.current_move`
 
             # undo last move that was just evaluated
             self.controller.board.pop()
@@ -236,52 +209,48 @@ class Raw9Env(gym.Env):
 
             winner = None
 
-        except StopIteration:
-            # all moves evaluated - undo the last and push the best move on the board
-            # print("best move: ", self.best_move[0].get_coord(), self.best_move[1])
-            assert self.controller.board.turn is not self.color
-            self.controller.board.pop()
-            self.controller.board.push(self.best_move[0])
-            assert self.controller.board.turn is not self.color
-
-            winner = self.controller.board.winner()
-
-            # if the last move didn't conclude the game, now play opponent move and reset generator
-            if winner is None:
-                # playing against a configured action or an action from self-trained model
-                # obs = reshape(self.observation_from_board().astype(float32), (1, 49))
-                # opp_action, value = self.opp_model.run(None, {"input": obs})
-                # self.controller.make_move(self.prepare_action(opp_action[0]))
-
-                # self.controller.make_move(DEFAULT_ACTION, search_limit=choice((0, 8)))
-
-                # self._make_random_move(self.controller.board)
-                self._make_self_trained_move(self.controller.board, self.opp_model, not self.color)
-
-                # reset generator and play the first option to be evaluated, regardless if the game is concluded
-                try:
-                    self._prepare_child_moves()
-                except StopIteration:
-                    # can only happen if the black player fills the last empty cell in the board
-                    winner = False
-                else:
-                    # the winner is checked after the move preparation in order to avoid calculating reward for game over
-                    winner = self.controller.board.winner_no_turn()
-
-                    if winner is (not self.color):
-                        # if the opponent move concluded, undo the generated first move
-                        self.controller.board.pop()
-                        assert self.controller.board.turn is self.color
-
-            legal_moves_exhausted = True
+        reward = self._get_reward(winner, score, legal_moves_exhausted)
+        if winner is None and np.isclose(abs(reward), 1):
+            winner = self.color if reward > 0 else not self.color
 
         self.obs = self.observation_from_board(self.controller.board)
         self.winner = winner
         self.moves_done += 1
 
-        reward = self._get_reward(winner, score, legal_moves_exhausted)
-
         return self.obs, reward, winner is not None, False, {"action": score, "winner": winner, "reward": reward, "opening": self.opening}
+
+    def _on_stop_iteration(self):
+        """"""
+
+        # all moves evaluated - undo the last and push the best move on the board
+        self.controller.board.pop()
+        self.controller.board.push(self.best_move[0])
+
+        winner = self.controller.board.winner()
+
+        # if the last move didn't conclude the game, now play opponent move and reset generator
+        if winner is None:
+            # self.controller.make_move(DEFAULT_ACTION, search_limit=choice((0, 8)))
+
+            # self._make_random_move(self.controller.board)
+            self._make_self_trained_move(self.controller.board, self.opp_model, not self.color)
+
+            # reset generator and play the first option to be evaluated, regardless if the game is concluded
+            try:
+                self._prepare_child_moves()
+            except StopIteration:
+                # can only happen if the black player fills the last empty cell in the board
+                winner = False
+            else:
+                # the winner is checked after the move preparation in order to avoid calculating reward for game over
+                winner = self.controller.board.winner_no_turn()
+
+                if winner is (not self.color):
+                    # if the opponent move concluded, undo the generated move
+                    self.controller.board.pop()
+                    assert self.controller.board.turn is self.color
+
+        return winner
 
     def _get_obs_and_score(self, move: Move) -> Tuple[th.Tensor, float32]:
         """"""
@@ -420,26 +389,28 @@ class Raw9Env(gym.Env):
 
         else:
             # the reward when game is being continued, 0 except when we want to punish or encourage some choices
-            bonus = ZERO
-            if is_final_selection and n_moves > 0 and n_moves % 6 == (0 if self.color else 1):  # `n_moves` is `n_moves/2` full moves
-                bonus = self._get_reward_for_whos_closer(n_moves, 31) + self._principle_bonus()
+            if is_final_selection and n_moves > 0:  # and n_moves % 6 == (0 if self.color else 1):  # `n_moves` is `n_moves/2` full moves
+                return self._get_score_for_whos_closer(n_moves, 6, early_finish=False)  # + (self._principle_bonus() if n_moves < 12 else ZERO)
+                # bonus = self._get_reward_for_whos_closer(n_moves, 24)
                 # bonus = self._principle_bonus()
 
-            # return ZERO
-            return self._imbalanced_score_penalty(score) + bonus if score is not None else bonus
+            # return bonus
+            return ZERO
+            # return self._imbalanced_score_penalty(score) if score is not None else ZERO
 
         return float32(reward)
 
     def _quick_win_value(self, n_moves: int) -> float:
         """The more moves are played the higher the punishment."""
 
-        return max(0, (n_moves - 18)) / 126
+        # return 0.0
+        return max(0, (n_moves - 18)) / 120
 
     def _principle_bonus(self) -> float32:
         """Balanced distribution of stones is always preferred. 3/4 of board size is the highest value."""
 
         imbalance, central_imbalance = self.controller.board.get_imbalance(self.color)
-        return float32(self.controller.board.size * 3 / 4 - imbalance - central_imbalance) * BALANCED_POSITION_BONUS
+        return float32(self.PRINCIPLE_BONUS_PARAM - imbalance - central_imbalance) * BALANCED_POSITION_BONUS
 
     @staticmethod
     def _imbalanced_score_penalty(score: float32) -> float32:
@@ -459,13 +430,43 @@ class Raw9Env(gym.Env):
         """Only if is closer by a margin larger than 1, to eliminate the first move advantage bonus."""
 
         if n_moves <= move_threshold:
-            c = self.controller.board.get_shortest_missing_distance_perf(self.color)
-            nc = self.controller.board.get_shortest_missing_distance_perf(not self.color)
+            color_missing = 0  #self.controller.board.get_shortest_missing_distance_perf(self.color)
+            opponent_missing = 0  #self.controller.board.get_shortest_missing_distance_perf(not self.color)
         else:
-            c = self.controller.board.get_shortest_missing_distance(self.color)
-            nc = self.controller.board.get_shortest_missing_distance(not self.color)
-        c_closer_by = float32(nc - c)
-        return BEING_CLOSER_BONUS * c_closer_by if abs(c_closer_by) > 2 else ZERO
+            color_missing = self.controller.board.get_shortest_missing_distance(self.color)
+            opponent_missing = self.controller.board.get_shortest_missing_distance(not self.color)
+        c_closer_by = float32(opponent_missing - color_missing)
+
+        # finish game is advantage is sufficient
+        if n_moves > move_threshold:
+            if c_closer_by >= 4 and color_missing < c_closer_by:
+                return ONE
+            if c_closer_by <= -4 and opponent_missing < -c_closer_by:
+                return MINUS_ONE
+        return ZERO
+        # return BEING_CLOSER_BONUS * c_closer_by
+
+    def _get_score_for_whos_closer(self, n_moves: int, move_threshold: int, early_finish: bool = True) -> float32:
+        """Only if is closer by a margin larger than 1, to eliminate the first move advantage bonus."""
+
+        if n_moves <= move_threshold:
+            return ZERO
+
+        color_missing, color_variants = self.controller.board.get_short_missing_distances(self.color)
+        opponent_missing, opponent_variants = self.controller.board.get_short_missing_distances(not self.color)
+
+        # finish game is advantage is sufficient
+        if early_finish:
+            c_closer_by = float32(opponent_missing - color_missing)
+            if c_closer_by >= 4 and color_missing < c_closer_by:
+                return ONE
+            if c_closer_by <= -4 and opponent_missing < -c_closer_by:
+                return MINUS_ONE
+
+        color_score = sum(((9 - k)**3/81 * v) for k, v in color_variants.items())
+        opponent_score = sum(((9 - k)**3/81 * v) for k, v in opponent_variants.items())
+
+        return (color_score - opponent_score) * BEING_CLOSER_SCORE
 
     @staticmethod
     def _make_random_move(board):
@@ -502,10 +503,10 @@ class Raw9Env(gym.Env):
         board.push(best_move)
 
     @staticmethod
-    def observation_from_board(board) -> th.Tensor:
+    def observation_from_board(board) -> NDArray[Shape["1, 9, 9"], Float32]:
         """"""
 
-        return th.from_numpy(board.as_matrix())
+        return board.as_matrix()
 
     def summarize(self):
         """"""
@@ -513,3 +514,9 @@ class Raw9Env(gym.Env):
         print(
             f"games: {self.games}, score summary: {sorted(self.scores.items(), key=lambda x: x[1])}"
         )
+
+
+register(
+     id="Raw9Env",
+     entry_point="hackable_engine.training.envs.hex.raw_9_env:Raw9Env",
+)

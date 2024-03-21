@@ -23,6 +23,7 @@ from stable_baselines3.common.vec_env import (
     SubprocVecEnv,
     VecMonitor,
 )
+from torch.optim import AdamW, SGD
 
 from hackable_engine.training.callbacks import TensorboardActionHistogramCallback
 from hackable_engine.training.hyperparams import *
@@ -63,7 +64,9 @@ def train(
     # eval_callback = EvalCallback(env, eval_freq=512, callback_after_eval=stop_train_callback, verbose=1)
 
     if version >= 0:
+        reset_num_timesteps = RESET_CHARTS
         policy_kwargs.pop("policy", "MlpPolicy")
+        policy_kwargs["features_extractor_kwargs"]["should_initialize_weights"] = False
         model = PPO.load(
             f"./{env_name}.v{version}",
             env=env,
@@ -83,6 +86,7 @@ def train(
             tensorboard_log=os.path.join(LOG_PATH, f"{env_name}_tensorboard"),
         )
     else:
+        reset_num_timesteps = True
         model = PPO(
             policy_kwargs.pop("policy", "MlpPolicy"),
             env=env,
@@ -98,13 +102,17 @@ def train(
             # use_sde=True,
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
-            tensorboard_log=None, #os.path.join(LOG_PATH, f"{env_name}_tensorboard")
+            tensorboard_log=os.path.join(LOG_PATH, f"{env_name}_tensorboard")
         )
 
-    model.policy.optimizer.defaults["momentum"] = SGD_MOMENTUM[1]
-    model.policy.optimizer.defaults["dampening"] = SGD_DAMPENING[1]
-    # model.policy.optimizer.defaults["weight_decay"] = ADAMW_WEIGHT_DECAY[1]
-    # model.policy.optimizer.defaults["lr"] = LEARNING_RATE
+    if model.policy.optimizer.__class__ is SGD:
+        model.policy.optimizer.defaults["momentum"] = SGD_MOMENTUM[1]
+        model.policy.optimizer.defaults["dampening"] = SGD_DAMPENING[1]
+    if model.policy.optimizer.__class__ is AdamW:
+        model.policy.optimizer.defaults["weight_decay"] = ADAMW_WEIGHT_DECAY[1]
+    model.policy.optimizer.defaults["lr"] = LEARNING_RATE
+
+    model.policy.train()
 
     print("optimizing for intel...")
     original_policy = None
@@ -114,11 +122,11 @@ def train(
         #     model.policy,
         #     optimizer=model.policy.optimizer,
         #     dtype=th.bfloat16,
-        #     weights_prepack=False,
-        #     optimize_lstm=True,
-        #     fuse_update_step=True,
-        #     auto_kernel_selection=True,
-        #     split_master_weight_for_bf16=True,
+        #     # weights_prepack=False,
+        #     # optimize_lstm=True,
+        #     # fuse_update_step=True,
+        #     # auto_kernel_selection=True,
+        #     # split_master_weight_for_bf16=True,
         # )
         # original_policy = model.policy
         # model.policy = th.compile(model.policy, backend="ipex")
@@ -141,18 +149,19 @@ def train(
     # model.policy, optimizer = fabric.setup(model.policy, optimizer)
 
     print("training started...")
-    reset_num_timesteps = True
     try:
         if device == Device.XPU:
             with th.xpu.amp.autocast(enabled=True, dtype=th.bfloat16):
                 for _ in range(loops):
-                    model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=reset_num_timesteps, tb_log_name=env_name, callback=TensorboardActionHistogramCallback(should_log_actions=False))  # progress_bar=True
+                    model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=reset_num_timesteps, tb_log_name=env_name, callback=TensorboardActionHistogramCallback(color, should_log_actions=False))  # progress_bar=True
                     reset_num_timesteps = False
+                    if original_policy:
+                        model.policy = original_policy  # the state_dict is maintained, therefore saving the trained network
                     model.save(f"./{env_name}.v{version + 1}.checkpoint")
         else:
             with th.cpu.amp.autocast(enabled=True, dtype=th.float16):
                 for _ in range(loops):
-                    model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=reset_num_timesteps, tb_log_name=env_name, callback=TensorboardActionHistogramCallback())  # progress_bar=True
+                    model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=reset_num_timesteps, tb_log_name=env_name, callback=TensorboardActionHistogramCallback(color))  # progress_bar=True
                     reset_num_timesteps = False
                     if original_policy:
                         model.policy = original_policy  # the state_dict is maintained, therefore saving the trained network
@@ -176,11 +185,13 @@ def get_env(env_name, env_class, version, color) -> gym.Env:
     for model_version in model_versions:
         path = f"Hex9{ext}{model_version}.onnx"
         models.append(ort.InferenceSession(
-            path, providers=["OpenVINOExecutionProvider"]
+            path, providers=["CPUExecutionProvider"]
         ) if os.path.exists(path) else None)
 
     env: Union[DummyVecEnv, SubprocVecEnv] = make_vec_env(
-        lambda: env_class(color=color, models=models),
+        # lambda: env_class(color=color, models=models),
+        env_class,
+        env_kwargs=dict(color=color, models=models),
         # monitor_dir=os.path.join(LOG_PATH, env_name, f"v{version}"),
         n_envs=N_ENVS,
         vec_env_cls=DummyVecEnv,

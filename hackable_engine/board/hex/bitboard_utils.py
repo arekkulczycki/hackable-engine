@@ -26,6 +26,7 @@ def generate_cells(bb: BitBoard) -> Iterator:
         yield r.bit_length() - 1
         bb ^= r
 
+
 def generate_masks(bb: BitBoard) -> Iterator:
     """"""
 
@@ -33,6 +34,21 @@ def generate_masks(bb: BitBoard) -> Iterator:
         r = bb & -bb
         yield r
         bb ^= r
+
+
+def get_random_mask(bb: BitBoard, n: int) -> BitBoard:
+    """"""
+
+    start_bb = bb
+
+    i = 0
+    while bb:
+        r = bb & -bb
+        if i == n:
+            return r
+        bb ^= r
+
+    return get_random_mask(start_bb, min(n-i, i))
 
 
 def int_to_binary_array(n: int, size: int):

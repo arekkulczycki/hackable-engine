@@ -2,7 +2,7 @@
 from itertools import cycle
 from typing import Any, Dict, Optional, SupportsFloat, Tuple
 
-import gym
+import gymnasium as gym
 from gymnasium.core import ActType, ObsType, RenderFrame
 from nptyping import Int8, NDArray, Shape
 from numpy import asarray, float32, int8
@@ -41,8 +41,7 @@ openings = cycle(
 )
 
 
-# class SimpleEnv(gymnasium.Env):
-class SimpleEnv(gym.Env):
+class TreeSearchEnv(gym.Env):
     """"""
 
     REWARDS: Dict[Optional[bool], float32] = {
