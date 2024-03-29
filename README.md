@@ -25,10 +25,10 @@ For instance as an Intel ArcA770 user I have intel torch extensions. For Nvidia 
 ### Basic Usage - run engine to find the best move in a position
 
 Chess:
-`PYTHONPATH=. python hackable_engine -G=chess -p=1 -l=9 -m -n="rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"`
+`PYTHONPATH=. python hackable_engine -G=chess -m -n="rn1qk2r/pp3ppp/2pb4/5b2/3Pp3/4PNB1/PP3PPP/R2QKB1R w KQkq - 0 10"`
 
 Hex size 13:
-`PYTHONPATH=. python hackable_engine -G=hex -S=13 -p=1 -l=9 -m -n=a4`
+`PYTHONPATH=. python hackable_engine -G=hex -S=13 -m -n=a4`
 
 ### Advanced Usage - implement your own criteria
 

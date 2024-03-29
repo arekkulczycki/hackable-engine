@@ -14,6 +14,7 @@ import onnxruntime as ort
 import torch as th
 from RayEnvWrapper import WrapperRayVecEnv
 from stable_baselines3 import PPO
+
 # from sbx import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import load_results
@@ -47,7 +48,11 @@ class Device(str, Enum):
 
 
 def train(
-    env_name: str = "default", version: int = -1, color: bool = True, device: Device = Device.AUTO.value, loops: int = 100
+    env_name: str = "default",
+    version: int = -1,
+    color: bool = True,
+    device: Device = Device.AUTO.value,
+    loops: int = 100,
 ):
     t0 = perf_counter()
 
@@ -65,8 +70,11 @@ def train(
 
     if version >= 0:
         reset_num_timesteps = RESET_CHARTS
-        policy_kwargs.pop("policy", "MlpPolicy")
-        policy_kwargs["features_extractor_kwargs"]["should_initialize_weights"] = False
+        policy_class = policy_kwargs.pop("policy", "MlpPolicy")
+        if policy_class == "CnnPolicy":
+            policy_kwargs["features_extractor_kwargs"][
+                "should_initialize_weights"
+            ] = False
         model = PPO.load(
             f"./{env_name}.v{version}",
             env=env,
@@ -80,6 +88,7 @@ def train(
                 "gamma": GAMMA,
                 "gae_lambda": GAE_LAMBDA,
                 "ent_coef": ENT_COEF,
+                "max_grad_norm": MAX_GRAD_NORM,
             },
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
@@ -99,10 +108,11 @@ def train(
             gamma=GAMMA,
             gae_lambda=GAE_LAMBDA,
             ent_coef=ENT_COEF,
+            max_grad_norm=MAX_GRAD_NORM,
             # use_sde=True,
             policy_kwargs=policy_kwargs_map[env_name],
             device=device,
-            tensorboard_log=os.path.join(LOG_PATH, f"{env_name}_tensorboard")
+            tensorboard_log=os.path.join(LOG_PATH, f"{env_name}_tensorboard"),
         )
 
     if model.policy.optimizer.__class__ is SGD:
@@ -117,18 +127,18 @@ def train(
     print("optimizing for intel...")
     original_policy = None
     if device == Device.XPU and hasattr(th, "xpu") and th.xpu.is_available():
-        ...
-        # model.policy, model.policy.optimizer = th.xpu.optimize(
-        #     model.policy,
-        #     optimizer=model.policy.optimizer,
-        #     dtype=th.bfloat16,
-        #     # weights_prepack=False,
-        #     # optimize_lstm=True,
-        #     # fuse_update_step=True,
-        #     # auto_kernel_selection=True,
-        #     # split_master_weight_for_bf16=True,
-        # )
-        # original_policy = model.policy
+        # this actually seems necessary to have a non-None gradient in the conv layer
+        model.policy, model.policy.optimizer = th.xpu.optimize(
+            model.policy,
+            optimizer=model.policy.optimizer,
+            dtype=th.bfloat16,
+            # weights_prepack=False,
+            # optimize_lstm=True,
+            # fuse_update_step=True,
+            # auto_kernel_selection=True,
+            # split_master_weight_for_bf16=True,
+        )
+        original_policy = model.policy
         # model.policy = th.compile(model.policy, backend="ipex")
     else:
         model.policy, model.policy.optimizer = ipex.optimize(
@@ -153,7 +163,14 @@ def train(
         if device == Device.XPU:
             with th.xpu.amp.autocast(enabled=True, dtype=th.bfloat16):
                 for _ in range(loops):
-                    model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=reset_num_timesteps, tb_log_name=env_name, callback=TensorboardActionHistogramCallback(color, should_log_actions=False))  # progress_bar=True
+                    model.learn(
+                        total_timesteps=TOTAL_TIMESTEPS,
+                        reset_num_timesteps=reset_num_timesteps,
+                        tb_log_name=env_name,
+                        callback=TensorboardActionHistogramCallback(
+                            color, should_log_actions=True
+                        ),
+                    )  # progress_bar=True
                     reset_num_timesteps = False
                     if original_policy:
                         model.policy = original_policy  # the state_dict is maintained, therefore saving the trained network
@@ -161,7 +178,12 @@ def train(
         else:
             with th.cpu.amp.autocast(enabled=True, dtype=th.float16):
                 for _ in range(loops):
-                    model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=reset_num_timesteps, tb_log_name=env_name, callback=TensorboardActionHistogramCallback(color))  # progress_bar=True
+                    model.learn(
+                        total_timesteps=TOTAL_TIMESTEPS,
+                        reset_num_timesteps=reset_num_timesteps,
+                        tb_log_name=env_name,
+                        callback=TensorboardActionHistogramCallback(color),
+                    )  # progress_bar=True
                     reset_num_timesteps = False
                     if original_policy:
                         model.policy = original_policy  # the state_dict is maintained, therefore saving the trained network
@@ -184,9 +206,11 @@ def get_env(env_name, env_class, version, color) -> gym.Env:
     model_versions = ["A", "B", "C", "D", "E", "F"]
     for model_version in model_versions:
         path = f"Hex9{ext}{model_version}.onnx"
-        models.append(ort.InferenceSession(
-            path, providers=["CPUExecutionProvider"]
-        ) if os.path.exists(path) else None)
+        models.append(
+            ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+            if os.path.exists(path)
+            else None
+        )
 
     env: Union[DummyVecEnv, SubprocVecEnv] = make_vec_env(
         # lambda: env_class(color=color, models=models),
@@ -207,7 +231,12 @@ def get_env(env_name, env_class, version, color) -> gym.Env:
 
 
 def get_ray_env(env_name, env_class, version, color):
-    env = WrapperRayVecEnv(lambda seed, models=[]: env_class(color=color, models=models), N_ENV_WORKERS, int(N_ENVS // N_ENV_WORKERS), color)
+    env = WrapperRayVecEnv(
+        lambda seed, models=[]: env_class(color=color, models=models),
+        N_ENV_WORKERS,
+        int(N_ENVS // N_ENV_WORKERS),
+        color,
+    )
     return VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
 
 
@@ -232,7 +261,9 @@ def plot_results(log_folder, title="Learning Curve"):
     """
 
     x, y = ts2xy(load_results(log_folder), "timesteps")
-    y = moving_average(y, window=int(N_ENVS * 1.5))  # average across all parallel results
+    y = moving_average(
+        y, window=int(N_ENVS * 1.5)
+    )  # average across all parallel results
     # Truncate x
     x = x[len(x) - len(y) :]
 
@@ -260,7 +291,11 @@ def get_args():
         "-v", "--version", type=int, default=-1, help="version of the model to use"
     )
     parser.add_argument(
-        "-c", "--color", type=int, default=1, help="which color player should be trained"
+        "-c",
+        "--color",
+        type=int,
+        default=1,
+        help="which color player should be trained",
     )
     parser.add_argument(
         "-d",

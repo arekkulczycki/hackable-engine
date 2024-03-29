@@ -32,8 +32,9 @@ A 9x9 game can take ~3250 evaluations, so maximum total penalty could sum up to 
 """
 
 BEING_CLOSER_BONUS: float32 = float32(0.005)
-BEING_CLOSER_SCORE: float32 = float32(0.01)
-BALANCED_POSITION_BONUS: float32 = float32(0.01 / (3/4 * 9))
+BEING_CLOSER_SCORE: float32 = float32(0.05)  # float32(0.005)
+BALANCED_POSITION_BONUS: float32 = float32(0.02 / (3 / 4 * 9))
+MAX_MOVES = 20
 
 # fmt: off
 openings = cycle(
@@ -60,7 +61,7 @@ class Raw9Env(gym.Env):
     observation_space = gym.spaces.Box(
         -1, 1, shape=(1, BOARD_SIZE, BOARD_SIZE), dtype=float32
     )  # should be int8
-    action_space = gym.spaces.Box(ZERO, ONE, shape=(1,), dtype=float32)
+    action_space = gym.spaces.Box(MINUS_ONE, ONE, shape=(1,), dtype=float32)
 
     winner: Optional[bool]
     obs: th.Tensor
@@ -68,7 +69,12 @@ class Raw9Env(gym.Env):
     policy: Optional[ActorCriticPolicy] = None
 
     def __init__(
-        self, *args, render_mode = None, controller: Optional[Controller] = None, color: bool = True, models: List = []
+        self,
+        *args,
+        render_mode=None,
+        controller: Optional[Controller] = None,
+        color: bool = True,
+        models: List = [],
     ):
         """"""
 
@@ -86,7 +92,6 @@ class Raw9Env(gym.Env):
                 board_kwargs=dict(size=self.BOARD_SIZE),
                 is_training=True,
             )
-        # self.obs = self.observation_from_board(self.controller.board)
 
         self.moves_done = 0
         self.winner = None
@@ -106,11 +111,12 @@ class Raw9Env(gym.Env):
     def render(self, mode="human", close=False) -> RenderFrame:
         """"""
 
-        if self.controller.board.move_stack:
+        n = len(self.controller.board.move_stack)
+        if n:
             notation = self.controller.board.get_notation()
-            self.controller.board.pop()
-            bonus = self._get_score_for_whos_closer(len(self.controller.board.move_stack), 6, early_finish=False)
-            print("render: ", self.winner, notation, bonus)  #, self._get_reward(self.winner, None, True))
+            print(
+                "render: ", self.winner, notation, self.reward
+            )
             return notation
         return ""
 
@@ -129,6 +135,8 @@ class Raw9Env(gym.Env):
         self.opp_model = choice(self.models)
         self.winner = None
 
+        # winner = self.controller.board.winner_no_turn()
+        # if winner is not None:
         notation = next(openings)
         self.opening = notation
         self.controller.reset_board(
@@ -137,12 +145,13 @@ class Raw9Env(gym.Env):
 
         if self.controller.board.turn != self.color:
             # self._make_random_move(self.controller.board)
-            self._make_self_trained_move(self.controller.board, self.opp_model, not self.color)
-        # obs = self.observation_from_board(self.controller.board)
+            self._make_self_trained_move(
+                self.controller.board, self.opp_model, not self.color
+            )
 
-        # must be after the observation, as it adds a move on the board  !!! WRONG !!!
         self._prepare_child_moves()
-        # must precisely be after, because the policy should evaluate the first move candidate (if step_iterative)
+
+        # must be last, because the policy should evaluate the first move candidate
         self.obs = self.observation_from_board(self.controller.board)
         return self.obs, {}
 
@@ -154,86 +163,24 @@ class Raw9Env(gym.Env):
         self.moves = (move for move in shuffled_moves)  # returns new generator
         self.current_move = next(self.moves)
 
-        self.best_move = None
-        self.generations = 1
         self.controller.board.push(self.current_move)
 
-    def _step_legacy(
-        self,
-        action: ActType
-    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
-        """
-        Iterate over all legal moves and evaluate each, storing the move with the best score.
-
-        When generator is exhausted, play the best move, play as opponent and reset the generator.
-
-        To play training moves no engine search is required - a move is selected based on direct evaluation (0 depth).
-        """
-
-        if self.winner is not None:
-            return self.obs, ONE if self.winner else ZERO, True, False, {}
-
-        legal_moves_exhausted = False
-
-        score = action[0]
-        self.generations += 1
-
-        if self.best_move is None:
-            self.best_move = (self.current_move, score)
-        else:
-            best_score = self.best_move[1]
-            current_score = score
-            # p = 1 if self.generations < 6 else 0.75 if self.generations < 12 else 0.5 if self.generations < 20 else 0.25
-            # if current_score > best_score and np.random.choice([True, False], p=[p, 1 - p]):
-            if current_score > best_score:
-                self.best_move = (self.current_move, score)
-
-        try:
-            # if the move gets maximum score then stop searching for a better one
-            if self.best_move[1] >= 1:  # np.isclose(self.best_move[1], 1):
-                raise StopIteration
-            # if doesn't raise then there are still moves to be evaluated
-            self.current_move = next(self.moves)
-        except StopIteration:
-            winner = self._on_stop_iteration()
-
-            legal_moves_exhausted = True
-        else:
-            # continue with the `self.current_move`
-
-            # undo last move that was just evaluated
-            self.controller.board.pop()
-
-            # push a new move to be evaluated in the next `step`
-            self.controller.board.push(self.current_move)
-
-            winner = None
-
-        reward = self._get_reward(winner, score, legal_moves_exhausted)
-        if winner is None and np.isclose(abs(reward), 1):
-            winner = self.color if reward > 0 else not self.color
-
-        self.obs = self.observation_from_board(self.controller.board)
-        self.winner = winner
-        self.moves_done += 1
-
-        return self.obs, reward, winner is not None, False, {"action": score, "winner": winner, "reward": reward, "opening": self.opening}
-
-    def _on_stop_iteration(self):
+    def _on_stop_iteration(self, score: float32) -> Tuple[Optional[bool], float32]:
         """"""
 
         # all moves evaluated - undo the last and push the best move on the board
         self.controller.board.pop()
         self.controller.board.push(self.best_move[0])
 
-        winner = self.controller.board.winner()
+        winner = self.controller.board.winner_no_turn()
+        reward = self._get_reward(winner, True)
 
         # if the last move didn't conclude the game, now play opponent move and reset generator
         if winner is None:
-            # self.controller.make_move(DEFAULT_ACTION, search_limit=choice((0, 8)))
-
             # self._make_random_move(self.controller.board)
-            self._make_self_trained_move(self.controller.board, self.opp_model, not self.color)
+            self._make_self_trained_move(
+                self.controller.board, self.opp_model, not self.color
+            )
 
             # reset generator and play the first option to be evaluated, regardless if the game is concluded
             try:
@@ -250,102 +197,11 @@ class Raw9Env(gym.Env):
                     self.controller.board.pop()
                     assert self.controller.board.turn is self.color
 
-        return winner
+        if winner is not None:
+            # overwrite the reward because a winner was found
+            reward = self._get_reward(winner, True)
 
-    def _get_obs_and_score(self, move: Move) -> Tuple[th.Tensor, float32]:
-        """"""
-
-        self.controller.board.push(move)
-        observation = self.observation_from_board(self.controller.board)
-        score = self.policy(observation.reshape(1, self.BOARD_SIZE, self.BOARD_SIZE).to(th.bfloat16))[0][0]
-        self.controller.board.pop()
-        return observation, score
-
-    def _step_iterative(
-        self, action: ActType
-    ) -> Tuple[ObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
-        """
-        Iterate over all legal moves and evaluate each, storing the move with the best score.
-
-        When generator is exhausted, play the best move, play as opponent and reset the generator.
-
-        To play training moves no engine search is required - a move is selected based on direct evaluation (0 depth).
-        """
-
-        self.update_best_and_current_move(action)
-
-        observation, winner = self.static_step_part(
-            (
-                self.controller.board,
-                self.current_move,
-                self.best_move,
-                self.opp_model,
-                self.color,
-            )
-        )
-
-        return self.dynamic_step_part(action, observation, winner)
-
-    def update_best_and_current_move(self, action):
-        """"""
-
-        if self.best_move is None:
-            self.best_move = (self.current_move, action[0])
-        else:
-            best_score = self.best_move[1]
-            current_score = action[0]
-
-            # white searching for the highest scores, black for the lowest scores
-            if (self.color and current_score > best_score) or (
-                not self.color and current_score <= best_score
-            ):
-                self.best_move = (self.current_move, action[0])
-
-        try:
-            self.current_move = next(self.moves)
-        except StopIteration:
-            self.current_move = None
-
-    @classmethod
-    def static_step_part(cls, arg_tuple):
-        """
-        Allow delegating heavy-lifting to a parallel process.
-
-        Making board operations and especially checking if there is a winner is the heaviest part of the step.
-        """
-
-        board, current_move, best_move, opp_model, color = arg_tuple
-
-        winner = None
-        if current_move is not None:
-            # undo last move that was just evaluated
-            board.pop()
-
-            # push a new move to be evaluated in the next `step`
-            board.push(current_move)
-        else:
-            # all moves evaluated - undo the last and push the best move on the board
-            winner = cls._make_best_move_and_opp_move(board, best_move, opp_model, color)
-
-        return cls.observation_from_board(board), winner
-
-    def dynamic_step_part(self, action, observation, winner):
-        """"""
-
-        self.winner = winner
-        self.moves_done += 1
-
-        # if the opponent move didn't conclude, reset generator and play the first option to be evaluated
-        if self.current_move is None and winner is None:
-            self._prepare_child_moves()
-
-        is_final_selection = self.current_move is None
-        """The algorithm iterates over all legal moves, then goes back to the one evaluated highest."""
-
-        reward = self._get_reward(winner, action[0], is_final_selection)
-
-        # return self.obs, reward, winner is not None, False, {}
-        return observation, reward, winner is not None, False, {}
+        return winner, reward
 
     @classmethod
     def _make_best_move_and_opp_move(cls, board, best_move, opp_model, color):
@@ -370,33 +226,111 @@ class Raw9Env(gym.Env):
     def step(
         self, action: ActType
     ) -> Tuple[ObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
-        """"""
+        """
+        Iterate over all legal moves and evaluate each, storing the move with the best score.
 
-        # return self._step_iterative(action)
-        # return self._step_aggregated(action)
-        return self._step_legacy(action)
+        When generator is exhausted, play the best move, play as opponent and reset the generator.
 
-    def _get_reward(self, winner: Optional[bool], score: Optional[float32] = None, is_final_selection: bool = False) -> float32:
+        To play training moves no engine search is required - a move is selected based on direct evaluation (0 depth).
+        """
+
+        if self.winner is not None:
+            return self.obs, ONE if self.winner else MINUS_ONE, True, False, {}
+
+        score = action[0]
+        self.generations += 1
+
+        if self.best_move is None:
+            self.best_move = (self.current_move, score)
+        else:
+            best_score = self.best_move[1]
+            current_score = score
+            p = 1 if self.generations < 6 else 0.75 if self.generations < 12 else 0.5 if self.generations < 20 else 0.25
+            if current_score > best_score and np.random.choice([True, False], p=[p, 1 - p]):
+            # if current_score > best_score:
+                self.best_move = (self.current_move, score)
+
+        try:
+            # if the move gets maximum score then stop searching for a better one
+            if self.best_move[1] >= 1.0:
+                raise StopIteration
+            # if doesn't raise then there are still moves to be evaluated
+            self.current_move = next(self.moves)
+        except StopIteration:
+            winner, reward = self._on_stop_iteration(score)
+            final_selection = True
+        else:
+            # continue with the `self.current_move`
+
+            # undo last move that was just evaluated
+            self.controller.board.pop()
+
+            # push a new move to be evaluated in the next `step`
+            self.controller.board.push(self.current_move)
+
+            winner = None
+            reward = self._get_reward(winner, False)
+            final_selection = False
+
+        self.obs = self.observation_from_board(self.controller.board)
+        self.winner = winner
+        self.reward = reward
+        self.best_move = None
+        self.moves_done += 1
+
+        if final_selection and len(self.controller.board.move_stack) % MAX_MOVES <= 1:
+            winner = self.color if reward > 0 else not self.color
+            reward = min(ONE, max(MINUS_ONE, reward))
+
+        return (
+            self.obs,
+            reward,
+            winner is not None,
+            False,
+            {
+                "action": score,
+                "winner": winner,
+                "reward": reward,
+                "opening": self.opening,
+            },
+        )
+
+    def _get_reward(
+        self,
+        winner: Optional[bool],
+        is_final_selection: bool = False,
+    ) -> float32:
         """"""
 
         n_moves = len(self.controller.board.move_stack)
 
         if winner is False:
-            reward = -1 + self._quick_win_value(n_moves) if self.color else 1 - self._quick_win_value(n_moves)
+            reward = (
+                -1 + self._quick_win_value(n_moves)
+                if self.color
+                else 1 - self._quick_win_value(n_moves)
+            )
 
         elif winner is True:
-            reward = 1 - self._quick_win_value(n_moves) if self.color else -1 + self._quick_win_value(n_moves)
+            reward = (
+                1 - self._quick_win_value(n_moves)
+                if self.color
+                else -1 + self._quick_win_value(n_moves)
+            )
 
         else:
             # the reward when game is being continued, 0 except when we want to punish or encourage some choices
-            if is_final_selection and n_moves > 0:  # and n_moves % 6 == (0 if self.color else 1):  # `n_moves` is `n_moves/2` full moves
-                return self._get_score_for_whos_closer(n_moves, 6, early_finish=False)  # + (self._principle_bonus() if n_moves < 12 else ZERO)
-                # bonus = self._get_reward_for_whos_closer(n_moves, 24)
-                # bonus = self._principle_bonus()
+            if (
+                is_final_selection and n_moves > 0
+            ):  # and n_moves % 6 == (0 if self.color else 1):  # `n_moves` is `n_moves/2` full moves
+                if MAX_MOVES - (n_moves % MAX_MOVES) <= 1:
+                    return self._get_score_for_whos_closer(
+                        n_moves, early_finish=False
+                    )
+                else:
+                    return self._principle_bonus()
 
-            # return bonus
             return ZERO
-            # return self._imbalanced_score_penalty(score) if score is not None else ZERO
 
         return float32(reward)
 
@@ -410,7 +344,10 @@ class Raw9Env(gym.Env):
         """Balanced distribution of stones is always preferred. 3/4 of board size is the highest value."""
 
         imbalance, central_imbalance = self.controller.board.get_imbalance(self.color)
-        return float32(self.PRINCIPLE_BONUS_PARAM - imbalance - central_imbalance) * BALANCED_POSITION_BONUS
+        return (
+            float32(self.PRINCIPLE_BONUS_PARAM - imbalance - central_imbalance)
+            * BALANCED_POSITION_BONUS
+        )
 
     @staticmethod
     def _imbalanced_score_penalty(score: float32) -> float32:
@@ -430,30 +367,42 @@ class Raw9Env(gym.Env):
         """Only if is closer by a margin larger than 1, to eliminate the first move advantage bonus."""
 
         if n_moves <= move_threshold:
-            color_missing = 0  #self.controller.board.get_shortest_missing_distance_perf(self.color)
-            opponent_missing = 0  #self.controller.board.get_shortest_missing_distance_perf(not self.color)
+            color_missing = 0  # self.controller.board.get_shortest_missing_distance_perf(self.color)
+            opponent_missing = 0  # self.controller.board.get_shortest_missing_distance_perf(not self.color)
         else:
-            color_missing = self.controller.board.get_shortest_missing_distance(self.color)
-            opponent_missing = self.controller.board.get_shortest_missing_distance(not self.color)
+            color_missing = self.controller.board.get_shortest_missing_distance(
+                self.color
+            )
+            opponent_missing = self.controller.board.get_shortest_missing_distance(
+                not self.color
+            )
         c_closer_by = float32(opponent_missing - color_missing)
 
-        # finish game is advantage is sufficient
+        # finish game if advantage is sufficient
         if n_moves > move_threshold:
             if c_closer_by >= 4 and color_missing < c_closer_by:
                 return ONE
             if c_closer_by <= -4 and opponent_missing < -c_closer_by:
                 return MINUS_ONE
         return ZERO
-        # return BEING_CLOSER_BONUS * c_closer_by
 
-    def _get_score_for_whos_closer(self, n_moves: int, move_threshold: int, early_finish: bool = True) -> float32:
-        """Only if is closer by a margin larger than 1, to eliminate the first move advantage bonus."""
+    def _get_score_for_whos_closer(
+        self, n_moves: int, *, early_finish: bool = True
+    ) -> float32:
+        """
+        Only if is closer by a margin larger than 1, to eliminate the first move advantage bonus.
+        """
 
-        if n_moves <= move_threshold:
-            return ZERO
-
-        color_missing, color_variants = self.controller.board.get_short_missing_distances(self.color)
-        opponent_missing, opponent_variants = self.controller.board.get_short_missing_distances(not self.color)
+        (
+            color_missing,
+            color_variants,
+        ) = self.controller.board.get_short_missing_distances(self.color)
+        (
+            opponent_missing,
+            opponent_variants,
+        ) = self.controller.board.get_short_missing_distances(
+            not self.color, should_subtract=(not self.color and n_moves % 2 == 1)
+        )  # subtracts distance from white because has 1 stone less on board
 
         # finish game is advantage is sufficient
         if early_finish:
@@ -463,10 +412,27 @@ class Raw9Env(gym.Env):
             if c_closer_by <= -4 and opponent_missing < -c_closer_by:
                 return MINUS_ONE
 
-        color_score = sum(((9 - k)**3/81 * v) for k, v in color_variants.items())
-        opponent_score = sum(((9 - k)**3/81 * v) for k, v in opponent_variants.items())
+        color_score = sum(
+            (self._weight_distance(9 - k, n_moves) * v)
+            for k, v in color_variants.items()
+        )
+        opponent_score = sum(
+            (self._weight_distance(9 - k, n_moves) * v)
+            for k, v in opponent_variants.items()
+        )
 
         return (color_score - opponent_score) * BEING_CLOSER_SCORE
+
+    @staticmethod
+    def _weight_distance(distance, n_moves):
+        """Calculate weighted value of distance. In the endgame close connections value more."""
+
+        if n_moves > 30:
+            return distance**3 / 81
+        elif n_moves > 15:
+            return distance**2 / 9
+        else:
+            return distance
 
     @staticmethod
     def _make_random_move(board):
@@ -487,7 +453,9 @@ class Raw9Env(gym.Env):
             obss.append(board.as_matrix().astype(float32))
             board.pop()
 
-        scores = np.asarray(opp_model.run(None, {"inputs": np.stack(obss, axis=0)})).flatten()
+        scores = np.asarray(
+            opp_model.run(None, {"inputs": np.stack(obss, axis=0)})
+        ).flatten()
 
         best_move: Optional[Move] = None
         best_score = None
@@ -517,6 +485,6 @@ class Raw9Env(gym.Env):
 
 
 register(
-     id="Raw9Env",
-     entry_point="hackable_engine.training.envs.hex.raw_9_env:Raw9Env",
+    id="Raw9Env",
+    entry_point="hackable_engine.training.envs.hex.raw_9_env:Raw9Env",
 )

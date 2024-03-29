@@ -557,6 +557,9 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     def get_random_unoccupied_mask(self, empty_cells: Optional[int] = None) -> BitBoard:
         """"""
 
+        if empty_cells == 0:
+            raise ValueError("no unoccupied cells in a fully filled board")
+
         empty_cells = empty_cells or self.size_square
 
         return get_random_mask(self.unoccupied, randint(0, empty_cells - 1))
@@ -1247,9 +1250,12 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             d for d, p in (self.distance_missing(*pair, color) for pair in connection_points_pairs)
         )
 
-    def get_short_missing_distances(self, color: bool) -> Tuple[int, Dict[int, int]]:
+    def get_short_missing_distances(self, color: bool, *, should_subtract: bool = False) -> Tuple[int, Dict[int, int]]:
         """
         Calculate how many stones are missing to finish the connection between two sides.
+
+        :param should_subtract: when evaluating distances for white side with 1 stone less on board,
+            subtracts 0.5, because an additional stone cannot have impact on all the variants
         """
 
         connection_points_start: List[BitBoard] = self._get_start_points(color)
@@ -1281,7 +1287,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 unique_paths.add(masks)
 
         for p in unique_paths:
-            variants[len(p)] += 1
+            variants[len(p) if not should_subtract else len(p) - 0.5] += 1
 
         return shortest_distance, variants
 

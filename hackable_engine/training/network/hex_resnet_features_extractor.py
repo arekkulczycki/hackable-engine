@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-from itertools import cycle
-from typing import Optional, Tuple, Type
+from typing import Tuple
 
 import gym
 import torch as th
@@ -10,12 +9,12 @@ from torch.nn import BatchNorm2d
 
 from hackable_engine.training.hyperparams import LEARNING_RATE
 from hackable_engine.training.network.residual_blocks import (
+    ResidualCustomBlock,
     ResidualBlock,
-    ResidualBottleneckBlock,
 )
 
 
-class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
+class HexResnetFeaturesExtractor(BaseFeaturesExtractor):
     """
     Simple CNN constructed by a number of alternating `Conv2d` and `BatchNorm2d` layers, depending on given arguments.
 
@@ -33,72 +32,68 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         output_filters: Tuple[int, ...] = (16,),
         kernel_sizes: Tuple[int, ...] = (3,),
         strides: Tuple[int, ...] = (1,),
-        resnet_layers: int = 0,
-        resnet_channels: int = 1,
+        resnet_layers: int = 1,
         should_normalize: bool = True,
-        activation_fn: Optional[Type] = None,
         should_initialize_weights: bool = True,
     ) -> None:
         device = th.device("xpu")
         obs = th.as_tensor(observation_space.sample()).to(th.float32)
         if output_filters:
-            features_dim = self._get_features_number(
-                board_size, output_filters, kernel_sizes, strides
-            )
+            features_dim = self._get_features_number(board_size, output_filters, kernel_sizes, strides)
         else:
             features_dim = obs.size(dim=1) ** 2
+        # features_dim = 1152
+        features_dim = output_filters[-1]
 
         super().__init__(observation_space, features_dim, learning_rate)
 
-        n_channels = obs.size(dim=0)
-        input_filters = [n_channels, *output_filters[:-1]]
-        conv_layers = (
-            th.nn.Conv2d(i_f, o_f, kernel_size=ks, stride=stride, device=device)
-            for i_f, o_f, ks, stride in zip(
-                input_filters, output_filters, kernel_sizes, strides
-            )
-        )
-        layer_generators = [conv_layers]
-        if should_normalize:
-            layer_generators.append(
-                (BatchNorm2d(o_f, device=device) for o_f in output_filters)
-            )
-        if activation_fn:
-            layer_generators.append(cycle((activation_fn(),)))
+        input_filters = [obs.size(dim=0), *output_filters[:-1]]
 
-        layers = sum(zip(*layer_generators), ())
-        resnet = self._get_resnet(
-            resnet_layers,
-            output_filters[-1] if output_filters else resnet_channels,
-            device,
-        )
+        self.resnet = []
+        for i in range(resnet_layers):
+            conv_layers = (
+                th.nn.Conv2d(
+                    i_f, o_f, kernel_size=ks, padding=(ks - 1) // 2, device=device
+                )
+                for i_f, o_f, ks in zip(
+                    input_filters if i == 0 else output_filters,
+                    output_filters,
+                    kernel_sizes,
+                )
+            )
+
+            if should_normalize:
+                convolutions = list(
+                    zip(
+                        conv_layers,
+                        (BatchNorm2d(o_f, device=device) for o_f in output_filters),
+                    )
+                )
+            else:
+                convolutions = [(layer,) for layer in conv_layers]
+
+            self.resnet.append(ResidualCustomBlock(convolutions))
 
         self.network = th.nn.Sequential(
-            *layers,
-            *resnet,
+            *self.resnet,
+            # th.nn.MaxPool2d(kernel_size=3, stride=3),
+            # *self._get_resnet(resnet_layers, output_filters[-1], device),
+            th.nn.Conv2d(output_filters[-1], output_filters[-1], kernel_size=board_size, device=device),
+            # *[
+            #     th.nn.Conv2d(i_f, o_f, kernel_size=ks, stride=stride, device=device)
+            #     for i_f, o_f, ks, stride in zip(
+            #         input_filters if i == 0 else output_filters,
+            #         output_filters,
+            #         kernel_sizes,
+            #         strides,
+            #     )
+            # ],
+            # *self._get_resnet(resnet_layers, output_filters[-1], device=device),
             th.nn.Flatten(),
         )
 
-        # Compute shape by doing one forward pass
-        # with th.no_grad():
-        #     obs = th.reshape(obs, (1, n_channels, board_size, board_size))
-        #     n_flatten = (
-        #         self.network(obs).shape[1] * output_filters[-1]
-        #     )
-        #
-        # self.linear = th.nn.Sequential(
-        #     th.nn.Linear(n_flatten, features_dim),
-        #     th.nn.Sigmoid(),
-        #     # th.nn.ReLU(),
-        # )
-
         if should_initialize_weights:
             self._initialize_weights()
-
-    @staticmethod
-    def _get_resnet(num_layers: int, num_channels: int, device: th.device):
-        return [ResidualBlock(num_channels, device=device) for _ in range(num_layers)]
-        # return [ResidualBottleneckBlock(num_channels, device=device) for _ in range(num_layers)]
 
     def _initialize_weights(self) -> None:
         """
@@ -111,22 +106,9 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         """
 
         modules = list(self.network.modules())
-        n_modules = len(modules)
-        for i in range(n_modules):
+        for i in range(len(modules)):
             module = modules[i]
             if isinstance(module, th.nn.Conv2d):
-                if (n_modules > i + 2 and isinstance(modules[i + 2], th.nn.ReLU)) or (
-                    n_modules > i + 1 and isinstance(modules[i + 1], th.nn.ReLU)
-                ):
-                    th.nn.init.kaiming_normal_(
-                        module.weight, mode="fan_out", nonlinearity="relu"
-                    )
-                else:
-                    th.nn.init.xavier_normal_(module.weight)
-
-                if module.bias is not None:
-                    th.nn.init.zeros_(module.bias)
-            elif isinstance(module, th.nn.Linear):
                 th.nn.init.kaiming_normal_(
                     module.weight, mode="fan_out", nonlinearity="relu"
                 )
@@ -136,6 +118,11 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
             elif isinstance(module, th.nn.BatchNorm2d):
                 th.nn.init.constant_(module.weight, 1)
                 th.nn.init.constant_(module.bias, 0)
+
+    @staticmethod
+    def _get_resnet(num_layers: int, num_channels: int, device: th.device):
+        return [ResidualBlock(num_channels, device=device) for _ in range(num_layers)]
+        # return [ResidualBottleneckBlock(num_channels, device=device) for _ in range(num_layers)]
 
     @staticmethod
     def _get_features_number(board_size, output_filters, kernel_sizes, strides):

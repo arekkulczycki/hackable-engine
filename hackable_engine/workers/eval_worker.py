@@ -27,7 +27,7 @@ from hackable_engine.criteria.evaluation.base_eval import WeightsType, BaseEval
 from hackable_engine.criteria.evaluation.chess.square_control_eval import (
     SquareControlEval,
 )
-from hackable_engine.criteria.evaluation.hex.simple_eval import SimpleEval
+from hackable_engine.criteria.evaluation.hex.distance_eval import DistanceEval
 from hackable_engine.workers.base_worker import BaseWorker
 from hackable_engine.workers.configs.eval_worker_config import EvalWorkerConfig
 from hackable_engine.workers.configs.worker_locks import WorkerLocks
@@ -40,7 +40,7 @@ GameBoardT = TypeVar("GameBoardT", bound=GameBoardBase)
 
 EVALUATORS = {
     ChessBoard: SquareControlEval(),
-    HexBoard: SimpleEval(),
+    HexBoard: DistanceEval(),
 }
 
 

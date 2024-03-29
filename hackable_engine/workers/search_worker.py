@@ -314,7 +314,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
 
         if (
             t > self.counters.time + LOG_INTERVAL and self.limit != 0
-        ):  # TODO: no monitor when limit=0?
+        ):
             # if self.printing not in [Print.NOTHING, Print.MOVE, Print.LOGS]:
             #     os.system("clear")
 
@@ -396,6 +396,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
         :returns: if should repeat
         """
 
+        max_gap = 2000  # TODO: should dynamically change based on evaluation speed
         gap = self.counters.distributed - self.counters.evaluated
         """
         Goal is to keep this value on a relatively constant level appropriate to processing speed. 
@@ -411,7 +412,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
             )
 
         # TODO: find smart conditions instead of that mess - purpose is to identify if should distribute more to eval
-        if not self.flags.finished and self.limit > 0 and gap < 20000:
+        if not self.flags.finished and self.limit > 0 and gap < max_gap:
             # feed the eval queues
             # return self._select_from_tree(  # TODO: the param should depend on both gap and speed
             #     (24000 - gap) // 4000 + 1,  # effectively between 1 and 6

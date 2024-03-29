@@ -168,7 +168,7 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
 
         # TODO: if it could be done efficiently, would be beneficial to check game over here
 
-        parent_board_repr = self.board.as_matrix()
+        parent_board_repr = self.board.as_matrix().reshape(self.board.size, self.board.size)
 
         only_forcing_moves = []
         eval_items = []

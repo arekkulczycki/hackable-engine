@@ -47,6 +47,7 @@ def get_random_mask(bb: BitBoard, n: int) -> BitBoard:
         if i == n:
             return r
         bb ^= r
+        i += 1
 
     return get_random_mask(start_bb, min(n-i, i))
 

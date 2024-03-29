@@ -37,7 +37,11 @@ def initialize_weights(net: nn.Module) -> None:
 
 
 class AlphaZeroFeaturesExtractor(nn.Module):
-    """Policy network for AlphaZero agent."""
+    """
+    Policy network for AlphaZero agent.
+
+    Borrowed from https://github.com/michaelnny/alpha_zero/blob/main/alpha_zero/core/network.py
+    """
 
     def __init__(
         self,

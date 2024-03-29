@@ -106,7 +106,7 @@ class Node:
         return self._score
 
     @score.setter
-    def score(self, value: float32, parallel_propagation: bool = True) -> None:
+    def score(self, value: float32, parallel_propagation: bool = False) -> None:
         """
         Set score and propagate it up the tree.
 

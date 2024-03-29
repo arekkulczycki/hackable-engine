@@ -27,23 +27,24 @@ class TensorboardActionHistogramCallback(BaseCallback):
         self.should_log_actions = should_log_actions
 
         self.openings: defaultdict = defaultdict(lambda: 0)
-        self.actions: deque[np.float32] = deque(maxlen=N_ENVS * N_STEPS)
+        self.actions: deque[np.float32] = deque(maxlen=N_ENVS * N_STEPS * 8)
         self.winners: List[int] = []
         self.rewards: List[np.float32] = []
 
-        self.gradients_w: defaultdict[Module, List[np.float32]] = defaultdict(lambda: [])
-        """Map of layer name to the list of weight gradient values since the start of training."""
-
-        self.gradients_b: defaultdict[Module, List[np.float32]] = defaultdict(lambda: [])
-        """Map of layer name to the list of bias gradient values since the start of training."""
+        self.gradients: defaultdict[str, List[np.float32]] = defaultdict(lambda: [])
+        """Map of layer name to the list of gradient values since the last rollout."""
 
     def _on_training_start(self):
         """"""
 
         self._log_freq = 2 * N_STEPS
 
-        self.tb_formatter = next(formatter for formatter in self.logger.output_formats if isinstance(formatter, TensorBoardOutputFormat))
-        self.tb_formatter.writer.default_bins = 9
+        self.tb_formatter = next(
+            formatter
+            for formatter in self.logger.output_formats
+            if isinstance(formatter, TensorBoardOutputFormat)
+        )
+        self.tb_formatter.writer.default_bins = 100
 
     def _on_step(self) -> bool:
         """"""
@@ -61,37 +62,42 @@ class TensorboardActionHistogramCallback(BaseCallback):
                 self.rewards.append(env_info["reward"])
                 # self.openings[env_info["opening"]] += int_winner if int_winner else -1
             # else:
-                # pseudo_rewards.append(env_info["pseudo_reward"])
+            # pseudo_rewards.append(env_info["pseudo_reward"])
 
         if self.n_calls % self._log_freq == 0:
-            self.tb_formatter.writer.add_scalar("rollout/win_rate", np.mean(np.asarray(self.winners)), self.num_timesteps)
-            self.tb_formatter.writer.add_scalar("rollout/reward", np.mean(np.asarray(self.rewards)), self.num_timesteps)
+            self.tb_formatter.writer.add_scalar(
+                "rollout/win_rate",
+                np.mean(np.asarray(self.winners)),
+                self.num_timesteps,
+            )
+            self.tb_formatter.writer.add_scalar(
+                "rollout/reward", np.mean(np.asarray(self.rewards)), self.num_timesteps
+            )
             self.winners.clear()
             self.rewards.clear()
 
-            for layer in self.model.policy.features_extractor.cnn:
-                if isinstance(layer, Conv2d) or isinstance(layer, BatchNorm2d):
-                    if layer.weight.grad is not None:
-                        self.tb_formatter.writer.add_scalar(
-                            f"gradients/{layer}.weight",
-                            np.mean(np.asarray(self.gradients_w[layer])),
-                            self.num_timesteps,
-                        )
-                    if layer.bias.grad is not None:
-                        self.tb_formatter.writer.add_scalar(
-                            f"gradients/{layer}.bias",
-                            np.mean(np.asarray(self.gradients_b[layer])),
-                            self.num_timesteps,
-                        )
-            # for d, type_ in ((self.gradients_w, "weight"), (self.gradients_b, "bias")):
-            #     for layer, gradient in d.items():
-            #         self.tb_formatter.writer.add_scalar(f"gradients/{layer}.{type_}", np.mean(np.asarray(d[layer])),
-            #                                             self.num_timesteps)
-            self.gradients_w = defaultdict(lambda: [])
-            self.gradients_b = defaultdict(lambda: [])
+            for name, layer in self.model.policy.named_parameters():
+                if "network" in name and layer.grad is not None:
+                    name_ = f"cnn{name.split('network')[1]}"
+                    self.tb_formatter.writer.add_histogram(
+                        f"gradients/{name_}",
+                        th.nan_to_num(layer.grad, 0.0),
+                        max_bins=100,
+                    )
+                elif "mlp" in name and layer.grad is not None:
+                    name_ = f"mlp{name.split('extractor')[1]}"
+                    self.tb_formatter.writer.add_histogram(
+                        f"gradients/{name_}",
+                        th.nan_to_num(layer.grad, 0.0),
+                        max_bins=100,
+                    )
+
+            self.gradients = defaultdict(lambda: [])
 
             if self.should_log_actions:
-                self.tb_formatter.writer.add_histogram("train/actions", np.asarray(self.actions), max_bins=25)
+                self.tb_formatter.writer.add_histogram(
+                    "train/actions", np.asarray(self.actions), max_bins=100
+                )
 
             # self.tb_formatter.writer.add_figure("time/openings", figure=self._get_openings_figure())
 
@@ -108,20 +114,20 @@ class TensorboardActionHistogramCallback(BaseCallback):
         This event is triggered before updating the policy.
         """
 
-        self._collect_gradients()
+        # print([layer for name, layer in self.model.policy.named_parameters() if "network" in name and "weight" in name])
+        # self._collect_gradients()
 
     def _collect_gradients(self) -> None:
-        for layer in self.model.policy.features_extractor.cnn:
-            if isinstance(layer, Conv2d) or isinstance(layer, BatchNorm2d):
-                if layer.weight.grad is not None:
-                    self.gradients_w[layer].append(th.mean(layer.weight.grad).cpu())
-                if layer.bias.grad is not None:
-                    self.gradients_b[layer].append(th.mean(layer.bias.grad).cpu())
+        for name, layer in self.model.policy.named_parameters():
+            if "network" in name and layer.grad is not None:
+                self.gradients[name.split("network")[1]].append(th.mean(layer.grad).cpu())
+            elif "mlp" in name and layer.grad is not None:
+                self.gradients[name.split("mlp")[1]].append(th.mean(layer.grad).cpu())
 
     def _get_openings_figure(self) -> Figure:
         """"""
 
         fig, ax = plt.subplots()
         p = ax.bar(self.openings.keys(), self.openings.values())
-        ax.bar_label(p, label_type='center')
+        ax.bar_label(p, label_type="center")
         return fig
