@@ -58,8 +58,10 @@ class GCN(pl.LightningModule):
         pred = x_out.argmax(-1)
         label = batch.y
         accuracy = (pred == label).sum() / pred.shape[0]
+
         self.log("loss/train", loss)
         self.log("accuracy/train", accuracy)
+
         return loss
 
     def validation_step(self, batch, batch_index):
@@ -74,12 +76,14 @@ class GCN(pl.LightningModule):
         val_loss = 0.0
         num_correct = 0
         num_total = 0
+
         for output, pred, labels in validation_step_outputs:
             val_loss += F.cross_entropy(output, labels, reduction="sum")
             num_correct += (pred == labels).sum()
             num_total += pred.shape[0]
             val_accuracy = num_correct / num_total
             val_loss = val_loss / num_total
+
         self.log("accuracy/val", val_accuracy)
         self.log("loss/val", val_loss)
 

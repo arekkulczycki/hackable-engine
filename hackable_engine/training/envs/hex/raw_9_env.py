@@ -32,9 +32,9 @@ A 9x9 game can take ~3250 evaluations, so maximum total penalty could sum up to 
 """
 
 BEING_CLOSER_BONUS: float32 = float32(0.005)
-BEING_CLOSER_SCORE: float32 = float32(0.05)  # float32(0.005)
-BALANCED_POSITION_BONUS: float32 = float32(0.02 / (3 / 4 * 9))
-MAX_MOVES = 20
+BEING_CLOSER_SCORE: float32 = float32(0.01)  # float32(0.005)
+BALANCED_POSITION_BONUS: float32 = float32(0.0015 / (3 / 4 * 9))
+MAX_MOVES = 81
 
 # fmt: off
 openings = cycle(
@@ -58,6 +58,8 @@ class Raw9Env(gym.Env):
     }
 
     reward_range = (2 * REWARDS[False], 2 * REWARDS[True])
+    """Maximum and minimum sum aggregated over an entire episode, not just the final reward."""
+
     observation_space = gym.spaces.Box(
         -1, 1, shape=(1, BOARD_SIZE, BOARD_SIZE), dtype=float32
     )  # should be int8
@@ -134,6 +136,7 @@ class Raw9Env(gym.Env):
 
         self.opp_model = choice(self.models)
         self.winner = None
+        self.generations = 0
 
         # winner = self.controller.board.winner_no_turn()
         # if winner is not None:
@@ -245,14 +248,15 @@ class Raw9Env(gym.Env):
         else:
             best_score = self.best_move[1]
             current_score = score
-            p = 1 if self.generations < 6 else 0.75 if self.generations < 12 else 0.5 if self.generations < 20 else 0.25
-            if current_score > best_score and np.random.choice([True, False], p=[p, 1 - p]):
-            # if current_score > best_score:
+            # p = 1 if self.generations < 6 else 0.75 if self.generations < 12 else 0.5 if self.generations < 20 else 0.25
+            # if current_score > best_score and np.random.choice([True, False], p=[p, 1 - p]):
+            if current_score > best_score:
                 self.best_move = (self.current_move, score)
 
         try:
             # if the move gets maximum score then stop searching for a better one
-            if self.best_move[1] >= 1.0:
+            best_score = self.best_move[1]
+            if best_score >= 1.0 or self.generations > 25 and best_score >= 0.75:
                 raise StopIteration
             # if doesn't raise then there are still moves to be evaluated
             self.current_move = next(self.moves)
@@ -281,6 +285,8 @@ class Raw9Env(gym.Env):
         if final_selection and len(self.controller.board.move_stack) % MAX_MOVES <= 1:
             winner = self.color if reward > 0 else not self.color
             reward = min(ONE, max(MINUS_ONE, reward))
+        # elif final_selection:
+        #     print(f"reward: {reward}")
 
         return (
             self.obs,
@@ -300,7 +306,9 @@ class Raw9Env(gym.Env):
         winner: Optional[bool],
         is_final_selection: bool = False,
     ) -> float32:
-        """"""
+        """
+        :param bool is_final_selection: if the reward is for the move played on board or for the evaluation cycle
+        """
 
         n_moves = len(self.controller.board.move_stack)
 
@@ -319,20 +327,33 @@ class Raw9Env(gym.Env):
             )
 
         else:
-            # the reward when game is being continued, 0 except when we want to punish or encourage some choices
-            if (
-                is_final_selection and n_moves > 0
-            ):  # and n_moves % 6 == (0 if self.color else 1):  # `n_moves` is `n_moves/2` full moves
-                if MAX_MOVES - (n_moves % MAX_MOVES) <= 1:
-                    return self._get_score_for_whos_closer(
-                        n_moves, early_finish=False
-                    )
-                else:
-                    return self._principle_bonus()
-
-            return ZERO
+            reward = self._get_intermediate_reward(is_final_selection, n_moves)
 
         return float32(reward)
+
+    def _get_intermediate_reward(self, is_final_selection, n_moves):
+        # the reward when game is being continued, 0 except when we want to punish or encourage some choices
+        if (
+            is_final_selection and n_moves > 0
+        ):  # and n_moves % 6 == (0 if self.color else 1):  # `n_moves` is `n_moves/2` full moves
+            freq = 2
+            # if MAX_MOVES - (n_moves % MAX_MOVES) <= 1:
+            #     return self._get_score_for_whos_closer(
+            #         n_moves, early_finish=False
+            #     )
+            if n_moves > 16:  # % freq in (0, 1):
+                reward = self._get_score_for_whos_closer(
+                    n_moves, early_finish=False
+                ) / MAX_MOVES  # * freq
+            else:
+                # return ZERO
+                reward = self._principle_bonus()
+
+            # val = self.generations / (81 - n_moves)
+            # penalty = (BALANCED_POSITION_BONUS if val > 0.99 or val < 0.33 else ZERO)
+            return reward  # - penalty
+
+        return ZERO
 
     def _quick_win_value(self, n_moves: int) -> float:
         """The more moves are played the higher the punishment."""
@@ -427,9 +448,9 @@ class Raw9Env(gym.Env):
     def _weight_distance(distance, n_moves):
         """Calculate weighted value of distance. In the endgame close connections value more."""
 
-        if n_moves > 30:
+        if n_moves > 32:
             return distance**3 / 81
-        elif n_moves > 15:
+        elif n_moves > 16:
             return distance**2 / 9
         else:
             return distance

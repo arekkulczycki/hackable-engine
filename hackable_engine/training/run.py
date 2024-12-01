@@ -11,6 +11,7 @@ import intel_extension_for_pytorch as ipex
 import matplotlib.pyplot as plt
 import numpy as np
 import onnxruntime as ort
+from openvino.runtime import Core
 import torch as th
 from RayEnvWrapper import WrapperRayVecEnv
 from stable_baselines3 import PPO
@@ -54,6 +55,7 @@ def train(
     device: Device = Device.AUTO.value,
     loops: int = 100,
 ):
+    # mp.set_start_method("fork")
     t0 = perf_counter()
 
     policy_kwargs = policy_kwargs_map[env_name]
@@ -68,9 +70,11 @@ def train(
     # stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=3, min_evals=5, verbose=1)
     # eval_callback = EvalCallback(env, eval_freq=512, callback_after_eval=stop_train_callback, verbose=1)
 
+    print("configuring ppo...")
     if version >= 0:
         reset_num_timesteps = RESET_CHARTS
         policy_class = policy_kwargs.pop("policy", "MlpPolicy")
+        policy_kwargs["should_initialize_weights"] = False
         if policy_class == "CnnPolicy":
             policy_kwargs["features_extractor_kwargs"][
                 "should_initialize_weights"
@@ -120,8 +124,8 @@ def train(
         model.policy.optimizer.defaults["dampening"] = SGD_DAMPENING[1]
     if model.policy.optimizer.__class__ is AdamW:
         model.policy.optimizer.defaults["weight_decay"] = ADAMW_WEIGHT_DECAY[1]
-    model.policy.optimizer.defaults["lr"] = LEARNING_RATE
 
+    print("running initial train loop...")
     model.policy.train()
 
     print("optimizing for intel...")
@@ -131,14 +135,16 @@ def train(
         model.policy, model.policy.optimizer = th.xpu.optimize(
             model.policy,
             optimizer=model.policy.optimizer,
-            dtype=th.bfloat16,
+            # dtype=th.bfloat16,
             # weights_prepack=False,
             # optimize_lstm=True,
             # fuse_update_step=True,
             # auto_kernel_selection=True,
             # split_master_weight_for_bf16=True,
         )
-        original_policy = model.policy
+        # if model.policy.share_features_extractor:
+        #     model.policy.features_extractor = th.compile(model.policy.features_extractor, backend="ipex")
+        # original_policy = model.policy
         # model.policy = th.compile(model.policy, backend="ipex")
     else:
         model.policy, model.policy.optimizer = ipex.optimize(
@@ -161,7 +167,8 @@ def train(
     print("training started...")
     try:
         if device == Device.XPU:
-            with th.xpu.amp.autocast(enabled=True, dtype=th.bfloat16):
+            with th.xpu.amp.autocast(enabled=True, dtype=th.float16):
+            # with th.xpu.amp.autocast(enabled=True, dtype=th.bfloat16):
                 for _ in range(loops):
                     model.learn(
                         total_timesteps=TOTAL_TIMESTEPS,
@@ -201,16 +208,22 @@ def train(
 
 def get_env(env_name, env_class, version, color) -> gym.Env:
     print("loading models...")
+    # ort_ses_opt = ort.SessionOptions()
+    # ort_ses_opt.log_severity_level = 3
+    # ort_ses_opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    ie = Core()
+
     models = []
-    ext = "Black" if color else "White"
-    model_versions = ["A", "B", "C", "D", "E", "F"]
-    for model_version in model_versions:
-        path = f"Hex9{ext}{model_version}.onnx"
-        models.append(
-            ort.InferenceSession(path, providers=["CPUExecutionProvider"])
-            if os.path.exists(path)
-            else None
-        )
+    color_ext = "Black" if color else "White"
+    for model_version in ["A", "B", "C", "D", "E", "F"]:
+        path = f"Hex9{color_ext}{model_version}.onnx"
+        # models.append(
+        #     ort.InferenceSession(
+        #         path, providers=["CPUExecutionProvider"], sess_options=ort_ses_opt
+        #     )
+        # )
+        model = ie.compile_model(model=ie.read_model(model=path), device_name="CPU")  # GPU
+        models.append(model)
 
     env: Union[DummyVecEnv, SubprocVecEnv] = make_vec_env(
         # lambda: env_class(color=color, models=models),

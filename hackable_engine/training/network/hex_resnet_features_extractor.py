@@ -8,10 +8,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from torch.nn import BatchNorm2d
 
 from hackable_engine.training.hyperparams import LEARNING_RATE
-from hackable_engine.training.network.residual_blocks import (
-    ResidualCustomBlock,
-    ResidualBlock,
-)
+from hackable_engine.training.network.residual_blocks import ResidualBlock
 
 
 class HexResnetFeaturesExtractor(BaseFeaturesExtractor):
@@ -39,7 +36,9 @@ class HexResnetFeaturesExtractor(BaseFeaturesExtractor):
         device = th.device("xpu")
         obs = th.as_tensor(observation_space.sample()).to(th.float32)
         if output_filters:
-            features_dim = self._get_features_number(board_size, output_filters, kernel_sizes, strides)
+            features_dim = self._get_features_number(
+                board_size, output_filters, kernel_sizes, strides
+            )
         else:
             features_dim = obs.size(dim=1) ** 2
         # features_dim = 1152
@@ -78,7 +77,12 @@ class HexResnetFeaturesExtractor(BaseFeaturesExtractor):
             *self.resnet,
             # th.nn.MaxPool2d(kernel_size=3, stride=3),
             # *self._get_resnet(resnet_layers, output_filters[-1], device),
-            th.nn.Conv2d(output_filters[-1], output_filters[-1], kernel_size=board_size, device=device),
+            th.nn.Conv2d(
+                output_filters[-1],
+                output_filters[-1],
+                kernel_size=board_size,
+                device=device,
+            ),
             # *[
             #     th.nn.Conv2d(i_f, o_f, kernel_size=ks, stride=stride, device=device)
             #     for i_f, o_f, ks, stride in zip(

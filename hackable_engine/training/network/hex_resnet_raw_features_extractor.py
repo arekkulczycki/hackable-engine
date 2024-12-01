@@ -8,10 +8,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from torch.nn import BatchNorm2d
 
 from hackable_engine.training.hyperparams import LEARNING_RATE
-from hackable_engine.training.network.residual_blocks import (
-    ResidualCustomBlock,
-    ResidualBlock,
-)
+from hackable_engine.training.network.residual_blocks import ResidualBlock, ResidualBottleneckBlock
 
 
 class HexResnetRawFeaturesExtractor(BaseFeaturesExtractor):
@@ -29,10 +26,10 @@ class HexResnetRawFeaturesExtractor(BaseFeaturesExtractor):
         observation_space: gym.Space,
         board_size: int,
         learning_rate: float = LEARNING_RATE,
+        resnet_layers: Tuple[int, ...] = (1,),
         output_filters: Tuple[int, ...] = (16,),
         kernel_sizes: Tuple[int, ...] = (3,),
         strides: Tuple[int, ...] = (1,),
-        resnet_layers: int = 1,
         should_normalize: bool = True,
         should_initialize_weights: bool = True,
     ) -> None:
@@ -43,32 +40,28 @@ class HexResnetRawFeaturesExtractor(BaseFeaturesExtractor):
 
         super().__init__(observation_space, features_dim, learning_rate)
 
-        input_filters = [obs.size(dim=0), *output_filters[:-1]]
-
-        self.resnet = []
-        for i in range(resnet_layers):
-            conv_layers = (
-                th.nn.Conv2d(
-                    i_f, o_f, kernel_size=ks, padding=(ks - 1) // 2, device=device
-                )
-                for i_f, o_f, ks in zip(
-                    input_filters if i == 0 else output_filters,
-                    output_filters,
-                    kernel_sizes,
-                )
-            )
-
-            if should_normalize:
-                convolutions = list(
-                    zip(
-                        conv_layers,
-                        (BatchNorm2d(o_f, device=device) for o_f in output_filters),
-                    )
-                )
-            else:
-                convolutions = [(layer,) for layer in conv_layers]
-
-            self.resnet.append(ResidualCustomBlock(convolutions))
+        # input_filters = [obs.size(dim=0), *output_filters[:-1]]
+        # self.resnet = []
+        # for n_layers, in_f, out_f, kernel in zip(
+        #     resnet_layers,
+        #     input_filters,
+        #     output_filters,
+        #     kernel_sizes,
+        # ):
+        #     conv_layers = (
+        #         th.nn.Conv2d(
+        #             i_f, o_f, kernel_size=ks, padding=(ks - 1) // 2, device=device
+        #         )
+        #     )
+        #
+        #     self.resnet.extend(self._get_resnet(
+        #         n_layers,
+        #     ))
+        self.resnet = [
+            ResidualBlock(128, 5, 1, 2, in_channels=2, device=device),
+            ResidualBlock(128, 5, 1, 2, device=device),
+            ResidualBlock(128, 5, 1, 2, out_channels=2, device=device),
+        ]
 
         self.network = th.nn.Sequential(
             *self.resnet,
@@ -77,6 +70,20 @@ class HexResnetRawFeaturesExtractor(BaseFeaturesExtractor):
 
         if should_initialize_weights:
             self._initialize_weights()
+
+    @staticmethod
+    def _get_resnet(
+        num_layers: int,
+        num_channels: int,
+        kernel_size: int,
+        stride: int,
+        padding: int,
+        device: th.device,
+    ):
+        return [
+            ResidualBlock(num_channels, kernel_size, stride, padding, device=device)
+            for _ in range(num_layers)
+        ]
 
     def _initialize_weights(self) -> None:
         """

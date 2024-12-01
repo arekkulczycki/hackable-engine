@@ -370,3 +370,25 @@ class HexBoardTestCase(TestCase):
 
         for _ in range(3):  # repeat because the result is random
             assert Move(board.get_random_unoccupied_mask(), size).get_coord() in moves
+
+    @parameterized.expand(
+        [
+            [""],
+            ["a2c1b3a3"],
+            ["a1a2a3b1b2b3c1c2c3"],
+        ]
+    )
+    def test_get_all_graph_links(self, notation) -> None:
+        board = HexBoard(notation, size=3)
+
+        expected_links = {
+            (0, 1), (1, 2), (3, 4), (4, 5), (6, 7), (7, 8),
+            (1, 0), (2, 1), (4, 3), (5, 4), (7, 6), (8, 7),
+            (0, 3), (3, 6), (1, 4), (4, 7), (2, 5), (5, 8),
+            (3, 0), (6, 3), (4, 1), (7, 4), (5, 2), (8, 5),
+            (1, 3), (2, 4), (4, 6), (5, 7),
+            (3, 1), (4, 2), (6, 4), (7, 5)
+        }
+        expected_binary_links = {(2**link[0], 2**link[1]) for link in expected_links}
+
+        assert board._get_all_graph_links() == expected_binary_links
