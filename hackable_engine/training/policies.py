@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import torch as th
 
+from hackable_engine.training.envs.dummy_env import DummyEnv
+from hackable_engine.training.envs.hex.raw_5_env import Raw5Env
 from hackable_engine.training.envs.hex.raw_9_graph_env import Raw9GraphEnv
 from hackable_engine.training.network.alphazero_features_extractor import (
     AlphaZeroFeaturesExtractor,
@@ -43,10 +45,35 @@ cnn_base = dict(
 
 policy_kwargs_map = {
     "default": dict(net_arch=[dict(pi=[64, 64], vf=[64, 64])]),
+    "dummy": {
+        "policy": "MlpPolicy",
+        "env_class": DummyEnv,
+        "net_arch": [16, 16],
+        # "optimizer_class": th.optim.SGD,
+        # "optimizer_kwargs": dict(momentum=SGD_MOMENTUM[0], nesterov=True),
+        "optimizer_class": th.optim.AdamW,
+        "optimizer_kwargs": dict(weight_decay=ADAMW_WEIGHT_DECAY[0]),
+        "activation_fn": th.nn.ReLU,
+        # "ortho_init": True,
+        # "log_std_init": th.log(th.tensor(0.66)),
+    },
+    "hex5raw": {
+        "policy": "MlpPolicy",
+        "env_class": Raw5Env,
+        "net_arch": [125, 125],
+        # "optimizer_class": th.optim.SGD,
+        # "optimizer_kwargs": dict(momentum=SGD_MOMENTUM[0], nesterov=True),
+        "optimizer_class": th.optim.AdamW,
+        "optimizer_kwargs": dict(weight_decay=ADAMW_WEIGHT_DECAY[0]),
+        "activation_fn": th.nn.ReLU,
+        # "ortho_init": True,
+        "log_std_init": th.log(th.tensor(0.33)),
+    },
     "hex9raw": {
         "policy": "MlpPolicy",
-        "env_class": Raw9BinaryEnv,
-        "net_arch": [162, 162],
+        # "env_class": Raw9BinaryEnv,
+        "env_class": Raw9Env,
+        "net_arch": [81, 81],
         # "optimizer_class": th.optim.AdamW,
         # "optimizer_kwargs": dict(weight_decay=ADAMW_WEIGHT_DECAY[0]),
         "activation_fn": th.nn.Tanhshrink,
@@ -150,15 +177,15 @@ policy_kwargs_map = {
             strides=(1,),
             pooling_strides=(2,),
             should_normalize=False,
-            activation_fn=th.nn.Tanhshrink,
+            activation_fn=th.nn.ReLU,
             # learning_rate=1e-5,
             # reduced_channels=64,
             # resnet_layers=(1,),
         ),
         "log_std_init": th.log(th.tensor(0.42)),
         # "distribution_class": LogNormalDistribution,  # does not exist anymore in sb3
-        "activation_fn": th.nn.Tanh,
-        "net_arch": [64*9, 64*9],
+        "activation_fn": th.nn.ReLU,
+        "net_arch": [64, 64],
     },
     "hex9cnnB": {
         **cnn_base,
@@ -169,7 +196,7 @@ policy_kwargs_map = {
             kernel_sizes=(3, 3),
             strides=(1, 1),
             pooling_strides=(0, 1),
-            should_normalize=False,
+            should_normalize=True,
             activation_fn=th.nn.Tanhshrink,
         ),
         "log_std_init": th.log(th.tensor(0.33)),
@@ -217,11 +244,11 @@ policy_kwargs_map = {
             strides=(1,),
             pooling_strides=(1,),
             should_normalize=False,
-            activation_fn=th.nn.Tanhshrink,
+            activation_fn=th.nn.ReLU,
             resnet_layers=(7,),
         ),
         "log_std_init": th.log(th.tensor(0.42)),
-        "activation_fn": th.nn.Tanh,
+        "activation_fn": th.nn.ReLU,
         "net_arch": [64*9, 64*9],
     },
     "hex9az": {

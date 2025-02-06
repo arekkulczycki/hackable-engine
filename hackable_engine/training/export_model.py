@@ -128,7 +128,7 @@ print(perf_counter() - t0)
 #     action_onnx_single = ort_session_cpu_single.run(None, {"input": numpy_obs})
 # print(perf_counter() - t0)
 
-inputs = np.stack([numpy_obs for _ in range(5)], axis=0).reshape((5, 81, 1))
+# inputs = np.stack([numpy_obs for _ in range(5)], axis=0).reshape((5, 81, 1))
 t0 = perf_counter()
 for i in range(100):
     action_onnx = ort_session_cpu.run(None, {"inputs": numpy_obs})

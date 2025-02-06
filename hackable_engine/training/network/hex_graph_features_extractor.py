@@ -109,7 +109,11 @@ class HexGraphFeaturesExtractor(BaseFeaturesExtractor):
                 th.nn.init.zeros_(module.bias)
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
-        x = observations.flatten().unsqueeze(1) if self.conv_type in ["gat", "gat_1_head"] else observations
+        """
+        :param observations: tensor of size (batch_size, board.size_square, 1)
+        """
+        # x = observations.flatten().unsqueeze(1) if self.conv_type in ["gat", "gat_1_head"] else observations
+        x = observations
         # x = observations.squeeze() if self.conv_type == "fast_rgcn" else observations.flatten().unsqueeze(1)
         # x = observations.flatten().unsqueeze(1) if self.conv_type in ["gat", "res_gated"] else observations.squeeze()
 
@@ -124,4 +128,4 @@ class HexGraphFeaturesExtractor(BaseFeaturesExtractor):
             if self.use_residuals and conv.in_channels == conv.out_channels:
                 x += c
 
-        return th.reshape(x, (observations.size(0), self.features_dim))
+        return x.flatten(start_dim=1, end_dim=-1)  # keeps batch dimension and flattens the rest

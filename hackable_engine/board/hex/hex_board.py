@@ -10,22 +10,16 @@ from operator import ior
 from random import randint
 from typing import (
     Callable,
-    Dict,
     Generator,
     Iterator,
-    List,
     Optional,
-    Tuple,
-    Iterable,
-    Set,
 )
 
-import numpy as np
 import torch as th
-from torch_geometric.data import Data as GraphData
-from astar import find_path, SearchNode
+from astar import find_path
 from nptyping import Int8, NDArray, Shape, Float32
 from numpy import asarray, empty, float32, int8, mean, zeros
+# from torch_geometric.data import Data as GraphData
 
 from hackable_engine.board import BitBoard, GameBoardBase
 from hackable_engine.board.hex.bitboard_utils import (
@@ -45,10 +39,10 @@ Cell = int
 SIZE = 13
 
 NEIGHBOURHOOD_DIAMETER: int = 7
-ZERO: Float32 = float32(0)
-ONE: Float32 = float32(1)
-TWO: Float32 = float32(2)
-MINUS_ONE: Float32 = float32(-1)
+ZERO: float32 = float32(0)
+ONE: float32 = float32(1)
+TWO: float32 = float32(2)
+MINUS_ONE: float32 = float32(-1)
 
 
 class HexBoard(HexBoardSerializerMixin, GameBoardBase):
@@ -61,10 +55,10 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     turn: bool
     """The side to move True for white, False for black."""
 
-    move_stack: List[Move]
-    """List of moves on board from first to last."""
+    move_stack: list[Move]
+    """list of moves on board from first to last."""
 
-    occupied_co: Dict[bool, BitBoard]
+    occupied_co: dict[bool, BitBoard]
     unoccupied: BitBoard
 
     has_move_limit: bool = True
@@ -89,10 +83,10 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         self.half_number_of_cells: int = (self.size_square - self.size) // 2
         """Half of cells except the short diagonal."""
 
-        self.bb_rows: List[BitBoard] = [
+        self.bb_rows: list[BitBoard] = [
             reduce(ior, self._generate_row_masks(row)) for row in range(size)
         ]
-        self.bb_cols: List[BitBoard] = [
+        self.bb_cols: list[BitBoard] = [
             reduce(ior, self._generate_col_masks(col)) for col in range(size)
         ]
         self.vertical_coeff = 2**self.size
@@ -105,7 +99,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         if use_graph:
             self.edge_index = self._get_all_graph_links_coo()
         else:
-            self.edge_index = None
+            self.edge_index = th.Tensor([])
 
         # self.short_diagonal_mask = self._get_short_diagonal_mask()
         # self.long_diagonal_mask = self._get_long_diagonal_mask()
@@ -355,7 +349,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def is_connected_to_bottom(
         self, mask: BitBoard, visited: BitBoard = 0
-    ) -> Tuple[bool, int]:
+    ) -> tuple[bool, int]:
         """
         Recurrent way of finding if a stone is connected to bottom.
         """
@@ -435,7 +429,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def is_connected_to_right(
         self, mask: BitBoard, visited: BitBoard = 0
-    ) -> Tuple[bool, int]:
+    ) -> tuple[bool, int]:
         """
         Recurrent way of finding if a stone is connected to bottom.
         """
@@ -652,20 +646,20 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         yield from generate_masks(self.occupied_co[True])
 
-    def generate_diagonal_moves(
-        self, visited: BitBoard
-    ) -> Generator[Move, None, BitBoard]:
-        """"""
-
-        to_visit: BitBoard = (
-            (self.short_diagonal_mask | self.long_diagonal_mask)
-            & self.unoccupied
-            & ~visited
-        )
-        for mask in generate_masks(to_visit):
-            yield Move(mask, self.size)
-
-        return visited | to_visit
+    # def generate_diagonal_moves(
+    #     self, visited: BitBoard
+    # ) -> Generator[Move, None, BitBoard]:
+    #     """"""
+    #
+    #     to_visit: BitBoard = (
+    #         (self.short_diagonal_mask | self.long_diagonal_mask)
+    #         & self.unoccupied
+    #         & ~visited
+    #     )
+    #     for mask in generate_masks(to_visit):
+    #         yield Move(mask, self.size)
+    #
+    #     return visited | to_visit
 
     def generate_remaining_moves(
         self, visited: BitBoard
@@ -762,7 +756,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return True
 
-    def get_connectedness_and_spacing(self) -> Tuple[int, int, int, int]:
+    def get_connectedness_and_spacing(self) -> tuple[int, int, int, int]:
         """
         Scan in every of 3 dimensions of the board, in each aggregating series of stones of same color.
 
@@ -920,7 +914,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         else:
             return False
 
-    def get_imbalance(self, color: bool) -> Tuple[float32, float32]:
+    def get_imbalance(self, color: bool) -> tuple[float32, float32]:
         """
         Sum up if stones are distributed in a balanced way across:
             - left/right
@@ -938,9 +932,9 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         if not occupied:
             return float32(0), float32(0)
 
-        xs: List[int] = []
-        ys: List[int] = []
-        center_distances: List[float] = []
+        xs: list[int] = []
+        ys: list[int] = []
+        center_distances: list[float] = []
 
         for mask in generate_masks(occupied):
             x = self._x(mask)
@@ -966,6 +960,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         If the move is on the border then
 
         The order in the collection should be subsequent rows top to bottom, each row from left to right.
+
+        :return: array of shape (self.size, self.size)
         """
 
         if self.size < diameter:
@@ -1028,7 +1024,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         return array
 
     def as_matrix(
-        self, black_stone_val: Float32 = MINUS_ONE, empty_val: Float32 = ZERO
+        self, black_stone_val: float32 = MINUS_ONE, empty_val: float32 = ZERO
     ) -> NDArray[Shape, Float32]:
         """"""
 
@@ -1050,8 +1046,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         size: int,
         occupied_white: int,
         occupied_black: int,
-        black_val: Float32 = MINUS_ONE,
-        empty_val: Float32 = ZERO,
+        black_val: float32 = MINUS_ONE,
+        empty_val: float32 = ZERO,
     ) -> NDArray[Shape, Float32]:
         """"""
 
@@ -1108,8 +1104,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     def _as_matrix_efficiency(
         self,
         array: NDArray[Shape, Int8],
-        black_val: Int8 = MINUS_ONE,
-        empty_val: Int8 = ZERO,
+        black_val: int8 = int8(MINUS_ONE),
+        empty_val: int8 = int8(ZERO),
     ) -> NDArray:
         """"""
 
@@ -1126,8 +1122,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         size: int,
         o_white: NDArray[Shape, Int8],
         o_black: NDArray[Shape, Int8],
-        black_val: Int8 = MINUS_ONE,
-        empty_val: Int8 = ZERO,
+        black_val: int8 = int8(MINUS_ONE),
+        empty_val: int8 = int8(ZERO),
     ) -> NDArray:
         """"""
 
@@ -1222,8 +1218,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         yield from ((1 << col) << (row * self.size) for row in range(self.size))
 
     def get_area_moves(
-        self, col_range: Tuple[int, int], row_range: Tuple[int, int]
-    ) -> List[Move]:
+        self, col_range: tuple[int, int], row_range: tuple[int, int]
+    ) -> list[Move]:
         """"""
 
         return [
@@ -1232,7 +1228,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         ]
 
     def get_area_mask(
-        self, col_range: Tuple[int, int], row_range: Tuple[int, int]
+        self, col_range: tuple[int, int], row_range: tuple[int, int]
     ) -> BitBoard:
         """"""
 
@@ -1242,7 +1238,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         )
 
     def generate_masks_from_area(
-        self, col_range: Tuple[int, int], row_range: Tuple[int, int]
+        self, col_range: tuple[int, int], row_range: tuple[int, int]
     ) -> Generator[BitBoard, None, None]:
         """"""
 
@@ -1254,8 +1250,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def generate_moves_from_area(
         self,
-        col_range: Tuple[int, int],
-        row_range: Tuple[int, int],
+        col_range: tuple[int, int],
+        row_range: tuple[int, int],
         visited: BitBoard = 0,
     ) -> Generator[Move, None, None]:
         """"""
@@ -1274,7 +1270,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def distance_missing(
         self, mask_from: BitBoard, mask_to: BitBoard, color: bool
-    ) -> Tuple[int, List[BitBoard]]:
+    ) -> tuple[int, list[BitBoard]]:
         """
         Calculate how many stones are missing to finish the connection from one cell to another.
 
@@ -1304,13 +1300,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         Calculate how many stones are missing to finish the connection between two sides.
         """
 
-        connection_points_start: List[BitBoard] = self._get_start_points(color)
-        connection_points_finish: List[BitBoard] = self._get_finish_points(color)
+        connection_points_start: list[BitBoard] = self._get_start_points(color)
+        connection_points_finish: list[BitBoard] = self._get_finish_points(color)
 
         if not (connection_points_start and connection_points_finish):
             raise ValueError("searching shortest missing distance on game over")
 
-        connection_points_pairs: product[Tuple[BitBoard, BitBoard]] = product(
+        connection_points_pairs: product[tuple[BitBoard, BitBoard]] = product(
             connection_points_start, connection_points_finish
         )
         return min(
@@ -1322,7 +1318,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def get_short_missing_distances(
         self, color: bool, *, should_subtract: bool = False
-    ) -> Tuple[int, Dict[int, int]]:
+    ) -> tuple[int, dict[float, int]]:
         """
         Calculate how many stones are missing to finish the connection between two sides.
 
@@ -1330,21 +1326,22 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             subtracts 0.5, because an additional stone cannot have impact on all the variants
         """
 
-        connection_points_start: List[BitBoard] = self._get_start_points(color)
-        connection_points_finish: List[BitBoard] = self._get_finish_points(color)
+        connection_points_start: list[BitBoard] = self._get_start_points(color)
+        connection_points_finish: list[BitBoard] = self._get_finish_points(color)
 
         if not (connection_points_start and connection_points_finish):
             raise ValueError("searching shortest missing distance on game over")
 
-        connection_points_pairs: product[Tuple[BitBoard, BitBoard]] = product(
+        connection_points_pairs: product[tuple[BitBoard, BitBoard]] = product(
             connection_points_start, connection_points_finish
         )
 
         shortest_distance = self.size_square
-        variants = defaultdict(lambda: 0)
-        unique_paths = set()
-        shortest_path = set()
+        variants: dict[float, int] = defaultdict(lambda: 0)
+        unique_paths: set[tuple[BitBoard, ...]] = set()
+        shortest_path: set[BitBoard] = set()
         for pair in connection_points_pairs:
+            path: list[BitBoard]
             length, path = self.distance_missing(*pair, color)
             if not path:
                 continue
@@ -1394,13 +1391,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             start_corner = list(generate_masks(self.bb_rows[0] & ~opp))[-1]
             finish_corner = next(generate_masks(self.bb_rows[-1] & ~opp))
 
-        connection_points_start: List[BitBoard] = self._get_start_points_perf(color)
-        connection_points_finish: List[BitBoard] = self._get_finish_points_perf(color)
+        connection_points_start: list[BitBoard] = self._get_start_points_perf(color)
+        connection_points_finish: list[BitBoard] = self._get_finish_points_perf(color)
 
         if not (connection_points_start and connection_points_finish):
             raise ValueError("searching shortest missing distance on game over")
 
-        connection_points_pairs: List[Tuple[BitBoard, BitBoard]] = [
+        connection_points_pairs: list[tuple[BitBoard, BitBoard]] = [
             (start_corner, finish) for finish in connection_points_finish
         ] + [(start, finish_corner) for start in connection_points_start]
 
@@ -1414,7 +1411,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             )
         )
 
-    def _get_start_points(self, color: bool) -> List[BitBoard]:
+    def _get_start_points(self, color: bool) -> list[BitBoard]:
         """Top row or left column."""
 
         opp = self.occupied_co[not color]
@@ -1426,7 +1423,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             masks = list(generate_masks(self.bb_rows[0] & ~opp))
             return masks
 
-    def _get_start_points_perf(self, color: bool) -> List[BitBoard]:
+    def _get_start_points_perf(self, color: bool) -> list[BitBoard]:
         """Top row or left column."""
 
         own = self.occupied_co[color]
@@ -1453,7 +1450,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 return masks
                 # return [masks[len(masks)//2]]  # take a single point in the middle of an edge
 
-    def _get_finish_points(self, color: bool) -> List[BitBoard]:
+    def _get_finish_points(self, color: bool) -> list[BitBoard]:
         """Bottom row or right column."""
 
         if color:
@@ -1466,7 +1463,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             masks = list(generate_masks(self.bb_rows[-1] & ~opp))
             return masks
 
-    def _get_finish_points_perf(self, color: bool) -> List[BitBoard]:
+    def _get_finish_points_perf(self, color: bool) -> list[BitBoard]:
         """Bottom row or right column."""
 
         own = self.occupied_co[color]
@@ -1504,12 +1501,12 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return array
 
-    def _get_all_graph_links(self) -> Set[Tuple[BitBoard, BitBoard]]:
+    def _get_all_graph_links(self) -> set[tuple[BitBoard, BitBoard]]:
         """
         Return all links between all board cells, considering the board to be a graph.
         """
 
-        links: Set[Tuple[BitBoard, BitBoard]] = set()
+        links: set[tuple[BitBoard, BitBoard]] = set()
 
         for mask in generate_masks(self.get_all_mask()):
             for neighbour_mask in self.generate_neighbours(mask):
@@ -1535,13 +1532,16 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             .contiguous()
         )
 
-    def to_graph_data(self) -> GraphData:
-        """"""
-
-        return GraphData(x=self.get_graph_node_features(), edge_index=self.edge_index)
+    # def to_graph_data(self) -> GraphData:
+    #     """"""
+    #
+    #     return GraphData(x=self.get_graph_node_features(), edge_index=self.edge_index)
 
     def get_graph_node_features(self) -> th.Tensor:
-        """Get node features, where the only feature is stone color (or lack thereof)."""
+        """
+        Get node features, where the only feature is stone color (or lack thereof).
+        :return: tensor of shape (1, self.size_square)
+        """
 
         node_features = []
 
@@ -1562,7 +1562,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return th.tensor([node_features]).t()
 
-    def _get_nodes_and_links(self) -> Tuple[NDArray, NDArray]:
+    def _get_nodes_and_links(self) -> tuple[NDArray, NDArray]:
         """
         By convention the board graph has always all the nodes and link types, counting empty.
 
@@ -1603,7 +1603,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return asarray(nodes), asarray(links)
 
-    def _append_graph_vertical_links_(self, nodes: List[int], links: List[int]):
+    def _append_graph_vertical_links_(self, nodes: list[int], links: list[int]):
         """
         Links along columns.
 
@@ -1619,7 +1619,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                     links.append(self._get_graph_link_type(last_color, color))
                 last_color = color
 
-    def _append_graph_diagonal_links_(self, nodes: List[int], links: List[int]):
+    def _append_graph_diagonal_links_(self, nodes: list[int], links: list[int]):
         """
         Links along the short diagonal.
         """

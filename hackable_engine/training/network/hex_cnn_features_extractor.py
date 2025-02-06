@@ -57,11 +57,12 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
                 kernels,
                 strides + pooling_strides,
             )
+            # features_dim = 3200  # cnnB
             # features_dim=12800  # for policy D
         else:
             features_dim = obs.size(dim=1) ** 2 * resnet_channels
 
-        super().__init__(observation_space, features_dim, learning_rate)
+        super().__init__(observation_space, features_dim)
 
         n_channels = obs.size(dim=0)
         input_filters = [n_channels, *output_filters[:-1]]
@@ -248,4 +249,7 @@ class HexCnnFeaturesExtractor(BaseFeaturesExtractor):
         return filters, out_size
 
     def forward(self, observations: NDArray) -> th.Tensor:  # th.Tensor) -> th.Tensor:
+        """
+        :param observations: array of shape (batch_size, board_size, board_size)
+        """
         return self.network(observations)

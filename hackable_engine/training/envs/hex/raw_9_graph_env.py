@@ -20,6 +20,9 @@ class Raw9GraphEnv(Raw9Env):
 
     @staticmethod
     def observation_from_board(board: HexBoard) -> th.Tensor:
+        """
+        :return: tensor with `board.size_square` rows of a single element
+        """
         return th.reshape(board.get_graph_node_features(), (1, 81, 1))
 
     @staticmethod
