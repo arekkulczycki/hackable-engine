@@ -18,13 +18,9 @@ from stable_baselines3.common.vec_env import (
 )
 
 from hackable_engine.training.algorithms import (
-    cleanrl_ppo,
-    sb3_sac,
-    sb3_td3,
     cleanrl_sac,
-    cleanrl_td3,
 )
-from hackable_engine.training.algorithms.device import Device
+from hackable_engine.training.device import Device
 from hackable_engine.training.hyperparams import *
 from hackable_engine.training.policies import policy_kwargs_map
 
@@ -67,13 +63,13 @@ def train(
 
 def get_env(env_name, env_class, version, color, sb3: bool) -> gym.vector.VectorEnv:
     print("loading models...")
-    ie = Core()
-    models = []
-    color_ext = "Black" if color else "White"
-    for model_version in ["A", "B", "C", "D", "E", "F"]:
-        path = f"Hex9{color_ext}{model_version}.onnx"
-        model = ie.compile_model(model=ie.read_model(model=path), device_name="CPU")  # GPU
-        models.append(model)
+    models = [None]
+    # ie = Core()
+    # color_ext = "Black" if color else "White"
+    # for model_version in ["A", "B", "C", "D", "E", "F"]:
+    #     path = f"Hex9{color_ext}{model_version}.onnx"
+    #     model = ie.compile_model(model=ie.read_model(model=path), device_name="CPU")  # GPU
+    #     models.append(model)
 
     print("creating vec env...")
     if not sb3:
@@ -83,7 +79,7 @@ def get_env(env_name, env_class, version, color, sb3: bool) -> gym.vector.Vector
             color=color,
             models=models,
             vectorization_mode=gym.VectorizeMode.SYNC,
-            # vector_kwargs=dict(shared_memory=True, copy=True),
+            # vector_kwargs=dict(shared_memory=False, copy=False),
         )
 
     env = make_vec_env(

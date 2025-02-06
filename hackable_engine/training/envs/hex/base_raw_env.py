@@ -83,6 +83,7 @@ class BaseRawEnv(gym.Env):
 
         self.games = 0
         self.scores = defaultdict(lambda: 0)
+        self.last_intermediate_score = 0.0
         # self.intermediate_rewards = []
 
         self.moves: Generator[Move, None, None] = HexBoard.generate_nothing()
@@ -114,9 +115,11 @@ class BaseRawEnv(gym.Env):
         self.render()
 
         # self.intermediate_rewards.clear()
+
         self.opp_model = choice(self.models)
         self.winner = None
         self.generations = 0
+        self.last_intermediate_score = 0.0
 
         # winner = self.controller.board.winner_no_turn()
         # if winner is not None:
@@ -167,7 +170,6 @@ class BaseRawEnv(gym.Env):
         score = action[0]
         self.generations += 1
 
-        # self.action_values.append(score)
         if self.best_move is None:
             self.best_move = (self.current_move, score)
         else:
@@ -237,7 +239,6 @@ class BaseRawEnv(gym.Env):
 
         winner = self.controller.board.winner_no_turn()
         reward = self._get_reward(winner, True)
-        # self.intermediate_rewards.append(str(np.round(reward, 3)))
 
         # if the last move didn't conclude the game, now play opponent move and reset generator
         if winner is None:
@@ -295,11 +296,27 @@ class BaseRawEnv(gym.Env):
         return float32(reward)
 
     def _get_intermediate_reward(self, n_moves):
-        reward = self._get_distance_score(n_moves, early_finish=False)
-        if not self.color:
-            reward *= MINUS_ONE
+        # return np.float32(self._get_intermediate_reward_absolute(n_moves))
+        return np.float32(self._get_intermediate_reward_relative(n_moves))
 
-        return reward
+    def _get_intermediate_reward_absolute(self, n_moves):
+        score = self._get_distance_score(n_moves, early_finish=False)
+        self.last_intermediate_score = score
+
+        if not self.color:
+            score *= MINUS_ONE
+
+        return score
+
+    def _get_intermediate_reward_relative(self, n_moves):
+        score = self._get_distance_score(n_moves, early_finish=False)
+        relative_score = score - self.last_intermediate_score
+        self.last_intermediate_score = score
+
+        if not self.color:
+            relative_score *= MINUS_ONE
+
+        return relative_score
 
     def _quick_win_value(self, n_moves: int) -> float:
         """The more moves are played the higher the punishment."""

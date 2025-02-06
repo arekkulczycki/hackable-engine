@@ -6,7 +6,7 @@ import torch as th
 from stable_baselines3 import TD3
 from stable_baselines3.common.noise import ActionNoise
 
-from hackable_engine.training.algorithms.device import Device
+from hackable_engine.training.device import Device
 from hackable_engine.training.callbacks import TensorboardActionHistogramCallback
 from hackable_engine.training.hyperparams import *
 from hackable_engine.training.policies import policy_kwargs_map

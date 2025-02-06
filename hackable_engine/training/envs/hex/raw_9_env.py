@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 from itertools import cycle
-from typing import Dict, Optional
 
 import gymnasium as gym
-import torch as th
 from gymnasium.envs.registration import register
 from numpy import float32
-from stable_baselines3.common.policies import ActorCriticPolicy
 
 from hackable_engine.training.envs.hex.base_raw_env import BaseRawEnv
 
@@ -18,33 +15,19 @@ MINUS_ONE: float32 = float32(-1)
 class Raw9Env(BaseRawEnv):
     """"""
 
-    BOARD_SIZE: int = 9
-    REWARDS: Dict[Optional[bool], float32] = {
-        None: ZERO,
-        True: ONE,
-        False: MINUS_ONE,
-    }
-
-    reward_range = (2 * REWARDS[False], 2 * REWARDS[True])
-    """Maximum and minimum sum aggregated over an entire episode, not just the final reward."""
+    ENV_NAME = "raw9env"
 
     observation_space = gym.spaces.Box(
-        -1, 1, shape=(1, BOARD_SIZE, BOARD_SIZE), dtype=float32
+        -1, 1, shape=(1, 9, 9), dtype=float32
     )  # should be int8
-    action_space = gym.spaces.Box(MINUS_ONE, ONE, shape=(1,), dtype=float32)
-
-    winner: Optional[bool]
-    obs: th.Tensor
-
-    policy: Optional[ActorCriticPolicy] = None
 
     def __init__(self, *args, **kwargs):
         """"""
 
         super().__init__(*args, **kwargs)
-        self.BOARD_SIZE: int = 5
+        self.BOARD_SIZE: int = 9
         self.MAX_MOVES: int = self.BOARD_SIZE**2
-        self.DECISIVE_DISTANCE_ADVANTAGE: int = 3
+        self.DECISIVE_DISTANCE_ADVANTAGE: int = 4
         # fmt: off
         self.OPENINGS = cycle(
             [

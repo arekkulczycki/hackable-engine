@@ -3,7 +3,7 @@ N_ENV_WORKERS = 1
 """Not really a hyperparam, but impacts the choice of others."""
 
 N_ENVS = 12 * N_ENV_WORKERS
-TOTAL_TIMESTEPS = int(2**25)
+TOTAL_TIMESTEPS = int(2**24)
 LEARNING_RATE = 1e-4  #lambda p: 0 if p > 0.998 else 3e-5
 
 # slowly decline to a point
@@ -24,8 +24,8 @@ SGD_DAMPENING = (0.0, 0.0)  # initial and used in subsequent training values
 ADAMW_WEIGHT_DECAY = (1e-6, 1e-6)  # initial and used in subsequent training values
 """Only used when AdamW/Adam optimizer is chosen for a policy."""
 
-N_EPOCHS = 32
-N_STEPS = 2**9
+N_EPOCHS = 64
+N_STEPS = 2**10
 """Batch size per env, ie. will update policy every `N_STEPS` iterations, total batch size is this times `N_ENVS`."""
 
 BATCH_SIZE = int(N_ENVS // N_ENV_WORKERS * N_ENV_WORKERS * N_STEPS / 2**0)

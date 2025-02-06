@@ -210,8 +210,9 @@ def train(
                 for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
                     target_param.data.copy_(TAU * param.data + (1 - TAU) * target_param.data)
 
-            if global_step % N_STEPS == 0:
-                writer.add_scalar("charts/mean_reward", np.mean(rewards[terminations]), global_step)
+            final_rewards = rewards[terminations]
+            if final_rewards.size != 0:
+                writer.add_scalar("charts/mean_reward", np.mean(final_rewards), global_step)
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf2_values", qf2_a_values.mean().item(), global_step)
