@@ -3,10 +3,13 @@
 from enum import Enum, IntEnum
 
 from numpy import float32
+import torch as th
 
-INF: float32 = float32(1000000.0)
-DRAW: float32 = float32(0.0)
-ZERO: float32 = float32(0.0)
+FLOAT_TYPE = float32
+TH_FLOAT_TYPE = th.float32
+INF: FLOAT_TYPE = FLOAT_TYPE(1000000.0)
+DRAW: FLOAT_TYPE = FLOAT_TYPE(0.0)
+ZERO: FLOAT_TYPE = FLOAT_TYPE(0.0)
 SLEEP: float = 0.001
 LOG_INTERVAL: float = 0.5
 BREAK_INTERVAL: float = 3.0

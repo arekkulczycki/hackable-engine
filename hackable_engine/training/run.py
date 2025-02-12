@@ -4,12 +4,10 @@ from argparse import ArgumentParser
 from time import perf_counter
 
 import gymnasium as gym
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from RayEnvWrapper import WrapperRayVecEnv
-from openvino.runtime import Core
 from stable_baselines3.common.env_util import make_vec_env
-
 from stable_baselines3.common.monitor import load_results
 from stable_baselines3.common.results_plotter import ts2xy
 from stable_baselines3.common.vec_env import (
@@ -18,9 +16,12 @@ from stable_baselines3.common.vec_env import (
 )
 
 from hackable_engine.training.algorithms import (
-    cleanrl_sac,
+    cleanrl_td3, cleanrl_sac,
 )
 from hackable_engine.training.device import Device
+from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_env import MultiprocessEnv
+from hackable_engine.training.envs.multiprocess_vector_env.ray_vector_env import RayVectorEnv
+from hackable_engine.training.envs.wrappers.episode_stats import EpisodeStats
 from hackable_engine.training.hyperparams import *
 from hackable_engine.training.policies import policy_kwargs_map
 
@@ -44,14 +45,14 @@ def train(
     if N_ENV_WORKERS == 1:
         env = get_env(env_name, policy_kwargs.pop("env_class"), version, color, sb3=False)
     else:
-        env = get_ray_env(env_name, policy_kwargs.pop("env_class"), version, color)
+        env = get_multiprocess_env(env_name, policy_kwargs.pop("env_class"), version, color, sb3=False)
 
     # sb3_ppo.run(version, policy_kwargs, env, env_name, device, loops, color)
     # sb3_sac.run(version, policy_kwargs, env, env_name, device, loops, color)
     # sb3_td3.run(version, policy_kwargs, env, env_name, device, loops, color)
     # cleanrl_ppo.run(version, policy_kwargs, env, env_name, device, loops, color)
-    cleanrl_sac.run(version, policy_kwargs, env, env_name, device, loops, color)
-    # cleanrl_td3.run(version, policy_kwargs, env, env_name, device, loops, color)
+    # cleanrl_sac.run(version, policy_kwargs, env, env_name, device, loops, color)
+    cleanrl_td3.run(version, policy_kwargs, env, env_name, device, loops, color)
 
     print(f"training finished in: {perf_counter() - t0}")
 
@@ -73,14 +74,14 @@ def get_env(env_name, env_class, version, color, sb3: bool) -> gym.vector.Vector
 
     print("creating vec env...")
     if not sb3:
-        return gym.make_vec(
+        return EpisodeStats(gym.make_vec(
             id=env_class.__name__,
             num_envs=N_ENVS,
             color=color,
             models=models,
             vectorization_mode=gym.VectorizeMode.SYNC,
-            # vector_kwargs=dict(shared_memory=False, copy=False),
-        )
+            # vector_kwargs=dict(shared_memory=True, copy=False),
+        ))
 
     env = make_vec_env(
         env_class,
@@ -91,8 +92,15 @@ def get_env(env_name, env_class, version, color, sb3: bool) -> gym.vector.Vector
     return VecMonitor(env, os.path.join(LOG_PATH, env_name, f"v{version}"))
 
 
-def get_ray_env(env_name, env_class, version, color):
-    # TODO: rewrite to handle gymnasium VectorEnv
+def get_multiprocess_env(env_name, env_class, version, color, sb3: bool):
+    if not sb3:
+        return MultiprocessEnv(lambda seed, num_envs, color_, models=[]: EpisodeStats(gym.make_vec(
+            id=env_class.__name__,
+            num_envs=num_envs,
+            color=color_,
+            models=models,
+        ), is_multiprocessed=True), N_ENV_WORKERS, int(N_ENVS // N_ENV_WORKERS), color)
+
     env = WrapperRayVecEnv(
         lambda seed, models=[]: env_class(color=color, models=models),
         N_ENV_WORKERS,

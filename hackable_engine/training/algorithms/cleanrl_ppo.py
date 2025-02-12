@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import random
+from contextlib import nullcontext
 
 import gym.vector
 import torch as th
@@ -9,6 +10,7 @@ from torch.distributions.normal import Normal
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
 
+from hackable_engine.training.device import Device
 from hackable_engine.training.hyperparams import *
 
 LOG_PATH = "./hackable_engine/training/logs/"
@@ -111,19 +113,25 @@ def run(version, policy_kwargs, env, env_name, device, loops, color):
     values = th.zeros((N_STEPS, N_ENVS)).to(device)
 
     try:
-        train(
-            env,
-            agent,
-            optimizer,
-            writer,
-            device,
-            obs,
-            actions,
-            values,
-            rewards,
-            dones,
-            logprobs,
+        context = (
+            th.amp.autocast("xpu", enabled=True, dtype=th.float16)
+            if device == Device.XPU
+            else nullcontext()
         )
+        with context:
+            train(
+                env,
+                agent,
+                optimizer,
+                writer,
+                device,
+                obs,
+                actions,
+                values,
+                rewards,
+                dones,
+                logprobs,
+            )
     finally:
         th.save(agent.state_dict(), f"./{env_name}.v{version + 1}")
 
@@ -285,7 +293,8 @@ def train(
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-        writer.add_scalar("charts/mean_reward", th.mean(rewards[terminations]), global_step)
+        writer.add_scalar("charts/episode_len", np.mean(env.length_queue), global_step)
+        writer.add_scalar("charts/mean_reward", np.mean(env.return_queue), global_step)
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)

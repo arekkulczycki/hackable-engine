@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from copy import copy
-from functools import reduce
+from functools import reduce, lru_cache
 from itertools import groupby, product
 from operator import ior
 from random import randint
@@ -17,8 +17,9 @@ from typing import (
 
 import torch as th
 from astar import find_path
-from nptyping import Int8, NDArray, Shape, Float32
-from numpy import asarray, empty, float32, int8, mean, zeros
+from nptyping import Shape
+import numpy as np
+from numpy import asarray, empty, int8, mean, zeros, ndarray
 # from torch_geometric.data import Data as GraphData
 
 from hackable_engine.board import BitBoard, GameBoardBase
@@ -32,17 +33,18 @@ from hackable_engine.board.hex.serializers import BoardShapeError
 from hackable_engine.board.hex.serializers.hex_board_serializer_mixin import (
     HexBoardSerializerMixin,
 )
-from hackable_engine.common.constants import DEFAULT_HEX_BOARD_SIZE
+from hackable_engine.common.constants import DEFAULT_HEX_BOARD_SIZE, FLOAT_TYPE
 
 Cell = int
 
 SIZE = 13
+SIZE_SQUARE = SIZE**2
 
 NEIGHBOURHOOD_DIAMETER: int = 7
-ZERO: float32 = float32(0)
-ONE: float32 = float32(1)
-TWO: float32 = float32(2)
-MINUS_ONE: float32 = float32(-1)
+ZERO: FLOAT_TYPE = FLOAT_TYPE(0)
+ONE: FLOAT_TYPE = FLOAT_TYPE(1)
+TWO: FLOAT_TYPE = FLOAT_TYPE(2)
+MINUS_ONE: FLOAT_TYPE = FLOAT_TYPE(-1)
 
 
 class HexBoard(HexBoardSerializerMixin, GameBoardBase):
@@ -201,6 +203,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return ratio in {2, self.diagonal_coeff, self.vertical_coeff}
 
+    @lru_cache(SIZE_SQUARE)
     def cell_right(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -211,6 +214,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         # cells are ordered opposite direction to bits in bitboard
         return mask << 1
 
+    @lru_cache(SIZE_SQUARE)
     def cell_left(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -221,6 +225,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         # cells are ordered opposite direction to bits in bitboard
         return mask >> 1
 
+    @lru_cache(SIZE_SQUARE)
     def cell_down(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -230,6 +235,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return mask << self.size
 
+    @lru_cache(SIZE_SQUARE)
     def cell_up(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -238,6 +244,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return mask >> self.size
 
+    @lru_cache(SIZE_SQUARE)
     def cell_downleft(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -246,6 +253,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return mask << (self.size - 1)
 
+    @lru_cache(SIZE_SQUARE)
     def cell_upright(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -254,6 +262,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return mask >> (self.size - 1)
 
+    @lru_cache(SIZE_SQUARE)
     def bridge_diag_right(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -262,6 +271,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return mask << (self.size + 1)
 
+    @lru_cache(SIZE_SQUARE)
     def bridge_diag_left(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -270,6 +280,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return mask >> (self.size + 1)
 
+    @lru_cache(SIZE_SQUARE)
     def bridge_black_down(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -278,6 +289,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return mask << (2 * self.size - 1)
 
+    @lru_cache(SIZE_SQUARE)
     def bridge_black_up(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -286,6 +298,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return mask >> (2 * self.size - 1)
 
+    @lru_cache(SIZE_SQUARE)
     def bridge_white_right(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -294,6 +307,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return mask >> (self.size - 2)
 
+    @lru_cache(SIZE_SQUARE)
     def bridge_white_left(self, mask: BitBoard) -> BitBoard:
         """"""
 
@@ -481,6 +495,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         Generating adjacent cells if not yet visited.
         """
 
+        functions: tuple[Callable[[BitBoard], BitBoard], ...]
         if direction is None:  # counterclockwise
             functions = (
                 self.cell_upright,
@@ -519,6 +534,59 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                     among is None and neighbour_cell
                 ):
                     yield neighbour_cell
+
+    def generate_adjacent_cells_cached(
+        self,
+        mask: BitBoard,
+        among: BitBoard,
+        direction: Optional[bool] = None,
+    ) -> Generator[BitBoard, None, None]:
+        """
+        Generating adjacent cells if not yet visited.
+        """
+
+        yield from generate_masks(self._generate_adjacent_cells_cached(mask, direction) & among)
+
+    @lru_cache(SIZE_SQUARE)
+    def _generate_adjacent_cells_cached(self, mask: BitBoard, direction: bool | None) -> BitBoard:
+        adjacent_cells: BitBoard = 0
+
+        functions: tuple[Callable[[BitBoard], BitBoard], ...]
+        if direction is None:  # counterclockwise
+            functions = (
+                self.cell_upright,
+                self.cell_up,
+                self.cell_left,
+                self.cell_downleft,
+                self.cell_down,
+                self.cell_right,
+            )
+        elif direction:  # optimized for white
+            functions = (
+                self.cell_down,
+                self.cell_right,
+                self.cell_upright,
+                self.cell_up,
+                self.cell_downleft,
+                self.cell_left,
+            )
+        else:  # optimized for black
+            functions = (
+                self.cell_right,
+                self.cell_down,
+                self.cell_downleft,
+                self.cell_left,
+                self.cell_upright,
+                self.cell_up,
+            )
+
+        for f in functions:
+            try:
+                adjacent_cells |= f(mask)
+            except BoardShapeError:
+                continue
+
+        return adjacent_cells
 
     def generate_local_moves(
         self, last_move_mask: BitBoard
@@ -914,7 +982,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         else:
             return False
 
-    def get_imbalance(self, color: bool) -> tuple[float32, float32]:
+    def get_imbalance(self, color: bool) -> tuple[FLOAT_TYPE, FLOAT_TYPE]:
         """
         Sum up if stones are distributed in a balanced way across:
             - left/right
@@ -930,7 +998,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         occupied = self.occupied_co[color]
         if not occupied:
-            return float32(0), float32(0)
+            return FLOAT_TYPE(0), FLOAT_TYPE(0)
 
         xs: list[int] = []
         ys: list[int] = []
@@ -943,9 +1011,9 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             ys.append(y)
             center_distances.append((half_size - x) ** 2 + (half_size - y) ** 2)
 
-        imbalance_x = float32(abs(half_size - mean(xs)))
-        imbalance_y = float32(abs(half_size - mean(ys)))
-        imbalance_center = float32(
+        imbalance_x = FLOAT_TYPE(abs(half_size - mean(xs)))
+        imbalance_y = FLOAT_TYPE(abs(half_size - mean(ys)))
+        imbalance_center = FLOAT_TYPE(
             abs((self.size / 4) - math.sqrt(mean(center_distances)))
         )
 
@@ -953,7 +1021,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def get_neighbourhood(
         self, diameter: int = NEIGHBOURHOOD_DIAMETER, should_suppress: bool = False
-    ) -> NDArray[Shape, Int8]:
+    ) -> ndarray[Shape, int8]:
         """
         Return a collection of states of cells around the cell that was played last.
 
@@ -1024,11 +1092,11 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         return array
 
     def as_matrix(
-        self, black_stone_val: float32 = MINUS_ONE, empty_val: float32 = ZERO
-    ) -> NDArray[Shape, Float32]:
+        self, black_stone_val: FLOAT_TYPE = MINUS_ONE, empty_val: FLOAT_TYPE = ZERO
+    ) -> ndarray[Shape, FLOAT_TYPE]:
         """"""
 
-        array: NDArray[Shape, Float32] = empty((1, self.size, self.size), dtype=float32)
+        array: ndarray[Shape, FLOAT_TYPE] = empty((1, self.size, self.size), dtype=FLOAT_TYPE)
 
         return self._as_matrix(
             array,
@@ -1042,13 +1110,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     # @numba.njit()
     @staticmethod
     def _as_matrix(
-        array: NDArray[Shape, Float32],
+        array: ndarray[Shape, FLOAT_TYPE],
         size: int,
         occupied_white: int,
         occupied_black: int,
-        black_val: float32 = MINUS_ONE,
-        empty_val: float32 = ZERO,
-    ) -> NDArray[Shape, Float32]:
+        black_val: FLOAT_TYPE = MINUS_ONE,
+        empty_val: FLOAT_TYPE = ZERO,
+    ) -> ndarray[Shape, FLOAT_TYPE]:
         """"""
 
         mask: BitBoard = 1
@@ -1067,10 +1135,10 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return array
 
-    def as_matrix_channelled(self) -> NDArray:
+    def as_matrix_channelled(self) -> ndarray:
         """"""
 
-        array: NDArray = empty((2, self.size, self.size), dtype=int8)
+        array: ndarray = empty((2, self.size, self.size), dtype=int8)
 
         return self._as_matrix_channelled(
             array,
@@ -1081,11 +1149,11 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     @staticmethod
     def _as_matrix_channelled(
-        array: NDArray[Shape, Int8],
+        array: ndarray[Shape, int8],
         size: int,
         occupied_white: int,
         occupied_black: int,
-    ) -> NDArray:
+    ) -> ndarray:
         """"""
 
         mask: BitBoard = 1
@@ -1103,10 +1171,10 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def _as_matrix_efficiency(
         self,
-        array: NDArray[Shape, Int8],
+        array: ndarray[Shape, int8],
         black_val: int8 = int8(MINUS_ONE),
         empty_val: int8 = int8(ZERO),
-    ) -> NDArray:
+    ) -> ndarray:
         """"""
 
         o_white = int_to_inverse_binary_array(self.occupied_co[True], self.size_square)
@@ -1118,13 +1186,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     @staticmethod
     # @numba.njit()
     def _as_matrix_numba(
-        array: NDArray[Shape, Int8],
+        array: ndarray[Shape, int8],
         size: int,
-        o_white: NDArray[Shape, Int8],
-        o_black: NDArray[Shape, Int8],
+        o_white: ndarray[Shape, int8],
+        o_black: ndarray[Shape, int8],
         black_val: int8 = int8(MINUS_ONE),
         empty_val: int8 = int8(ZERO),
-    ) -> NDArray:
+    ) -> ndarray:
         """"""
 
         pos = size**2 - 1
@@ -1279,7 +1347,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         un_oc = self.unoccupied
         oc_co = self.occupied_co[color]
-        gen = self.generate_adjacent_cells
+        gen = self.generate_adjacent_cells_cached
         among = un_oc | oc_co
 
         path = find_path(
@@ -1490,7 +1558,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 return masks
                 # return [masks[len(masks)//2]]  # take a single point in the middle of an edge
 
-    def color_matrix(self, color: bool) -> NDArray:
+    def color_matrix(self, color: bool) -> ndarray:
         """"""
 
         array = zeros((self.size, self.size), dtype=int)
@@ -1537,10 +1605,10 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     #
     #     return GraphData(x=self.get_graph_node_features(), edge_index=self.edge_index)
 
-    def get_graph_node_features(self) -> th.Tensor:
+    def get_graph_node_features(self) -> ndarray:
         """
         Get node features, where the only feature is stone color (or lack thereof).
-        :return: tensor of shape (1, self.size_square)
+        :return: tensor of shape (self.size_square)
         """
 
         node_features = []
@@ -1560,9 +1628,9 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             whites >>= 1
             blacks >>= 1
 
-        return th.tensor([node_features]).t()
+        return np.array(node_features, dtype=FLOAT_TYPE)  #.t()
 
-    def _get_nodes_and_links(self) -> tuple[NDArray, NDArray]:
+    def _get_nodes_and_links(self) -> tuple[ndarray, ndarray]:
         """
         By convention the board graph has always all the nodes and link types, counting empty.
 

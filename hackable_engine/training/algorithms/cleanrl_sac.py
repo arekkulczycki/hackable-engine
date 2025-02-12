@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import random
+from contextlib import nullcontext
 
 import gymnasium as gym
 import numpy as np
@@ -10,7 +11,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
+from torch_geometric.nn import GCNConv
 
+from hackable_engine.training.device import Device
 from hackable_engine.training.hyperparams import *
 
 LOG_PATH = "./hackable_engine/training/logs/"
@@ -21,16 +24,32 @@ LOG_STD_MIN = -5
 class SoftQNetwork(nn.Module):
     def __init__(self, env):
         super().__init__()
+
+        self.conv = nn.Sequential(
+            GCNConv(81, 24),
+            nn.ReLU(),
+            GCNConv(24, 24),
+            nn.Flatten(),
+        )
+        for module in self.conv:
+            th.nn.init.kaiming_normal_(
+                module.weight, mode="fan_out", nonlinearity="relu"
+            )
+            th.nn.init.zeros_(module.bias)
+
+        mlp_size = 256
         self.fc1 = nn.Linear(
             np.array(env.single_observation_space.shape).prod()
             + np.prod(env.single_action_space.shape),
-            256,
+            mlp_size,
         )
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 1)
+        self.fc2 = nn.Linear(mlp_size, mlp_size)
+        self.fc3 = nn.Linear(mlp_size, 1)
 
     def forward(self, x, a):
         x = x.flatten(1, -1)
+        # x = F.relu(self.conv(x))
+
         x = th.cat([x, a], 1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -41,10 +60,24 @@ class SoftQNetwork(nn.Module):
 class Actor(nn.Module):
     def __init__(self, env):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod(), 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc_mean = nn.Linear(256, np.prod(env.single_action_space.shape))
-        self.fc_logstd = nn.Linear(256, np.prod(env.single_action_space.shape))
+
+        self.conv = nn.Sequential(
+            GCNConv(81, 24),
+            nn.ReLU(),
+            GCNConv(24, 24),
+            nn.Flatten(),
+        )
+        for module in self.conv:
+            th.nn.init.kaiming_normal_(
+                module.weight, mode="fan_out", nonlinearity="relu"
+            )
+            th.nn.init.zeros_(module.bias)
+
+        mlp_size = 256
+        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod(), mlp_size)
+        self.fc2 = nn.Linear(mlp_size, mlp_size)
+        self.fc_mean = nn.Linear(mlp_size, np.prod(env.single_action_space.shape))
+        self.fc_logstd = nn.Linear(mlp_size, np.prod(env.single_action_space.shape))
         # action rescaling
         self.register_buffer(
             "action_scale",
@@ -62,6 +95,8 @@ class Actor(nn.Module):
         )
 
     def forward(self, x):
+        # x = F.relu(self.conv(x))
+
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mean = self.fc_mean(x)
@@ -91,7 +126,7 @@ class Actor(nn.Module):
 
 def run(version, policy_kwargs, env, env_name, device, loops, color):
     writer = SummaryWriter(
-        os.path.join(LOG_PATH, f"{env_name}_tensorboard", f"{env_name}_{version}")
+        os.path.join(LOG_PATH, f"{env_name}_tensorboard", f"{env_name}_{version + 1}")
     )
     # writer.add_text(
     #     "hyperparameters",
@@ -125,19 +160,25 @@ def run(version, policy_kwargs, env, env_name, device, loops, color):
     )
 
     try:
-        train(
-            env,
-            actor,
-            actor_optimizer,
-            q_optimizer,
-            rb,
-            writer,
-            device,
-            qf1,
-            qf2,
-            qf1_target,
-            qf2_target,
+        context = (
+            th.amp.autocast("xpu", enabled=True, dtype=th.float16)
+            if device == Device.XPU
+            else nullcontext()
         )
+        with context:
+            train(
+                env,
+                actor,
+                actor_optimizer,
+                q_optimizer,
+                rb,
+                writer,
+                device,
+                qf1,
+                qf2,
+                qf1_target,
+                qf2_target,
+            )
     finally:
         th.save(actor.state_dict(), f"./{env_name}.v{version + 1}")
 
@@ -170,9 +211,9 @@ def train(
         alpha = ENTROPY_ALPHA
 
     obs, _ = env.reset(seed=1)
-    for global_step in range(TOTAL_TIMESTEPS):
+    for global_step in range(TOTAL_TIMESTEPS // N_ENVS):
         # ALGO LOGIC: put action logic here
-        if global_step < LEARNING_STARTS:
+        if global_step < LEARNING_STARTS // N_ENVS:
             actions = np.array(
                 [env.single_action_space.sample() for _ in range(N_ENVS)]
             )
@@ -204,7 +245,7 @@ def train(
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
         obs = next_obs  # for the next iteration
 
-        if global_step > LEARNING_STARTS:
+        if global_step > LEARNING_STARTS // N_ENVS:
             data = rb.sample(BATCH_SIZE)
             with th.no_grad():
                 next_state_actions, next_state_log_pi, _ = actor.get_action(
@@ -270,22 +311,41 @@ def train(
                         TAU * param.data + (1 - TAU) * target_param.data
                     )
 
-            final_rewards = rewards[terminations]
-            if final_rewards.size != 0:
-                # non_zero_rewards = rewards[np.where(rewards != 0)]
-                # print(non_zero_rewards)
-                writer.add_scalar("charts/mean_reward", np.mean(final_rewards), global_step)
-                writer.add_scalar(
-                    "losses/qf1_values", qf1_a_values.mean().item(), global_step
+            if global_step % N_STEPS == 0:
+                all_env_steps = global_step * N_ENVS
+                writer.add_histogram(
+                    "charts/actions",
+                    np.array(env.action_queue),
+                    bins="auto",
+                    max_bins=100,
                 )
                 writer.add_scalar(
-                    "losses/qf2_values", qf2_a_values.mean().item(), global_step
+                    "charts/episode_len", np.mean(env.length_queue), all_env_steps
                 )
-                writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
-                writer.add_scalar("losses/qf2_loss", qf2_loss.item(), global_step)
-                writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
-                writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-                writer.add_scalar("losses/alpha", alpha, global_step)
+                writer.add_scalar(
+                    "charts/episode_time", np.mean(env.time_queue), all_env_steps
+                )
+                writer.add_scalar(
+                    "charts/mean_return", np.mean(env.return_queue), all_env_steps
+                )
+                writer.add_scalar(
+                    "charts/mean_reward", np.mean(env.reward_queue), all_env_steps
+                )
+                writer.add_scalar(
+                    "charts/mean_winner", np.mean(env.winner_queue), all_env_steps
+                )
+                # writer.add_scalar("charts/mean_reward", np.mean(final_rewards), global_step)
+                writer.add_scalar(
+                    "losses/qf1_values", qf1_a_values.mean().item(), all_env_steps
+                )
+                writer.add_scalar(
+                    "losses/qf2_values", qf2_a_values.mean().item(), all_env_steps
+                )
+                writer.add_scalar("losses/qf1_loss", qf1_loss.item(), all_env_steps)
+                writer.add_scalar("losses/qf2_loss", qf2_loss.item(), all_env_steps)
+                writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, all_env_steps)
+                writer.add_scalar("losses/actor_loss", actor_loss.item(), all_env_steps)
+                writer.add_scalar("losses/alpha", alpha, all_env_steps)
                 # print("SPS:", int(global_step / (time.time() - start_time)))
                 # writer.add_scalar(
                 #     "charts/SPS",
@@ -294,5 +354,5 @@ def train(
                 # )
                 if ENTROPY_AUTOTUNE:
                     writer.add_scalar(
-                        "losses/alpha_loss", alpha_loss.item(), global_step
+                        "losses/alpha_loss", alpha_loss.item(), all_env_steps
                     )

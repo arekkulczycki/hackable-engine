@@ -1,32 +1,30 @@
 # -*- coding: utf-8 -*-
-from collections import defaultdict
+from collections import defaultdict, deque
 from itertools import cycle
-from random import choice, shuffle
+from random import choice, shuffle, choices
 from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
 
 import gymnasium as gym
 import numpy as np
-import torch as th
 from gymnasium.core import ActType, ObsType, RenderFrame
 from nptyping import NDArray
-from numpy import float32
-from stable_baselines3.common.policies import ActorCriticPolicy
 
 from hackable_engine.board.hex.hex_board import HexBoard, Move
+from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.controller import Controller
 
-ZERO: float32 = float32(0)
-ONE: float32 = float32(1)
-MINUS_ONE: float32 = float32(-1)
+ZERO: FLOAT_TYPE = FLOAT_TYPE(0)
+ONE: FLOAT_TYPE = FLOAT_TYPE(1)
+MINUS_ONE: FLOAT_TYPE = FLOAT_TYPE(-1)
 
-BALANCED_POSITION_BONUS: float32 = float32(0.015 / (3 / 4 * 9))
+BALANCED_POSITION_BONUS: FLOAT_TYPE = FLOAT_TYPE(0.015 / (3 / 4 * 9))
 
 
 class BaseRawEnv(gym.Env):
     """"""
 
     ENV_NAME: str = "raw1hex"
-    REWARDS: Dict[Optional[bool], float32] = {
+    REWARDS: Dict[Optional[bool], FLOAT_TYPE] = {
         None: ZERO,
         True: ONE,
         False: MINUS_ONE,
@@ -38,14 +36,12 @@ class BaseRawEnv(gym.Env):
     """  # TODO: aggregated really?
 
     observation_space = gym.spaces.Box(
-        -1, 1, shape=(1, 1, 1), dtype=float32
+        -1, 1, shape=(1, 1, 1), dtype=FLOAT_TYPE
     )  # should be int8
-    action_space = gym.spaces.Box(MINUS_ONE, ONE, shape=(1,), dtype=float32)
+    action_space = gym.spaces.Box(MINUS_ONE, ONE, shape=(1,), dtype=FLOAT_TYPE)
 
     winner: Optional[bool]
     obs: NDArray  # th.Tensor
-
-    policy: Optional[ActorCriticPolicy] = None
 
     def __init__(
         self,
@@ -59,9 +55,9 @@ class BaseRawEnv(gym.Env):
 
         super().__init__()
         self.BOARD_SIZE: int = 1
-        self.MAX_MOVES: int = self.BOARD_SIZE ** 2
+        self.MAX_MOVES: int = self.BOARD_SIZE**2
         self.DECISIVE_DISTANCE_ADVANTAGE: int = 3
-        self.OPENINGS = cycle([])
+        self.OPENINGS: list = []
 
         self.color = color
         self.models = models if isinstance(models, List) else models()
@@ -79,7 +75,6 @@ class BaseRawEnv(gym.Env):
         self.winner = None
         self.opening = None
         self.generations = 0
-        self.action_values = []
 
         self.games = 0
         self.scores = defaultdict(lambda: 0)
@@ -88,8 +83,10 @@ class BaseRawEnv(gym.Env):
 
         self.moves: Generator[Move, None, None] = HexBoard.generate_nothing()
         # self.moves_list: List[Move] = []
-        self.best_move: Optional[Tuple[Move, float32]] = None
+        self.best_move: Optional[Tuple[Move, FLOAT_TYPE]] = None
         self.current_move: Optional[Move] = None
+
+        self.results = deque(maxlen=100)
 
     def render(self, mode="human", close=False) -> RenderFrame:
         """"""
@@ -123,14 +120,14 @@ class BaseRawEnv(gym.Env):
 
         # winner = self.controller.board.winner_no_turn()
         # if winner is not None:
-        notation = next(self.OPENINGS)
+        notation = choice(self.OPENINGS)
         self.opening = notation
         self.controller.reset_board(
             notation=notation, size=self.BOARD_SIZE, init_move_stack=True
         )
 
         if self.controller.board.turn != self.color:
-            self._make_opponent_move()
+            self._make_opponent_move(0)
 
         self._prepare_child_moves()
 
@@ -164,6 +161,7 @@ class BaseRawEnv(gym.Env):
         To play training moves no engine search is required - a move is selected based on direct evaluation (0 depth).
         """
 
+        n_moves = len(self.controller.board.move_stack)
         if self.winner is not None:
             return self.obs, ONE if self.winner else MINUS_ONE, True, False, {}
 
@@ -184,18 +182,32 @@ class BaseRawEnv(gym.Env):
             best_score = self.best_move[1]
             if (
                 self.color
-                and (best_score >= 1.0 or self.generations > self.MAX_MOVES / 2 and best_score >= 0.75)
+                and (
+                    best_score >= 1.0
+                    or (
+                        self.generations > self.MAX_MOVES / 2
+                        and best_score >= 0.75
+                        # and self.sigmoid_random(best_score)
+                    )
+                )
             ) or (
                 not self.color
                 and (
-                    (best_score <= -1.0 or self.generations > self.MAX_MOVES / 2 and best_score <= -0.75)
+                    (
+                        best_score <= -1.0
+                        or (
+                            self.generations > self.MAX_MOVES / 2
+                            and best_score <= -0.75
+                            # and self.sigmoid_random(-best_score)
+                        )
+                    )
                 )
             ):
                 raise StopIteration
             # if doesn't raise then there are still moves to be evaluated
             self.current_move = next(self.moves)
         except StopIteration:
-            winner, reward = self._on_stop_iteration()
+            winner, reward = self._on_stop_iteration(n_moves)
             final_selection = True
         else:
             # undo last move that was just evaluated
@@ -210,11 +222,13 @@ class BaseRawEnv(gym.Env):
 
         self.obs = self.observation_from_board(self.controller.board)
 
-        if final_selection and len(self.controller.board.move_stack) % self.MAX_MOVES <= 1:
-            winner = self.color if reward > 0 else not self.color
+        if final_selection and n_moves % self.MAX_MOVES <= 1:
+            winner = reward > 0
             reward = min(ONE, max(MINUS_ONE, reward))
         self.winner = winner
         self.reward = reward
+        if winner is not None:
+            self.results.append(winner == self.color)
 
         return (
             self.obs,
@@ -223,13 +237,13 @@ class BaseRawEnv(gym.Env):
             False,
             {
                 "action": score,
-                "winner": winner,
+                "winner": winner == self.color,
                 "reward": reward,
-                "opening": self.opening,
+                # "opening": self.opening,
             },
         )
 
-    def _on_stop_iteration(self) -> Tuple[Optional[bool], float32]:
+    def _on_stop_iteration(self, n_moves) -> Tuple[Optional[bool], FLOAT_TYPE]:
         """"""
 
         # all moves evaluated - undo the last and push the best move on the board
@@ -238,11 +252,11 @@ class BaseRawEnv(gym.Env):
         # self._make_random_move(self.controller.board)
 
         winner = self.controller.board.winner_no_turn()
-        reward = self._get_reward(winner, True)
+        reward = self._get_reward(winner, n_moves)
 
         # if the last move didn't conclude the game, now play opponent move and reset generator
         if winner is None:
-            self._make_opponent_move()
+            self._make_opponent_move(n_moves)
 
             # reset generator and play the first option to be evaluated, regardless if the game is concluded
             try:
@@ -261,20 +275,14 @@ class BaseRawEnv(gym.Env):
 
         if winner is not None:
             # overwrite the reward because a winner was found
-            reward = self._get_reward(winner, True)
+            reward = self._get_reward(winner, n_moves)
 
         return winner, reward
 
-    def _get_reward(
-        self,
-        winner: Optional[bool],
-        is_final_selection: bool = False,
-    ) -> float32:
+    def _get_reward(self, winner: Optional[bool], n_moves: int) -> FLOAT_TYPE:
         """
         :param bool is_final_selection: if the reward is for the move played on board or for the evaluation cycle
         """
-
-        n_moves = len(self.controller.board.move_stack)
 
         if winner is False:
             reward = (
@@ -293,11 +301,11 @@ class BaseRawEnv(gym.Env):
         else:
             reward = self._get_intermediate_reward(n_moves)
 
-        return float32(reward)
+        return FLOAT_TYPE(reward)
 
     def _get_intermediate_reward(self, n_moves):
-        # return np.float32(self._get_intermediate_reward_absolute(n_moves))
-        return np.float32(self._get_intermediate_reward_relative(n_moves))
+        # return np.FLOAT_TYPE(self._get_intermediate_reward_absolute(n_moves))
+        return np.FLOAT_TYPE(self._get_intermediate_reward_relative(n_moves))
 
     def _get_intermediate_reward_absolute(self, n_moves):
         score = self._get_distance_score(n_moves, early_finish=False)
@@ -309,7 +317,10 @@ class BaseRawEnv(gym.Env):
         return score
 
     def _get_intermediate_reward_relative(self, n_moves):
-        score = self._get_distance_score(n_moves, early_finish=False)
+        if n_moves <= self.BOARD_SIZE * 2:
+            score = self._get_distance_score_perf(n_moves, early_finish=False)
+        else:
+            score = self._get_distance_score(n_moves, early_finish=False)
         relative_score = score - self.last_intermediate_score
         self.last_intermediate_score = score
 
@@ -326,7 +337,7 @@ class BaseRawEnv(gym.Env):
 
     def _get_distance_score(
         self, n_moves: int, *, early_finish: bool = True
-    ) -> float32:
+    ) -> FLOAT_TYPE:
         """
         Objective score, i.e. positive is white advantage, negative black advantage, valueswithin -1 and 1.
 
@@ -338,7 +349,7 @@ class BaseRawEnv(gym.Env):
             white_variants,
         ) = self.controller.board.get_short_missing_distances(
             True, should_subtract=(not self.color and n_moves % 2 == 1)
-        )  # subtracts distance from white because has 1 stone less on board
+        )  # subtracts distance from white because has 1 stone less on board, on odd moves
         (
             black_missing,
             black_variants,
@@ -347,9 +358,15 @@ class BaseRawEnv(gym.Env):
         # finish game is advantage is sufficient
         if early_finish:
             white_closer_by = white_missing - black_missing
-            if white_closer_by >= self.DECISIVE_DISTANCE_ADVANTAGE and white_missing < white_closer_by:
+            if (
+                white_closer_by >= self.DECISIVE_DISTANCE_ADVANTAGE
+                and white_missing < white_closer_by
+            ):
                 return ONE
-            if white_closer_by <= -self.DECISIVE_DISTANCE_ADVANTAGE and black_missing < -white_closer_by:
+            if (
+                white_closer_by <= -self.DECISIVE_DISTANCE_ADVANTAGE
+                and black_missing < -white_closer_by
+            ):
                 return MINUS_ONE
 
         white_score = sum(
@@ -363,11 +380,11 @@ class BaseRawEnv(gym.Env):
 
         if not black_score:
             return ONE
-        return np.tanh((white_score / black_score) - 1).astype(np.float32)
+        return np.tanh((white_score / black_score) - 1).astype(np.FLOAT_TYPE)
 
     def _get_distance_score_perf(
         self, n_moves: int, *, early_finish: bool = True
-    ) -> float32:
+    ) -> FLOAT_TYPE:
         """
         Objective score, i.e. positive is white advantage, negative black advantage, valueswithin -1 and 1.
 
@@ -380,9 +397,15 @@ class BaseRawEnv(gym.Env):
         # finish game is advantage is sufficient
         if early_finish:
             white_closer_by = white_missing - black_missing
-            if white_closer_by >= self.DECISIVE_DISTANCE_ADVANTAGE and white_missing < white_closer_by:
+            if (
+                white_closer_by >= self.DECISIVE_DISTANCE_ADVANTAGE
+                and white_missing < white_closer_by
+            ):
                 return ONE
-            if white_closer_by <= -self.DECISIVE_DISTANCE_ADVANTAGE and black_missing < -white_closer_by:
+            if (
+                white_closer_by <= -self.DECISIVE_DISTANCE_ADVANTAGE
+                and black_missing < -white_closer_by
+            ):
                 return MINUS_ONE
 
         if not white_missing:
@@ -399,8 +422,14 @@ class BaseRawEnv(gym.Env):
         else:
             return distance
 
-    def _make_opponent_move(self):
-        self._make_random_move(self.controller.board)
+    def _make_opponent_move(self, n_moves):
+        # self._make_random_move(self.controller.board)
+        win_percentage = np.mean(self.results) if self.results else 0
+        n_random_moves = int(self.MAX_MOVES * (1 - win_percentage))
+        if n_moves <= n_random_moves:
+            self._make_random_move(self.controller.board)
+        else:
+            self._make_logical_move(self.controller.board)
         # self._make_logical_move(self.controller.board)
         # self._make_self_trained_move(
         #     self.controller.board, self.opp_model, not self.color
@@ -421,6 +450,9 @@ class BaseRawEnv(gym.Env):
         best_score = None
         n_moves = len(self.controller.board.move_stack)
         for move in board.legal_moves:
+            if best_move and np.random.choice((True, False)):
+                continue  # in order for the opponent to not always play the same move
+
             score = self._get_distance_score_perf(n_moves)
             if not opp_color:
                 score *= MINUS_ONE
@@ -430,15 +462,11 @@ class BaseRawEnv(gym.Env):
                     (opp_color and score > best_score)
                     or (not opp_color and score < best_score)
                 )
-                and np.random.choice(
-                    [True, False]
-                )  # in order for the opponent to not always play the same move
             ):
                 best_move = move
                 best_score = score
 
         board.push(best_move)
-        # print(f"score: {best_score}, moves: {n_moves}...")
 
     def _make_self_trained_move(self, board, opp_model, opp_color: bool) -> None:
         """"""
@@ -456,9 +484,6 @@ class BaseRawEnv(gym.Env):
             board.pop()
 
         scores = opp_model([np.stack(obss, axis=0)])[0].flatten()
-        # scores = np.asarray(
-        #     opp_model.run(None, {"inputs": np.stack(obss, axis=0)})
-        # ).flatten()
 
         best_move: Optional[Move] = None
         best_score = None
@@ -474,10 +499,22 @@ class BaseRawEnv(gym.Env):
         board.push(best_move)
 
     @staticmethod
+    def sigmoid_random(score) -> bool:
+        return choices(
+            [True, False],
+            weights=(p := BaseRawEnv.sigmoid(score), 1 - p),
+        )[0]
+
+    @staticmethod
+    def sigmoid(x):
+        """0.5->0.0025, 0.6->0.027, 0.7->0.23, 0.75->0.5, 0.8->0.77, 0.9->0.97, 0.95->0.99"""
+        return 1 / (1 + np.e ** (-24 * x + 18))
+
+    @staticmethod
     def observation_from_board(board) -> NDArray:
         """"""
 
-        return board.as_matrix().astype(float32)
+        return board.as_matrix().astype(FLOAT_TYPE)
 
     def summarize(self):
         """"""

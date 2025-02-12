@@ -3,11 +3,11 @@ import torch as th
 
 from hackable_engine.training.envs.dummy_env import DummyEnv
 from hackable_engine.training.envs.hex.raw_5_env import Raw5Env
+from hackable_engine.training.envs.hex.raw_7_env import Raw7Env
 from hackable_engine.training.envs.hex.raw_9_graph_env import Raw9GraphEnv
 from hackable_engine.training.network.alphazero_features_extractor import (
     AlphaZeroFeaturesExtractor,
 )
-from hackable_engine.training.envs.hex.raw_9_binary_env import Raw9BinaryEnv
 from hackable_engine.training.envs.hex.raw_9_channelled_env import Raw9ChannelledEnv
 from hackable_engine.training.envs.hex.raw_9_env import Raw9Env
 from hackable_engine.training.network.hex_cnn_features_extractor import (
@@ -60,24 +60,25 @@ policy_kwargs_map = {
     "hex5raw": {
         "policy": "MlpPolicy",
         "env_class": Raw5Env,
+        "board_size": 5,
         "net_arch": [125, 125],
-        # "optimizer_class": th.optim.SGD,
-        # "optimizer_kwargs": dict(momentum=SGD_MOMENTUM[0], nesterov=True),
-        "optimizer_class": th.optim.AdamW,
-        "optimizer_kwargs": dict(weight_decay=ADAMW_WEIGHT_DECAY[0]),
         "activation_fn": th.nn.ReLU,
-        # "ortho_init": True,
+        "log_std_init": th.log(th.tensor(0.33)),
+    },
+    "hex7raw": {
+        "policy": "MlpPolicy",
+        "env_class": Raw7Env,
+        "board_size": 7,
+        "net_arch": [216, 216],  #[343, 343],
+        "activation_fn": th.nn.ReLU,
         "log_std_init": th.log(th.tensor(0.33)),
     },
     "hex9raw": {
         "policy": "MlpPolicy",
-        # "env_class": Raw9BinaryEnv,
         "env_class": Raw9Env,
-        "net_arch": [81, 81],
-        # "optimizer_class": th.optim.AdamW,
-        # "optimizer_kwargs": dict(weight_decay=ADAMW_WEIGHT_DECAY[0]),
-        "activation_fn": th.nn.Tanhshrink,
-        "ortho_init": False,
+        "board_size": 9,
+        "net_arch": [729, 729],
+        "activation_fn": th.nn.ReLU,
         "log_std_init": th.log(th.tensor(0.33)),
     },
     "hex9graphA": {
@@ -258,7 +259,7 @@ policy_kwargs_map = {
     },
     "hex9res": {
         **cnn_base,
-        "env_class": Raw9BinaryEnv,
+        "env_class": Raw9ChannelledEnv,
         "features_extractor_class": HexResnetRawFeaturesExtractor,
         "features_extractor_kwargs": dict(
             board_size=9, resnet_layers=(), output_filters=(2,), kernel_sizes=(5,),
