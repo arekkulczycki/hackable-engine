@@ -10,7 +10,7 @@ from gymnasium.vector.vector_env import ArrayType, VectorEnv, VectorWrapper
 from gymnasium.wrappers.vector import RecordEpisodeStatistics
 
 from hackable_engine.common.constants import FLOAT_TYPE
-from hackable_engine.training.hyperparams import N_ENVS, N_STEPS
+from hackable_engine.training.hyperparams import N_ENVS, N_STEPS, BATCH_SIZE
 
 
 class EpisodeStats(RecordEpisodeStatistics):
@@ -32,12 +32,12 @@ class EpisodeStats(RecordEpisodeStatistics):
         self.episode_lengths: np.ndarray = np.zeros((), dtype=int)
         self.prev_dones: np.ndarray = np.zeros((), dtype=bool)
 
-        self.time_queue = deque(maxlen=N_ENVS * 3)
-        self.return_queue = deque(maxlen=N_ENVS * 3)
-        self.reward_queue = deque(maxlen=N_ENVS * 3)
-        self.length_queue = deque(maxlen=N_ENVS * 3)
-        self.winner_queue = deque(maxlen=N_ENVS * 3)
-        self.action_queue = deque(maxlen=N_STEPS)
+        self.time_queue = deque(maxlen=N_ENVS)
+        self.return_queue = deque(maxlen=N_ENVS)
+        self.reward_queue = deque(maxlen=N_ENVS)
+        self.length_queue = deque(maxlen=N_ENVS)
+        self.winner_queue = deque(maxlen=N_ENVS)
+        self.action_queue = deque(maxlen=BATCH_SIZE)
 
     def reset(
         self,

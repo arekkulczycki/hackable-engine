@@ -1,7 +1,7 @@
 from itertools import zip_longest
 from typing import Optional, Tuple, Type
 
-import gym
+import gymnasium as gym
 import torch as th
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from torch_geometric.nn import GCNConv, ResGatedGraphConv, SAGEConv, FastRGCNConv, GATv2Conv, GCN2Conv, GraphConv, \

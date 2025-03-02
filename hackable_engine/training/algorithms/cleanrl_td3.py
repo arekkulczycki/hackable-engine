@@ -1,17 +1,27 @@
 # -*- coding: utf-8 -*-
 import os
 import random
+from contextlib import nullcontext
 
 import gymnasium as gym
-import intel_extension_for_pytorch as ipex
 import numpy as np
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import intel_extension_for_pytorch as ipex
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
-from torch_geometric.nn import GCNConv
+from torch.nn import Conv2d
+from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
+from torch_geometric.nn import (
+    SAGEConv,
+    GCNConv,
+    ResGatedGraphConv,
+    TransformerConv,
+    EGConv,
+)
 
 from hackable_engine.board.hex.hex_board import HexBoard
 from hackable_engine.common.constants import TH_FLOAT_TYPE
@@ -25,31 +35,50 @@ class QNetwork(nn.Module):
         super().__init__()
 
         self.edge_index = edge_index
-        self.conv1 = GCNConv(49, 36)
-        self.prelu1 = nn.PReLU()
-        self.conv2 = GCNConv(36, 36)
-        self.prelu2 = nn.PReLU()
-        for module in [self.conv1, self.conv2]:
-            # th.nn.init.xavier_normal_(module.lin.weight)
-            th.nn.init.kaiming_normal_(
-                module.lin.weight, mode="fan_out", nonlinearity="leaky_relu"
-            )
-            th.nn.init.zeros_(module.bias)
+        self.batch_edge_index = None
+        # https://github.com/reshalfahsi/node-classification/blob/master/Node_Classification.ipynb https://github.com/reshalfahsi/node-classification?tab=readme-ov-file
+        # self.resgated = ResGatedGraphConv(1, 6)
+        # self.sage = SAGEConv(6, 2 * 6)
+        # self.transformer = TransformerConv(2 * 6, 2 * 6)
+        self.conv1 = SAGEConv(1, 6)
+        # # self.prelu1 = nn.PReLU()
+        self.conv2 = SAGEConv(6, 6)
+        # self.prelu2 = nn.PReLU()
+        self.conv3 = SAGEConv(6, 12)
+        # for module in [self.conv1, self.conv2]:
+        #     # th.nn.init.xavier_normal_(module.lin.weight)
+        #     th.nn.init.kaiming_normal_(
+        #         module.lin.weight, mode="fan_out", nonlinearity="relu"
+        #     )
+        #     th.nn.init.zeros_(module.bias)
 
         self.fc1 = nn.Linear(
             # np.array(env.single_observation_space.shape).prod()
             # + np.prod(env.single_action_space.shape),
-            37,
+            12 * 49 + 1,
             mlp_size,
         )
         self.fc2 = nn.Linear(mlp_size, mlp_size)
         self.fc3 = nn.Linear(mlp_size, 1)
 
     def forward(self, x, a):
-        # x = x.flatten(1, -1)
-        x = self.prelu1(self.conv1(x, self.edge_index))
-        x = self.prelu2(self.conv2(x, self.edge_index))
+        if x.shape[0] != N_ENVS:
+            edge_index = _get_batch_edge_index(x, self.edge_index)
+        elif self.batch_edge_index is None:
+            self.batch_edge_index = _get_batch_edge_index(x, self.edge_index)
+            edge_index = self.batch_edge_index
+        else:
+            edge_index = self.batch_edge_index
 
+        # # x = self.prelu1(self.conv1(x, self.edge_index))
+        # # x = self.prelu2(self.conv2(x, self.edge_index))
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.relu(self.conv2(x, edge_index))
+        x = self.conv3(x, edge_index)
+        # x = self.conv2(x, edge_index)
+        x = x.reshape(x.shape[0], 12 * 49)
+
+        # x = x.flatten(1, -1)
         x = th.cat([x, a], 1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -62,20 +91,27 @@ class Actor(nn.Module):
         super().__init__()
 
         self.edge_index = edge_index
-        self.conv1 = GCNConv(49, 36)
-        self.prelu1 = nn.PReLU()
-        self.conv2 = GCNConv(36, 36)
-        self.prelu2 = nn.PReLU()
-        for module in [self.conv1, self.conv2]:
-            # th.nn.init.xavier_normal_(module.lin.weight)
-            th.nn.init.kaiming_normal_(
-                module.lin.weight, mode="fan_out", nonlinearity="leaky_relu"
-            )
-            th.nn.init.zeros_(module.bias)
+        self.batch_size = N_ENVS
+        self.batch_edge_index = edge_index
+        # https://github.com/reshalfahsi/node-classification/blob/master/Node_Classification.ipynb https://github.com/reshalfahsi/node-classification?tab=readme-ov-file
+        # self.resgated = ResGatedGraphConv(1, 6)
+        # self.sage = SAGEConv(6, 2 * 6)
+        # self.transformer = TransformerConv(2 * 6, 2 * 6)
+        self.conv1 = SAGEConv(1, 6)
+        # self.prelu1 = nn.PReLU()
+        self.conv2 = SAGEConv(6, 6)
+        # self.prelu2 = nn.PReLU()
+        self.conv3 = SAGEConv(6, 12)
+        # for module in [self.conv1, self.conv2]:
+        #     # th.nn.init.xavier_normal_(module.lin.weight)
+        #     th.nn.init.kaiming_normal_(
+        #         module.lin.weight, mode="fan_out", nonlinearity="relu"
+        #     )
+        #     th.nn.init.zeros_(module.bias)
 
         self.fc1 = nn.Linear(
-            # np.array(env.single_observation_space.shape).prod(), mlp_size
-            36,
+            # np.array(env.single_observation_space.shape).prod(),
+            12 * 49,
             mlp_size,
         )
         self.fc2 = nn.Linear(mlp_size, mlp_size)
@@ -97,14 +133,40 @@ class Actor(nn.Module):
         )
 
     def forward(self, x):
-        # x = x.flatten(1, -1)
-        x = self.prelu1(self.conv1(x, self.edge_index))
-        x = self.prelu2(self.conv2(x, self.edge_index))
+        if x.shape[0] != N_ENVS:
+            edge_index = _get_batch_edge_index(x, self.edge_index)
+        elif self.batch_edge_index is None:
+            self.batch_edge_index = _get_batch_edge_index(x, self.edge_index)
+            edge_index = self.batch_edge_index
+        else:
+            edge_index = self.batch_edge_index
 
+        # # x = self.prelu1(self.conv1(x, self.edge_index))
+        # # x = self.prelu2(self.conv2(x, self.edge_index))
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.relu(self.conv2(x, edge_index))
+        x = self.conv3(x, edge_index)
+        # x = self.conv2(x, edge_index)
+        x = x.reshape(x.shape[0], 12 * 49)
+
+        # x = x.flatten(1, -1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = th.tanh(self.fc_mu(x))
         return x * self.action_scale + self.action_bias
+
+
+def _get_batch_edge_index(x, edge_index):
+    return edge_index
+    # return th.cat(tuple(edge_index for _ in range(x.shape[0])), dim=1)
+    # return next(
+    #     iter(
+    #         DataLoader(
+    #             [Data(x=x_, edge_index=edge_index) for x_ in x],
+    #             batch_size=batch_size,
+    #         )
+    #     )
+    # ).edge_index
 
 
 def run(version, policy_kwargs, env, env_name, device, loops, color):
@@ -126,25 +188,16 @@ def run(version, policy_kwargs, env, env_name, device, loops, color):
         "", size=policy_kwargs["board_size"], use_graph=True
     ).edge_index.to(device)
     mlp_size = policy_kwargs["net_arch"][0]
-    actor = Actor(env, mlp_size=mlp_size, edge_index=edge_index.clone()).to(device)
-    qf1 = QNetwork(env, mlp_size=mlp_size, edge_index=edge_index.clone()).to(device)
-    qf2 = QNetwork(env, mlp_size=mlp_size, edge_index=edge_index.clone()).to(device)
-    qf1_target = QNetwork(env, mlp_size=mlp_size, edge_index=edge_index.clone()).to(
-        device
-    )
-    qf2_target = QNetwork(env, mlp_size=mlp_size, edge_index=edge_index.clone()).to(
-        device
-    )
-    target_actor = Actor(env, mlp_size=mlp_size, edge_index=edge_index.clone()).to(
-        device
-    )
+    actor = Actor(env, mlp_size=mlp_size, edge_index=edge_index).to(device)
+    qf1 = QNetwork(env, mlp_size=mlp_size, edge_index=edge_index).to(device)
+    qf2 = QNetwork(env, mlp_size=mlp_size, edge_index=edge_index).to(device)
+    qf1_target = QNetwork(env, mlp_size=mlp_size, edge_index=edge_index).to(device)
+    qf2_target = QNetwork(env, mlp_size=mlp_size, edge_index=edge_index).to(device)
+    target_actor = Actor(env, mlp_size=mlp_size, edge_index=edge_index).to(device)
     target_actor.load_state_dict(actor.state_dict())
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
     q_optimizer = optim.Adam(
-        list(qf1.parameters()) + list(qf2.parameters()), lr=LEARNING_RATE
-    )
-    q_optimizer_fake = optim.Adam(
         list(qf1.parameters()) + list(qf2.parameters()), lr=LEARNING_RATE
     )
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=LEARNING_RATE)
@@ -170,6 +223,9 @@ def run(version, policy_kwargs, env, env_name, device, loops, color):
     optim_actor = optim_actor.to(device)
     optim_qf1, optim_q_optimizer = ipex.optimize(
         qf1, optimizer=q_optimizer, dtype=dtype
+    )
+    q_optimizer_fake = optim.Adam(
+        list(qf1.parameters()) + list(qf2.parameters()), lr=LEARNING_RATE
     )
     optim_qf2, _ = ipex.optimize(qf2, optimizer=q_optimizer_fake, dtype=dtype)
     # optim_actor, optim_qf1, optim_qf2 = actor, qf1, qf2
@@ -226,23 +282,40 @@ def load_model_if_available(
 ):  # fmt: on
     if os.path.exists(base_path):
         print("loading pre-trained weights...")
-        actor.load_state_dict(th.load(f"{base_path}/{env_name}-td3-actor.v{version}"))
-        target_actor.load_state_dict(
-            th.load(f"{base_path}/{env_name}-td3-target-actor.v{version}")
+        actor.load_state_dict(
+            th.load(f"{base_path}/{env_name}-td3-actor.v{version}", weights_only=True)
         )
-        qf1.load_state_dict(th.load(f"{base_path}/{env_name}-td3-qf1.v{version}"))
-        qf2.load_state_dict(th.load(f"{base_path}/{env_name}-td3-qf2.v{version}"))
+        target_actor.load_state_dict(
+            th.load(
+                f"{base_path}/{env_name}-td3-target-actor.v{version}", weights_only=True
+            )
+        )
+        qf1.load_state_dict(
+            th.load(f"{base_path}/{env_name}-td3-qf1.v{version}", weights_only=True)
+        )
+        qf2.load_state_dict(
+            th.load(f"{base_path}/{env_name}-td3-qf2.v{version}", weights_only=True)
+        )
         qf1_target.load_state_dict(
-            th.load(f"{base_path}/{env_name}-td3-target-qf1.v{version}")
+            th.load(
+                f"{base_path}/{env_name}-td3-target-qf1.v{version}", weights_only=True
+            )
         )
         qf2_target.load_state_dict(
-            th.load(f"{base_path}/{env_name}-td3-target-qf2.v{version}")
+            th.load(
+                f"{base_path}/{env_name}-td3-target-qf2.v{version}", weights_only=True
+            )
         )
         actor_optimizer.load_state_dict(
-            th.load(f"{base_path}/{env_name}-td3-actor-optimizer.v{version}")
+            th.load(
+                f"{base_path}/{env_name}-td3-actor-optimizer.v{version}",
+                weights_only=True,
+            )
         )
         q_optimizer.load_state_dict(
-            th.load(f"{base_path}/{env_name}-td3-q-optimizer.v{version}")
+            th.load(
+                f"{base_path}/{env_name}-td3-q-optimizer.v{version}", weights_only=True
+            )
         )
 
 # fmt: off
@@ -279,25 +352,28 @@ def init_directory(env_name, version) -> tuple[str, str]:
     new_path = f"./{env_name}-td3.v{version + 1}"
     if not os.path.exists(new_path):
         os.mkdir(new_path)
-        with open(f"{new_path}/hyperparams.log", "w") as f:
-            for param in [
-                TOTAL_TIMESTEPS,
-                LEARNING_RATE,
-                N_ENVS,
-                N_STEPS,
-                BUFFER_SIZE,
-                LEARNING_STARTS,
-                BATCH_SIZE,
-                GAMMA,
-                EXPLORATION_NOISE,
-                NOISE_CLIP,
-                POLICY_NOISE,
-                POLICY_FREQUENCY,
-                TAU,
-            ]:
-                name = get_variable_name(param)
-                if name:
-                    f.write(f"{name}={param}\n")
+        try:
+            with open(f"{new_path}/hyperparams.log", "w") as f:
+                for param in [
+                    TOTAL_TIMESTEPS,
+                    LEARNING_RATE,
+                    N_ENVS,
+                    N_STEPS,
+                    BUFFER_SIZE,
+                    LEARNING_STARTS,
+                    BATCH_SIZE,
+                    GAMMA,
+                    EXPLORATION_NOISE,
+                    NOISE_CLIP,
+                    POLICY_NOISE,
+                    POLICY_FREQUENCY,
+                    TAU,
+                ]:
+                    name = get_variable_name(param)
+                    if name:
+                        f.write(f"{name}={param}\n")
+        except ValueError:
+            print("hyperparams file not created")
     return base_path, new_path
 
 

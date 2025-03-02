@@ -5,14 +5,14 @@ import gymnasium as gym
 from gymnasium.envs.registration import register
 
 from hackable_engine.common.constants import FLOAT_TYPE
-from hackable_engine.training.envs.hex.base_raw_env import BaseRawEnv
+from hackable_engine.training.envs.hex.base_env import BaseEnv
 
 ZERO: FLOAT_TYPE = FLOAT_TYPE(0)
 ONE: FLOAT_TYPE = FLOAT_TYPE(1)
 MINUS_ONE: FLOAT_TYPE = FLOAT_TYPE(-1)
 
 
-class Raw9Env(BaseRawEnv):
+class Raw9Env(BaseEnv):
     """"""
 
     ENV_NAME = "raw9env"

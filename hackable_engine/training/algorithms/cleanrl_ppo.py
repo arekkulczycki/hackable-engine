@@ -3,9 +3,9 @@ import os
 import random
 from contextlib import nullcontext
 
-import gym.vector
-import torch as th
 import numpy as np
+import torch as th
+from gymnasium.vector import VectorEnv
 from torch.distributions.normal import Normal
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
@@ -19,7 +19,7 @@ LOG_PATH = "./hackable_engine/training/logs/"
 class Agent(th.nn.Module):
     def __init__(
         self,
-        envs: gym.vector.VectorEnv,
+        envs: VectorEnv,
         mlp_net_arch: tuple[int, int],
         features_extractor_class,
         features_extractor_kwargs,
@@ -83,6 +83,7 @@ class Agent(th.nn.Module):
 
 
 def run(version, policy_kwargs, env, env_name, device, loops, color):
+    base_path, new_path = init_directory(env_name, version)
     writer = SummaryWriter(
         os.path.join(LOG_PATH, f"{env_name}_tensorboard", f"{env_name}_{version}")
     )
@@ -112,6 +113,8 @@ def run(version, policy_kwargs, env, env_name, device, loops, color):
     dones = th.zeros((N_STEPS, N_ENVS)).to(device)
     values = th.zeros((N_STEPS, N_ENVS)).to(device)
 
+    load_model_if_available(base_path, env_name, version, agent, optimizer)
+
     try:
         context = (
             th.amp.autocast("xpu", enabled=True, dtype=th.float16)
@@ -133,14 +136,80 @@ def run(version, policy_kwargs, env, env_name, device, loops, color):
                 logprobs,
             )
     finally:
-        th.save(agent.state_dict(), f"./{env_name}.v{version + 1}")
+        save_models(
+            new_path,
+            env_name,
+            version,
+            agent,
+            optimizer,
+        )
 
         env.close()
         writer.close()
 
 
+def load_model_if_available(base_path, env_name, version, agent, optimizer):
+    if os.path.exists(base_path):
+        print("loading pre-trained weights...")
+        agent.load_state_dict(
+            th.load(f"{base_path}/{env_name}-ppo-agent.v{version}", weights_only=True)
+        )
+        optimizer.load_state_dict(
+            th.load(
+                f"{base_path}/{env_name}-ppo-optimizer.v{version}", weights_only=True
+            )
+        )
+
+
+def save_models(new_path, env_name, version, agent, optimizer):
+    th.save(agent.state_dict(), f"{new_path}/{env_name}-ppo-agent.v{version + 1}")
+    th.save(
+        optimizer.state_dict(), f"{new_path}/{env_name}-ppo-optimizer.v{version + 1}"
+    )
+
+
+def init_directory(env_name, version) -> tuple[str, str]:
+    base_path = f"./{env_name}-sac.v{version}"
+    new_path = f"./{env_name}-sac.v{version + 1}"
+    if not os.path.exists(new_path):
+        os.mkdir(new_path)
+        try:
+            with open(f"{new_path}/hyperparams.log", "w") as f:
+                for param in [
+                    N_ENVS,
+                    TOTAL_TIMESTEPS,
+                    LEARNING_RATE,
+                    MAX_GRAD_NORM,
+                    N_STEPS,
+                    BUFFER_SIZE,
+                    LEARNING_STARTS,
+                    BATCH_SIZE,
+                    GAMMA,
+                    CLIP_RANGE,
+                    GAE_LAMBDA,
+                    ENT_COEF,
+                ]:
+                    name = get_variable_name(param)
+                    if name:
+                        f.write(f"{name}={param}\n")
+        except ValueError:
+            print("hyperparams file not created")
+    return base_path, new_path
+
+
+def get_variable_name(v):
+    for pair in locals().copy():
+        try:
+            name, val = pair
+            if v is val:
+                return name
+        except ValueError:
+            continue
+    raise ValueError("variable not found")
+
+
 def train(
-    env: gym.vector.VectorEnv,
+    env: VectorEnv,
     agent: Agent,
     optimizer,
     writer,
@@ -292,15 +361,35 @@ def train(
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
+        all_env_steps = global_step
         # writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-        writer.add_scalar("charts/episode_len", np.mean(env.length_queue), global_step)
-        writer.add_scalar("charts/mean_reward", np.mean(env.return_queue), global_step)
-        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-        writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        writer.add_histogram(
+            "charts/actions",
+            np.array(env.action_queue),
+            bins="auto",
+            max_bins=100,
+        )
+        writer.add_scalar(
+            "charts/episode_len", np.mean(env.length_queue), all_env_steps
+        )
+        writer.add_scalar(
+            "charts/episode_fps", np.mean(env.time_queue) * N_ENVS, all_env_steps
+        )
+        writer.add_scalar(
+            "charts/mean_return", np.mean(env.return_queue), all_env_steps
+        )
+        writer.add_scalar(
+            "charts/mean_winner", np.mean(env.winner_queue), all_env_steps
+        )
+        writer.add_scalar(
+            "charts/mean_reward", np.mean(env.reward_queue), all_env_steps
+        )
+        writer.add_scalar("losses/value_loss", v_loss.item(), all_env_steps)
+        writer.add_scalar("losses/policy_loss", pg_loss.item(), all_env_steps)
+        writer.add_scalar("losses/entropy", entropy_loss.item(), all_env_steps)
+        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), all_env_steps)
+        writer.add_scalar("losses/approx_kl", approx_kl.item(), all_env_steps)
+        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), all_env_steps)
+        writer.add_scalar("losses/explained_variance", explained_var, all_env_steps)
 
         # print(f"mean_reward={mean_reward}, explained_var={explained_var}, approx_kl={approx_kl}, value_loss={v_loss.item()}, policy_loss={pg_loss.item()}, entropy_loss={entropy_loss.item()}")

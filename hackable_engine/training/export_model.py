@@ -16,7 +16,7 @@ from stable_baselines3 import PPO
 
 import onnxruntime as ort
 from hackable_engine.training.envs.hex.raw_9_env import Raw9Env
-from hackable_engine.training.envs.hex.raw_9_graph_env import Raw9GraphEnv
+from hackable_engine.training.envs.hex.seq_9_graph_env import Seq9GraphEnv
 
 path = argv[1]
 onnx_model_path = argv[2]
@@ -52,7 +52,7 @@ onnxable_model = OnnxablePolicy(model.policy)
 print("shape: ", model.observation_space.shape)
 # obs_sample = model.observation_space.sample()
 # obs_sample = Raw9Env.observation_space.sample()
-obs_sample = Raw9GraphEnv.observation_space.sample()
+obs_sample = Seq9GraphEnv.observation_space.sample()
 print("sample shape: ", obs_sample.shape)
 observation = th.from_numpy(obs_sample.astype(np.float32))#.reshape(1, 1, obs_sample.shape[1], obs_sample.shape[2]))
 

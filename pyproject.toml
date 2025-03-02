@@ -1,23 +1,35 @@
 [project]
-name = "hackable-bot"
-description = "board game playing bot easy to hack in order to change playing approach"
-version = "0.0.4"
+name = "hackable-engine"
+description = "Default template for PDM package"
+version = "0.1.0"
 authors = [
-    { name = "Arek Kulczycki" }
+    { name = "Arek Kulczycki" },
+    {name = "arekkulczycki", email = "ten.arek@gmail.com"},
 ]
 dependencies = [
     "chess==1.9.*",
     "nptyping==2.5.*",
     "anytree==2.8.*",
-    "astar==0.99"
+    "astar==0.99",
+    "torch==2.5.1+cxx11.abi",
+    "torchvision==0.20.1+cxx11.abi",
+    "torchaudio==2.5.1+cxx11.abi",
+    "intel-extension-for-pytorch==2.5.10+xpu",
+    "gymnasium>=1.0.0",
+    "matplotlib>=3.10.0",
+    "stable-baselines3>=2.5.0",
+    "tensorboard>=2.19.0",
+    "torch-geometric>=2.6.1",
+    "faster-fifo>=1.5.2",
+    "ipython>=8.32.0",
+    "pip>=25.0.1",
 ]
+requires-python = "==3.12.8"
+readme = "README.md"
+license = {text = "MIT"}
 
 [options]
 package_dir = "arek_chess"
-
-[build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = [
@@ -40,4 +52,14 @@ packages = [
     "arek_chess.game_tree",
     "arek_chess.workers",
 ]
-#py-modules = ["arek_chess.controller"]
+
+[tool.pdm]
+distribution = false
+[tool.pdm.resolution.overrides]
+torch = "2.5.1+cxx11.abi"
+
+
+[[tool.pdm.source]]
+name = "intel"
+url = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+verify_ssl = true

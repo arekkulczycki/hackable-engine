@@ -21,6 +21,11 @@ class Move:
     mask: BitBoard
     size: int
 
+    def __repr__(self) -> str:
+        """"""
+
+        return self.get_coord()
+
     def __str__(self) -> str:
         """"""
 

@@ -20,7 +20,7 @@ from astar import find_path
 from nptyping import Shape
 import numpy as np
 from numpy import asarray, empty, int8, mean, zeros, ndarray
-# from torch_geometric.data import Data as GraphData
+from torch_geometric.data import Data as GraphData, HeteroData
 
 from hackable_engine.board import BitBoard, GameBoardBase
 from hackable_engine.board.hex.bitboard_utils import (
@@ -33,6 +33,7 @@ from hackable_engine.board.hex.serializers import BoardShapeError
 from hackable_engine.board.hex.serializers.hex_board_serializer_mixin import (
     HexBoardSerializerMixin,
 )
+from hackable_engine.board.hex.types import EdgeType
 from hackable_engine.common.constants import DEFAULT_HEX_BOARD_SIZE, FLOAT_TYPE
 
 Cell = int
@@ -41,10 +42,10 @@ SIZE = 13
 SIZE_SQUARE = SIZE**2
 
 NEIGHBOURHOOD_DIAMETER: int = 7
-ZERO: FLOAT_TYPE = FLOAT_TYPE(0)
-ONE: FLOAT_TYPE = FLOAT_TYPE(1)
-TWO: FLOAT_TYPE = FLOAT_TYPE(2)
-MINUS_ONE: FLOAT_TYPE = FLOAT_TYPE(-1)
+ZERO = 0
+ONE = 1
+TWO = 2
+MINUS_ONE = -1
 
 
 class HexBoard(HexBoardSerializerMixin, GameBoardBase):
@@ -99,9 +100,12 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             self.initialize_notation(notation, init_move_stack)
 
         if use_graph:
+            # self.edge_index = th.tensor(list(self._get_all_graph_links()), dtype=th.long).t().contiguous()
             self.edge_index = self._get_all_graph_links_coo()
+            self.edge_types = self._get_graph_link_types()
         else:
-            self.edge_index = th.Tensor([])
+            self.edge_index = th.tensor([])
+            self.edge_types = th.tensor([])
 
         # self.short_diagonal_mask = self._get_short_diagonal_mask()
         # self.long_diagonal_mask = self._get_long_diagonal_mask()
@@ -545,10 +549,14 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         Generating adjacent cells if not yet visited.
         """
 
-        yield from generate_masks(self._generate_adjacent_cells_cached(mask, direction) & among)
+        yield from generate_masks(
+            self._generate_adjacent_cells_cached(mask, direction) & among
+        )
 
     @lru_cache(SIZE_SQUARE)
-    def _generate_adjacent_cells_cached(self, mask: BitBoard, direction: bool | None) -> BitBoard:
+    def _generate_adjacent_cells_cached(
+        self, mask: BitBoard, direction: bool | None
+    ) -> BitBoard:
         adjacent_cells: BitBoard = 0
 
         functions: tuple[Callable[[BitBoard], BitBoard], ...]
@@ -757,8 +765,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         """"""
 
         if move.mask & self.unoccupied == 0:
-            print("board", bin(self.unoccupied), bin(self.occupied))
-            print(self.move_stack)
+            # print("board", bin(self.unoccupied), bin(self.occupied))
+            # print(self.move_stack)
             raise ValueError(f"the move is occupied: {move.uci()}")
 
         self.occupied_co[self.turn] |= move.mask
@@ -1096,9 +1104,25 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     ) -> ndarray[Shape, FLOAT_TYPE]:
         """"""
 
-        array: ndarray[Shape, FLOAT_TYPE] = empty((1, self.size, self.size), dtype=FLOAT_TYPE)
-
         return self._as_matrix(
+            self.size, self.size_square, self.occupied_co[True], self.occupied_co[False]
+        )
+        # array: ndarray[Shape, FLOAT_TYPE] = empty((1, self.size, self.size), dtype=FLOAT_TYPE)
+        #
+        # return self._as_matrix(
+        #     array,
+        #     self.size,
+        #     self.occupied_co[True],
+        #     self.occupied_co[False],
+        #     black_stone_val,
+        #     empty_val,
+        # )
+
+    def as_matrix_legacy(
+        self, black_stone_val: FLOAT_TYPE = MINUS_ONE, empty_val: FLOAT_TYPE = ZERO
+    ) -> ndarray[Shape, FLOAT_TYPE]:
+        array: ndarray[Shape, FLOAT_TYPE] = empty((1, self.size, self.size), dtype=FLOAT_TYPE)
+        return self._as_matrix_to_array(
             array,
             self.size,
             self.occupied_co[True],
@@ -1109,7 +1133,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     # @numba.njit()
     @staticmethod
-    def _as_matrix(
+    def _as_matrix_to_array(
         array: ndarray[Shape, FLOAT_TYPE],
         size: int,
         occupied_white: int,
@@ -1126,14 +1150,38 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 array[0][row][col] = (
                     black_val
                     if mask & occupied_black
-                    else ONE
-                    if mask & occupied_white
-                    else empty_val
+                    else ONE if mask & occupied_white else empty_val
                 )
 
                 mask <<= 1
 
         return array
+
+    @staticmethod
+    def _as_matrix(
+        size: int,
+        size_square: int,
+        occupied_white: int,
+        occupied_black: int,
+        black_val: FLOAT_TYPE = MINUS_ONE,
+        empty_val: FLOAT_TYPE = ZERO,
+    ) -> ndarray[Shape, FLOAT_TYPE]:
+        """"""
+
+        mask: BitBoard = 1
+        array: list[BitBoard] = []
+
+        for i in range(size_square):
+            if mask & occupied_black:
+                value = black_val
+            elif mask & occupied_white:
+                value = ONE
+            else:
+                value = empty_val
+            array.append(value)
+            mask <<= 1
+
+        return np.array(array, dtype=FLOAT_TYPE).reshape((1, size, size))
 
     def as_matrix_channelled(self) -> ndarray:
         """"""
@@ -1204,9 +1252,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 array[row][col] = (
                     black_val
                     if occupied_black
-                    else ONE
-                    if occupied_white
-                    else empty_val
+                    else ONE if occupied_white else empty_val
                 )
 
                 pos -= 1
@@ -1363,6 +1409,37 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         masks = [mask for mask in path if mask & self.unoccupied]
         return len(masks), masks
 
+    @lru_cache(maxsize=10_000_000)
+    def distance_missing_cached(
+        self,
+        mask_from: BitBoard,
+        mask_to: BitBoard,
+        color: bool,
+        un_oc: BitBoard,
+        oc_co: BitBoard,
+    ) -> tuple[int, list[BitBoard]]:
+        """
+        Calculate how many stones are missing to finish the connection from one cell to another.
+
+        The astar algorithm is imperfect, a wrong result example is written in tests for this module.
+        """
+
+        gen = self.generate_adjacent_cells_cached
+        among = un_oc | oc_co
+
+        path = find_path(
+            mask_from,
+            mask_to,
+            neighbors_fnct=lambda mask: gen(mask, among=among),
+            distance_between_fnct=lambda m_from, m_to: (0.0 if m_to & oc_co else 1.0),
+        )
+
+        if path is None:
+            return (self.size_square, [])
+
+        masks = [mask for mask in path if mask & self.unoccupied]
+        return len(masks), masks
+
     def get_shortest_missing_distance(self, color: bool) -> int:
         """
         Calculate how many stones are missing to finish the connection between two sides.
@@ -1408,9 +1485,85 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         variants: dict[float, int] = defaultdict(lambda: 0)
         unique_paths: set[tuple[BitBoard, ...]] = set()
         shortest_path: set[BitBoard] = set()
+
+        un_oc = self.unoccupied
         for pair in connection_points_pairs:
             path: list[BitBoard]
-            length, path = self.distance_missing(*pair, color)
+
+            if un_oc.bit_count() >= self.size_square - 2 * self.size:
+                oc_co = self.occupied_co[color]
+                length, path = self.distance_missing_cached(*pair, color, un_oc, oc_co)
+            else:
+                length, path = self.distance_missing(*pair, color)
+            if not path:
+                continue
+
+            if length < shortest_distance:
+                shortest_distance = length
+                shortest_path = set(path)
+                unique_paths = {
+                    p for p in unique_paths if not shortest_path.issubset(p)
+                }
+
+            masks = tuple(path)
+            if (
+                length < self.size
+                and masks not in unique_paths
+                and (
+                    length == shortest_distance
+                    or not shortest_path.issubset(set(masks))
+                )
+            ):
+                unique_paths.add(masks)
+
+        for p in unique_paths:
+            variants[len(p) if not should_subtract else len(p) - 0.5] += 1
+
+        return shortest_distance, variants
+
+    def get_short_missing_distances_perf(
+        self, color: bool, *, should_subtract: bool = False
+    ) -> tuple[int, dict[float, int]]:
+        """
+        Calculate how many stones are missing to finish the connection between two sides.
+        Search restricted to connections from/to the obtuse corners.
+
+        :param should_subtract: when evaluating distances for white side with 1 stone less on board,
+            subtracts 0.5, because an additional stone cannot have impact on all the variants
+        """
+
+        opp = self.occupied_co[not color]
+        if color:
+            start_corner = list(generate_masks(self.bb_cols[0] & ~opp))[-1]
+            finish_corner = next(generate_masks(self.bb_cols[-1] & ~opp))
+        else:
+            start_corner = list(generate_masks(self.bb_rows[0] & ~opp))[-1]
+            finish_corner = next(generate_masks(self.bb_rows[-1] & ~opp))
+
+        connection_points_start: list[BitBoard] = self._get_start_points_perf(color)
+        connection_points_finish: list[BitBoard] = self._get_finish_points_perf(color)
+
+        if not (connection_points_start and connection_points_finish):
+            raise ValueError("searching shortest missing distance on game over")
+
+        connection_points_pairs: list[tuple[BitBoard, BitBoard]] = [
+            (start_corner, finish) for finish in connection_points_finish
+        ] + [(start, finish_corner) for start in connection_points_start]
+
+        shortest_distance = self.size_square
+        variants: dict[float, int] = defaultdict(lambda: 0)
+        unique_paths: set[tuple[BitBoard, ...]] = set()
+        shortest_path: set[BitBoard] = set()
+
+        un_oc = self.unoccupied
+
+        for pair in connection_points_pairs:
+            path: list[BitBoard]
+            if un_oc.bit_count() >= self.size_square - self.size:
+                oc_co = self.occupied_co[color]
+                length, path = self.distance_missing_cached(*pair, color, un_oc, oc_co)
+            else:
+                length, path = self.distance_missing(*pair, color)
             if not path:
                 continue
 
@@ -1569,20 +1722,6 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return array
 
-    def _get_all_graph_links(self) -> set[tuple[BitBoard, BitBoard]]:
-        """
-        Return all links between all board cells, considering the board to be a graph.
-        """
-
-        links: set[tuple[BitBoard, BitBoard]] = set()
-
-        for mask in generate_masks(self.get_all_mask()):
-            for neighbour_mask in self.generate_neighbours(mask):
-                links.add((mask, neighbour_mask))
-                # links.add((neighbour_mask, mask))  # this should always be added anyway within the outer loop
-
-        return links
-
     def _get_all_graph_links_coo(self) -> th.Tensor:
         """
         Get `edge_index` for graph data.
@@ -1600,15 +1739,62 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             .contiguous()
         )
 
-    # def to_graph_data(self) -> GraphData:
-    #     """"""
-    #
-    #     return GraphData(x=self.get_graph_node_features(), edge_index=self.edge_index)
+    def _get_all_graph_links(self) -> set[tuple[BitBoard, BitBoard]]:
+        """
+        Return all links between all board cells, considering the board to be a graph.
+        """
 
-    def get_graph_node_features(self) -> ndarray:
+        links: set[tuple[BitBoard, BitBoard]] = set()
+
+        for mask in generate_masks(self.get_all_mask()):
+            for neighbour_mask in self.generate_neighbours(mask):
+                links.add((mask, neighbour_mask))
+                # links.add((neighbour_mask, mask))  # this should always be added anyway within the outer loop
+
+        return links
+
+    def _get_graph_link_types(self) -> th.Tensor:
+        """Returns one-hot encoded edge types as tensor with shape (num_edges, 3)"""
+        link_types: list[EdgeType] = []
+        link: tuple[BitBoard, BitBoard]
+        for from_, to_ in self.edge_index.t():
+            from_x, from_y = Move.xy_from_mask(from_.item(), self.size)
+            to_x, to_y = Move.xy_from_mask(to_.item(), self.size)
+            if from_x == to_x:
+                link_types.append(EdgeType.VERTICAL)
+            elif from_y == to_y:
+                link_types.append(EdgeType.HORIZONTAL)
+            else:
+                link_types.append(EdgeType.DIAGONAL)
+        return th.tensor(link_types)
+
+    def _get_graph_link_types_one_hot(self) -> th.Tensor:
+        """Returns one-hot encoded edge types as tensor with shape (num_edges, 3)"""
+        link_types = []
+        link: tuple[BitBoard, BitBoard]
+        for from_, to_ in self.edge_index.t():
+            from_x, from_y = Move.xy_from_mask(from_.item(), self.size)
+            to_x, to_y = Move.xy_from_mask(to_.item(), self.size)
+            if from_x == to_x:
+                link_types.append([1, 0, 0])  # EdgeType.VERTICAL)
+            elif from_y == to_y:
+                link_types.append([0, 1, 0])  # EdgeType.HORIZONTAL)
+            else:
+                link_types.append([0, 0, 1])  # EdgeType.DIAGONAL)
+        return th.tensor(link_types)
+
+    def to_homo_graph_data(self) -> GraphData:
+        """"""
+
+        return GraphData(
+            x=th.from_numpy(self.get_homo_graph_node_features()),
+            edge_index=self.edge_index,
+        )
+
+    def get_homo_graph_node_features(self) -> ndarray:
         """
         Get node features, where the only feature is stone color (or lack thereof).
-        :return: tensor of shape (self.size_square)
+        :return: tensor of shape (self.size_square, 1)
         """
 
         node_features = []
@@ -1617,18 +1803,76 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         blacks = self.occupied_co[False]
 
         for _ in range(self.size_square):
-            node_feature = 0.0
+            node_feature = 0
             if whites & 1:
-                node_feature = 1.0
+                node_feature = 1
             elif blacks & 1:
-                node_feature = -1.0
+                node_feature = -1
 
             node_features.append(node_feature)
 
             whites >>= 1
             blacks >>= 1
 
-        return np.array(node_features, dtype=FLOAT_TYPE)  #.t()
+        return np.array([node_features], dtype=FLOAT_TYPE).transpose()
+
+    def to_hetero_graph_data(self) -> HeteroData:
+        """"""
+
+        return HeteroData(
+            x=th.from_numpy(self.get_hetero_graph_node_features()),
+            edge_index=self.edge_index,
+        )
+
+    def get_hetero_graph_node_features(self) -> ndarray:
+        """
+        Get node features, where the features are: stone color, edge of the board.
+        :return: tensor of shape (self.size_square, 1)
+        """
+
+        node_features = []
+
+        whites = self.occupied_co[True]
+        blacks = self.occupied_co[False]
+
+        for i in range(self.size_square):
+            row = i // self.size
+            col = i % self.size
+            stone = -1.0 if blacks & 1 else 1.0 if whites & 1 else 0.0
+            edge_white = -1.0 if col == 0 else 1.0 if col == (self.size - 1) else 0.0
+            edge_black = -1.0 if row == 0 else 1.0 if row == (self.size - 1) else 0.0
+
+            node_features.append((stone, edge_black, edge_white))
+
+            whites >>= 1
+            blacks >>= 1
+
+        return np.array([node_features], dtype=FLOAT_TYPE).transpose()
+
+    def get_hetero_graph_node_embedding(self) -> ndarray:
+        """
+        Get node features, where the features are: stone color, edge of the board.
+        :return: tensor of shape (self.size_square, 1)
+        """
+
+        node_features = []
+
+        whites = self.occupied_co[True]
+        blacks = self.occupied_co[False]
+
+        for i in range(self.size_square):
+            row = i // self.size
+            col = i % self.size
+            stone = 0 if blacks & 1 else 1 if whites & 1 else 2
+            edge_white = 0 if col == 0 else 1 if col == (self.size - 1) else 2
+            edge_black = 0 if row == 0 else 1 if row == (self.size - 1) else 2
+
+            node_features.append((stone, edge_black, edge_white))
+
+            whites >>= 1
+            blacks >>= 1
+
+        return np.array(node_features, dtype=FLOAT_TYPE).transpose()
 
     def _get_nodes_and_links(self) -> tuple[ndarray, ndarray]:
         """

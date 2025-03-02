@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 from typing import Tuple
 
-import gym
+import gymnasium as gym
 import torch as th
 from nptyping import NDArray
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from torch.nn import BatchNorm2d
 
 from hackable_engine.training.hyperparams import LEARNING_RATE
-from hackable_engine.training.network.residual_blocks import ResidualBlock, ResidualBottleneckBlock
+from hackable_engine.training.network.residual_blocks import ResidualBlock
 
 
 class HexResnetRawFeaturesExtractor(BaseFeaturesExtractor):

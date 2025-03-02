@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-
 from enum import Enum, IntEnum
 
-from numpy import float32
+import numpy as np
 import torch as th
+# from ml_dtypes import bfloat16
 
-FLOAT_TYPE = float32
+FLOAT_TYPE = np.float32
 TH_FLOAT_TYPE = th.float32
-INF: FLOAT_TYPE = FLOAT_TYPE(1000000.0)
-DRAW: FLOAT_TYPE = FLOAT_TYPE(0.0)
-ZERO: FLOAT_TYPE = FLOAT_TYPE(0.0)
+INF: float = 1000000.0
+DRAW: float = 0.0
+ZERO: float = 0.0
 SLEEP: float = 0.001
 LOG_INTERVAL: float = 0.5
 BREAK_INTERVAL: float = 3.0

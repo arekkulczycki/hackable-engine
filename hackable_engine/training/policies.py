@@ -2,21 +2,18 @@
 import torch as th
 
 from hackable_engine.training.envs.dummy_env import DummyEnv
-from hackable_engine.training.envs.hex.raw_5_env import Raw5Env
-from hackable_engine.training.envs.hex.raw_7_env import Raw7Env
-from hackable_engine.training.envs.hex.raw_9_graph_env import Raw9GraphEnv
-from hackable_engine.training.network.alphazero_features_extractor import (
-    AlphaZeroFeaturesExtractor,
-)
-from hackable_engine.training.envs.hex.raw_9_channelled_env import Raw9ChannelledEnv
+from hackable_engine.training.envs.hex.logit_5_graph_env import Logit5GraphEnv
 from hackable_engine.training.envs.hex.raw_9_env import Raw9Env
+from hackable_engine.training.envs.hex.seq_5_env import Seq5Env
+from hackable_engine.training.envs.hex.seq_5_graph_env import Seq5GraphEnv
+from hackable_engine.training.envs.hex.seq_7_env import Seq7Env
+from hackable_engine.training.envs.hex.seq_7_graph_env import Seq7GraphEnv
+from hackable_engine.training.envs.hex.seq_9_graph_env import Seq9GraphEnv
+from hackable_engine.training.hyperparams import *
 from hackable_engine.training.network.hex_cnn_features_extractor import (
     HexCnnFeaturesExtractor,
 )
-from hackable_engine.training.hyperparams import *
 from hackable_engine.training.network.hex_graph_features_extractor import HexGraphFeaturesExtractor
-from hackable_engine.training.network.hex_resnet_features_extractor import HexResnetFeaturesExtractor
-from hackable_engine.training.network.hex_resnet_raw_features_extractor import HexResnetRawFeaturesExtractor
 
 cnn_base = dict(
     policy="CnnPolicy",
@@ -58,18 +55,29 @@ policy_kwargs_map = {
         # "log_std_init": th.log(th.tensor(0.66)),
     },
     "hex5raw": {
-        "policy": "MlpPolicy",
-        "env_class": Raw5Env,
+        "env_class": Seq5Env,
+        "board_size": 5,
+        "net_arch": [625, 625],
+    },
+    "hex5graph": {
+        "env_class": Seq5GraphEnv,
         "board_size": 5,
         "net_arch": [125, 125],
-        "activation_fn": th.nn.ReLU,
-        "log_std_init": th.log(th.tensor(0.33)),
     },
-    "hex7raw": {
-        "policy": "MlpPolicy",
-        "env_class": Raw7Env,
+    "hex5graphlogit": {
+        "env_class": Logit5GraphEnv,
+        "board_size": 5,
+        "net_arch": [125, 125],
+    },
+    "hex7seq": {
+        "env_class": Seq7Env,
         "board_size": 7,
-        "net_arch": [216, 216],  #[343, 343],
+        "net_arch": [343, 343],  #[343, 343],
+    },
+    "hex7graph": {
+        "env_class": Seq7GraphEnv,
+        "board_size": 7,
+        "net_arch": [72, 72],  # [343, 343],
         "activation_fn": th.nn.ReLU,
         "log_std_init": th.log(th.tensor(0.33)),
     },
@@ -83,7 +91,7 @@ policy_kwargs_map = {
     },
     "hex9graphA": {
         **cnn_base,
-        "env_class": Raw9GraphEnv,
+        "env_class": Seq9GraphEnv,
         "features_extractor_class": HexGraphFeaturesExtractor,
         "features_extractor_kwargs": dict(
             board_size=9, output_filters=(18, 18, 18), conv_type="gcn", activation_fn=th.nn.LeakyReLU, use_residuals=True,
@@ -94,7 +102,7 @@ policy_kwargs_map = {
     },
     "hex9graphB": {
         **cnn_base,
-        "env_class": Raw9GraphEnv,
+        "env_class": Seq9GraphEnv,
         "features_extractor_class": HexGraphFeaturesExtractor,
         "features_extractor_kwargs": dict(
             board_size=9, output_filters=(18, 18, 18, 18), conv_type="gcn", activation_fn=th.nn.LeakyReLU, use_residuals=True,
@@ -105,7 +113,7 @@ policy_kwargs_map = {
     },
     "hex9graphC": {
         **cnn_base,
-        "env_class": Raw9GraphEnv,
+        "env_class": Seq9GraphEnv,
         "features_extractor_class": HexGraphFeaturesExtractor,
         "features_extractor_kwargs": dict(
             board_size=9, output_filters=(12, 12, 12, 12, 12), conv_type="gcn", activation_fn=th.nn.LeakyReLU, use_residuals=True,
@@ -116,7 +124,7 @@ policy_kwargs_map = {
     },
     "hex9graphD": {
         **cnn_base,
-        "env_class": Raw9GraphEnv,
+        "env_class": Seq9GraphEnv,
         "features_extractor_class": HexGraphFeaturesExtractor,
         "features_extractor_kwargs": dict(
             board_size=9, output_filters=(6, 6, 6, 6, 6), conv_type="gcn", activation_fn=th.nn.Tanhshrink, use_residuals=True,
@@ -127,7 +135,7 @@ policy_kwargs_map = {
     },
     "hex9graphE": {
         **cnn_base,
-        "env_class": Raw9GraphEnv,
+        "env_class": Seq9GraphEnv,
         "features_extractor_class": HexGraphFeaturesExtractor,
         "features_extractor_kwargs": dict(
             board_size=9, output_filters=(36, 36, 36, 36), conv_type="gcn", activation_fn=th.nn.ReLU,
@@ -138,7 +146,7 @@ policy_kwargs_map = {
     },
     "hex9graphF": {
         **cnn_base,
-        "env_class": Raw9GraphEnv,
+        "env_class": Seq9GraphEnv,
         "features_extractor_class": HexGraphFeaturesExtractor,
         "features_extractor_kwargs": dict(
             board_size=9, output_filters=(48, 48, 48), conv_type="gcn", activation_fn=th.nn.ReLU,
@@ -148,7 +156,7 @@ policy_kwargs_map = {
     },
     "hex9graphG": {
         **cnn_base,
-        "env_class": Raw9GraphEnv,
+        "env_class": Seq9GraphEnv,
         "features_extractor_class": HexGraphFeaturesExtractor,
         "features_extractor_kwargs": dict(
             board_size=9, output_filters=(6, 3, 1), conv_type="gat",
@@ -159,7 +167,7 @@ policy_kwargs_map = {
     },
     "hex9graphH": {
         **cnn_base,
-        "env_class": Raw9GraphEnv,
+        "env_class": Seq9GraphEnv,
         "features_extractor_class": HexGraphFeaturesExtractor,
         "features_extractor_kwargs": dict(
             board_size=9, output_filters=(12, 12, 12), conv_type="res_gated",
@@ -251,20 +259,5 @@ policy_kwargs_map = {
         "log_std_init": th.log(th.tensor(0.42)),
         "activation_fn": th.nn.ReLU,
         "net_arch": [64*9, 64*9],
-    },
-    "hex9az": {
-        "env_class": Raw9ChannelledEnv,
-        "features_extractor_class": AlphaZeroFeaturesExtractor,
-        "features_extractor_kwargs": dict(num_actions=1),
-    },
-    "hex9res": {
-        **cnn_base,
-        "env_class": Raw9ChannelledEnv,
-        "features_extractor_class": HexResnetRawFeaturesExtractor,
-        "features_extractor_kwargs": dict(
-            board_size=9, resnet_layers=(), output_filters=(2,), kernel_sizes=(5,),
-        ),
-        "activation_fn": th.nn.Tanhshrink,
-        "net_arch": [162, 162],
     },
 }

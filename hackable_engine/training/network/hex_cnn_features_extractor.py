@@ -1,7 +1,7 @@
 from itertools import zip_longest
 from typing import Optional, Tuple, Type, Union
 
-import gym
+import gymnasium as gym
 import torch as th
 from nptyping import NDArray
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor

@@ -6,22 +6,22 @@ from typing import Callable, Any
 
 import numpy as np
 from faster_fifo import Queue
+from gymnasium import Env
 from gymnasium.core import ObsType, ActType
 from gymnasium.vector.vector_env import VectorEnv
 from nptyping.ndarray import NDArray
-from ray.rllib.utils.typing import EnvType
 
 from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.common.memory.adapters.shared_memory_adapter import (
     SharedMemoryAdapter,
 )
-from hackable_engine.training.hyperparams import N_STEPS
+from hackable_engine.training.hyperparams import BATCH_SIZE
 
 
 class MultiprocessEnv:
     def __init__(
         self,
-        make_env: Callable[[int, int, bool], EnvType],
+        make_env: Callable[[int, int, bool], Env],
         num_workers: int,
         env_per_worker: int,
         color: bool = True,
@@ -64,12 +64,12 @@ class MultiprocessEnv:
         self.buf_infos = [{} for _ in range(self.num_envs)]
         self.color = color
 
-        self.time_queue = deque(maxlen=self.num_envs * 3)
-        self.return_queue = deque(maxlen=self.num_envs * 3)
-        self.reward_queue = deque(maxlen=self.num_envs * 3)
-        self.winner_queue = deque(maxlen=self.num_envs * 3)
-        self.length_queue = deque(maxlen=self.num_envs * 3)
-        self.action_queue = deque(maxlen=N_STEPS * self.num_workers)
+        self.time_queue = deque(maxlen=self.num_envs)
+        self.return_queue = deque(maxlen=self.num_envs)
+        self.reward_queue = deque(maxlen=self.num_envs)
+        self.winner_queue = deque(maxlen=self.num_envs)
+        self.length_queue = deque(maxlen=self.num_envs)
+        self.action_queue = deque(maxlen=self.num_envs * 4)
 
     @property
     def single_observation_space(self):
@@ -84,6 +84,7 @@ class MultiprocessEnv:
         *,
         seed: int | None = None,
         options: dict[str, Any] | None = None,
+        env_ids: list[int] | None = None  # TODO: implement an option to reset a subset
     ) -> tuple[ObsType, dict[str, Any]]:  # type: ignore
         for process_id in range(self.num_workers):
             self.queues[process_id].put({"command": "reset"})
@@ -100,7 +101,7 @@ class MultiprocessEnv:
                     continue
 
                 process_id = response["process_id"]
-                print(f"process {process_id} ready")
+                # print(f"process {process_id} ready")
                 self.buf_obs[
                     process_id
                     * self.env_per_worker : (process_id + 1)
@@ -159,7 +160,7 @@ class MultiprocessEnv:
             rews = self._get_data(
                 self.shm_data_key.format(i=process_id, t="rews"),
                 (self.env_per_worker,),
-                dtype=bool,
+                dtype=FLOAT_TYPE,
             )
 
             time_info = (
@@ -232,10 +233,15 @@ class MultiprocessEnv:
         ]
 
         with self.write_locks[process_id]:
-            self._set_data(
-                self.shm_data_key.format(i=process_id, t="actions"),
-                np.array(actions, dtype=FLOAT_TYPE),
-            )
+            try:
+                self._set_data(
+                    self.shm_data_key.format(i=process_id, t="actions"),
+                    np.array(actions, dtype=FLOAT_TYPE),
+                )
+            except:
+                print(action_list)
+                print(process_id, self.env_per_worker, len(action_list))
+                raise
         self.queues[process_id].put({"command": "step"})
 
     def try_reset(self, process_id: int) -> None:
@@ -321,6 +327,7 @@ class ProcessEnv(Process):
                     should_get = True
 
     def reset(self):
+        # TODO: implement in the VectorEnv an option to reset only subset of environments
         self.out_queue.put({"process_id": self.process_id, "reset": self.env.reset()})
 
     def step(self):
@@ -343,12 +350,7 @@ class ProcessEnv(Process):
                     self.shm_data_key.format(t="rew"),
                     infos["episode"]["r"].astype(FLOAT_TYPE),
                 )
-            try:
-                self._set_data(self.shm_data_key.format(t="win"), infos["winner"])
-            except:
-                print("***********")
-                print(infos)
-                raise
+            self._set_data(self.shm_data_key.format(t="win"), infos["winner"])
             self._set_data(self.shm_data_key.format(t="reww"), infos["reward"])
             self._set_data(self.shm_data_key.format(t="act"), infos["action"])
 
@@ -356,7 +358,7 @@ class ProcessEnv(Process):
 
     def _get_actions(self) -> NDArray:
         return np.ndarray(
-            shape=(self.env_per_worker, 1),
+            shape=(self.env_per_worker, *self.env.single_action_space.shape),
             dtype=FLOAT_TYPE,
             buffer=self.shm.get(self.shm_actions_key),
         )

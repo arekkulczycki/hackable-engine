@@ -10,7 +10,7 @@ from hackable_engine.board.hex.move import Move
 from hackable_engine.training.envs.hex.raw_9_env import Raw9Env
 
 
-class Raw9GraphEnv(Raw9Env):
+class Seq9GraphEnv(Raw9Env):
     """"""
 
     BOARD_SIZE = 9
