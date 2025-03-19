@@ -4,9 +4,9 @@ RESET_CHARTS = True
 N_ENV_WORKERS = 10
 """Not really a hyperparam, but impacts the choice of others."""
 
-N_ENVS = 64 * N_ENV_WORKERS
+N_ENVS = 128 * N_ENV_WORKERS
 TOTAL_TIMESTEPS: int = 2**26
-LEARNING_RATE: float = 3e-3  #lambda p: 0 if p > 0.998 else 3e-5
+LEARNING_RATE: float = 1.5e-4  #lambda p: 0 if p > 0.998 else 3e-5
 
 # slowly decline to a point
 # LEARNING_RATE = lambda p: max(1e-3 * p**2, 1e-5)
@@ -26,12 +26,12 @@ SGD_DAMPENING = (0.0, 0.0)  # initial and used in subsequent training values
 ADAMW_WEIGHT_DECAY = (1e-6, 1e-6)  # initial and used in subsequent training values
 """Only used when AdamW/Adam optimizer is chosen for a policy."""
 
-N_EPOCHS: int = 128
+N_EPOCHS: int = 32
 N_STEPS: int = 2**5
 """Batch size per env, ie. will update policy every `N_STEPS` iterations, total batch size is this times `N_ENVS`."""
 
 # BATCH_SIZE: int = int(N_ENVS // N_ENV_WORKERS * N_ENV_WORKERS * N_STEPS / 2**0)
-BATCH_SIZE = 32#2**14
+BATCH_SIZE = 256
 """So called mini-batch, size taken into GPU at once, recommended to be a factor of (`N_STEPS * N_ENVS`)."""
 
 CLIP_RANGE: float = 0.3
@@ -50,7 +50,7 @@ torch._foreach_mul_(grads, clip_coef_clamped)
 STD_INIT: float = 0.5
 """An initial standard deviation for the probability distribution of an action taken by the actor."""
 
-GAMMA: float = 0.99  # 0.9975 for 9x9
+GAMMA: float = 0.95
 """
 Discount factor for the past actions in an episode.
 Has to be <1, in practice when very close to 1 then is more difficult for the model to learn efficiently.
@@ -79,14 +79,14 @@ VF_COEF: float = 0.5
 
 # OFF POLICY #
 
-BUFFER_SIZE: int = 32_000_000  # more-less limited to 2**26 by the amount of RAM
+BUFFER_SIZE: int = 10_000_000  # more-less limited to 2**26 by the amount of RAM
 """The replay memory buffer size."""
 
-Q_LEARNING_RATE = 1.5e-3
+Q_LEARNING_RATE = 4.5e-4
 ALPHA_LEARNING_RATE = 1e-5 # Q_LEARNING_RATE
 """Slowing down entropy decrease, hoping for longer exploration as opposed to exploitation"""
 
-LEARNING_STARTS: int = int(BUFFER_SIZE * 0.005)
+LEARNING_STARTS: int = int(BUFFER_SIZE * 0.05) // N_ENVS
 """Number of random moves before the agent starts choosing them."""
 
 ENTROPY_AUTOTUNE: bool = True
@@ -94,7 +94,7 @@ MIN_ENTROPY_ALPHA: float = 0.001
 ENTROPY_ALPHA: float = 0.1
 """Entropy regularization coefficient."""
 
-TAU: float = 0.01  # default was 0.005
+TAU: float = 0.005
 """Target smoothing coefficient."""
 
 POLICY_FREQUENCY: int = 2

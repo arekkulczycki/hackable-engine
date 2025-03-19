@@ -3,6 +3,7 @@ from random import choices
 
 import gymnasium as gym
 import numpy as np
+from torch.nn import functional as F
 from gymnasium.envs.registration import register
 
 from hackable_engine.board.hex.move import Move
@@ -40,28 +41,43 @@ class Logit7GraphEnv(Seq7Env):
         ]
         # fmt: on
 
+    def reset(
+        self,
+        *,
+        seed = None,
+        options = None,
+    ):
+        obs, _ = super().reset(seed=seed, options=options)
+        return obs, {
+            "action": 0,
+            "winner": None,
+            "reward": FLOAT_TYPE(0.0),
+        }
+
     def step(self, action):
         # return self.step_from_logits(action)
         return self.step_from_preselected(action)
 
     def step_from_preselected(self, move_position):
-        move = Move(mask=1 << int(move_position), size=self.BOARD_SIZE)
+        move_pos_int = int(move_position)
+        move = Move(mask=1 << move_pos_int, size=self.BOARD_SIZE)
         try:
             # if self.winner is not None:
             #     return self.obs, MINUS_ONE, True, True, {}
             self.controller.board.push(move)
         except ValueError:
             # print(f"attempting to push {move_position}", move.get_coord())
-            self.winner = True
+            self.winner = not self.color
             n_moves = self.MAX_MOVES - self.controller.board.unoccupied.bit_count()
-            self.reward = max((MINUS_ONE - (1 - n_moves/self.MAX_MOVES), MINUS_ONEHALF))
+            # self.reward = FLOAT_TYPE(max((MINUS_TWO + n_moves/(self.MAX_MOVES - 2 * self.BOARD_SIZE), MINUS_ONEHALF)))
+            self.reward = FLOAT_TYPE(MINUS_TWO + n_moves/(self.MAX_MOVES - 2 * self.BOARD_SIZE))
             return (
                 self.obs,
                 self.reward,
                 True,
-                True,
+                False,
                 {
-                    "action": 0,
+                    "action": move_pos_int,
                     "winner": False,
                     "reward": self.reward,
                     # "opening": self.opening,
@@ -89,8 +105,6 @@ class Logit7GraphEnv(Seq7Env):
         )
 
     def _make_opponent_move(self, n_moves):
-        # self._make_random_move(self.controller.board)
-        # # self._make_logical_move(self.controller.board)
         win_percentage = (
             np.mean(self.results) if len(self.results) >= 4 else 0.9  # 0.4
         )
@@ -108,8 +122,24 @@ class Logit7GraphEnv(Seq7Env):
         return self.controller.board.get_homo_graph_node_features()
 
     def render(self, mode="human", close=False):
-        return super().render()
-        # return ""
+        # return super().render()
+        return ""
+
+    def _get_intermediate_reward(self, n_moves):
+        # return FLOAT_TYPE(self._get_intermediate_reward_relative(n_moves))
+        # win_percentage = (
+        #     np.mean(self.results) if len(self.results) >= 4 else 0.9  # 0.4
+        # )
+        # if win_percentage > 0.9:
+        #     return FLOAT_TYPE(self._get_intermediate_reward_relative(n_moves))
+        return ZERO
+
+    # def _quick_win_value(self, n_moves: int) -> float:
+    #     """The more moves are played the higher the punishment."""
+    #
+    #     return ZERO
+    #     # return ((max(0, (n_moves - 2 * self.BOARD_SIZE)) / self.MAX_MOVES) ** 2) * ONE
+
 
 
 register(

@@ -21,13 +21,14 @@ from hackable_engine.board.hex.bitboard_utils import generate_masks
 from hackable_engine.board.hex.hex_board import HexBoard
 from hackable_engine.board.hex.move import Move
 from hackable_engine.training.device import Device
-from hackable_engine.training.envs.hex.logit_5_graph_env import Logit5GraphEnv
-from hackable_engine.training.envs.hex.logit_7_env import Logit7Env
-from hackable_engine.training.envs.hex.logit_7_graph_env import Logit7GraphEnv
+from hackable_engine.training.envs.hex.logit_9_graph_env import Logit9GraphEnv
+from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_async_env import MultiprocessAsyncEnv
+from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_env import MultiprocessEnv
 from hackable_engine.training.envs.wrappers.episode_stats import EpisodeStats
+from hackable_engine.training.models.graph_sg import GraphSG
 from hackable_engine.training.run import LOG_PATH
 
-n_workers = 6
+n_workers = 4
 n_envs = 64
 replay_batch_size = 128
 replay_runs = 9
@@ -50,163 +51,6 @@ policy_loss_queue = deque(maxlen=5 * n_envs)
 policy_value_loss_queue = deque(maxlen=5 * n_envs)
 value_loss_queue = deque(maxlen=5 * n_envs)
 entropy_queue = deque(maxlen=5 * n_envs)
-
-
-class HexGNN(th.nn.Module):
-    def __init__(
-        self,
-        white_edge,
-        black_edge,
-        edge_types,
-        edge_index,
-        batch_index,
-        white_edge_replay,
-        black_edge_replay,
-        batch_index_replay,
-        node_emb_dim=18,
-        edge_emb_dim=18,
-        heads=4,
-    ):
-        super().__init__()
-
-        # Node embeddings for stone color, white edge proximity, and black edge proximity
-        self.color_embedding = th.nn.Embedding(3, node_emb_dim)
-        self.white_edge_embedding = th.nn.Embedding(3, node_emb_dim)
-        self.black_edge_embedding = th.nn.Embedding(3, node_emb_dim)
-        # self.node_fc = th.nn.Linear(node_emb_dim * 3, node_emb_dim)
-
-        # Edge embeddings for 3 edge types (horizontal, down-right, down-left)
-        self.edge_embedding = th.nn.Embedding(3, edge_emb_dim)
-
-        gat_dim = node_emb_dim * 3
-        # GNN layers (stacked GAT layers)
-        self.gat1 = GATConv(gat_dim, gat_dim, heads=heads, edge_dim=edge_emb_dim)
-        self.gat2 = GATConv(
-            gat_dim * heads, gat_dim, heads=heads, edge_dim=edge_emb_dim
-        )
-        self.gat3 = GATConv(gat_dim * heads, gat_dim, edge_dim=edge_emb_dim)
-
-        self.norm1 = GraphNorm(gat_dim * heads)
-        self.norm2 = GraphNorm(gat_dim * heads)
-        self.norm3 = GraphNorm(gat_dim)
-
-        l1 = th.nn.Linear(gat_dim, 128)
-        l2 = th.nn.Linear(128, 1)
-        # Policy head (predict move probabilities)
-        self.policy_head = th.nn.Sequential(l1, th.nn.ReLU(), l2)
-
-        l3 = th.nn.Linear(gat_dim, 128)
-        l4 = th.nn.Linear(128, 1)
-        # Value head (predict win probability)
-        self.value_head = th.nn.Sequential(l3, th.nn.ReLU(), l4, th.nn.Tanh())
-
-        for layer in (l1, l2, l3, l4):
-            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="relu")
-            th.nn.init.zeros_(layer.bias)
-
-        # Edge embeddings
-        self.white_edge = self.white_edge_embedding(white_edge).detach().to(Device.XPU)
-        self.black_edge = self.black_edge_embedding(black_edge).detach().to(Device.XPU)
-        self.edge_types = self.edge_embedding(edge_types).detach().to(Device.XPU)
-        self.edge_index = edge_index.to(Device.XPU)
-        self.batch_index = batch_index.to(Device.XPU)
-
-        self.white_edge_replay = (
-            self.white_edge_embedding(white_edge_replay).detach().to(Device.XPU)
-        )
-        self.black_edge_replay = (
-            self.black_edge_embedding(black_edge_replay).detach().to(Device.XPU)
-        )
-        self.batch_index_replay = batch_index_replay.to(Device.XPU)
-
-    def forward(self, node_colors):
-        # white_edge_emb = self.white_edge_embedding(white_edge.flatten(0, 1))
-        # black_edge_emb = self.black_edge_embedding(black_edge.flatten(0, 1))
-        # edge_types_emb = self.edge_embedding(edge_types)
-        if node_colors.shape[0] == replay_batch_size:
-            white_edge_emb = self.white_edge_replay
-            black_edge_emb = self.black_edge_replay
-            batch_index = self.batch_index_replay
-        else:
-            white_edge_emb = self.white_edge
-            black_edge_emb = self.black_edge
-            batch_index = self.batch_index
-        edge_types_emb = self.edge_types
-
-        # Node embeddings
-        color_emb = self.color_embedding(node_colors.flatten(1, 2))
-
-        # Combine node embeddings
-        node_emb = th.cat([color_emb, white_edge_emb, black_edge_emb], dim=-1)
-        # node_emb = self.node_fc(node_emb).flatten(0, 1)
-
-        # GNN layers
-        node_emb = self.norm1(
-            self.gat1(node_emb.flatten(0, 1), self.edge_index, edge_attr=edge_types_emb)
-        )
-        node_emb = self.norm2(
-            self.gat2(node_emb, self.edge_index, edge_attr=edge_types_emb)
-        )
-        node_emb = self.norm3(
-            self.gat3(node_emb, self.edge_index, edge_attr=edge_types_emb)
-        )
-
-        # Policy head (logits for each node)
-        policy_logits = self.policy_head(node_emb).squeeze(-1)
-
-        # Value head (global pooling followed by MLP)
-        global_emb = global_mean_pool(
-            node_emb, batch_index
-        )  # Pool node embeddings into graph-level embedding
-        value = self.value_head(global_emb).squeeze(-1)
-
-        return policy_logits, value
-
-
-class HexMLP(th.nn.Module):
-    def __init__(
-        self,
-        mlp_hid=512,
-        graph_input=False,
-        node_emb_dim=18,
-    ):
-        super().__init__()
-        self.graph_input = graph_input
-
-        # Node embeddings for stone color, white edge proximity, and black edge proximity
-        if graph_input:
-            self.color_embedding = th.nn.Embedding(3, node_emb_dim)
-            input_size = board.size_square * node_emb_dim
-        else:
-            input_size = board.size_square
-
-        l1 = th.nn.Linear(input_size, mlp_hid)
-        l2 = th.nn.Linear(mlp_hid, mlp_hid)
-        l3 = th.nn.Linear(mlp_hid, board.size_square)
-        # Policy head (predict move probabilities)
-        self.policy_head = th.nn.Sequential(l1, th.nn.ReLU(), l2, th.nn.ReLU(), l3)
-
-        l4 = th.nn.Linear(input_size, mlp_hid)
-        l5 = th.nn.Linear(mlp_hid, mlp_hid)
-        l6 = th.nn.Linear(mlp_hid, 1)
-        # Value head (predict win probability)
-        self.value_head = th.nn.Sequential(
-            l4, th.nn.ReLU(), l5, th.nn.ReLU(), l6, th.nn.Tanh()
-        )
-
-        for layer in (l1, l2, l3, l4, l5, l6):
-            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="relu")
-            th.nn.init.zeros_(layer.bias)
-
-    def forward(self, x):
-        x = x.flatten(1, -1)
-        if self.graph_input:
-            x = self.color_embedding(x.to(th.int) + 1).flatten(1, 2)
-
-        policy_logits = self.policy_head(x).squeeze(-1)
-        value = self.value_head(x).squeeze(-1)
-
-        return policy_logits, value
 
 
 class ReplayBuffer:
@@ -258,23 +102,36 @@ def prepare_model():
         th.arange(replay_batch_size), board.size_square
     )
 
-    # model = HexGNN(
-    #     white_edge,
-    #     black_edge,
-    #     edge_types,
-    #     edge_index,
-    #     batch_index,
-    #     white_edge_replay,
-    #     black_edge_replay,
-    #     batch_index_replay,
-    # ).to(Device.XPU)
-    model = HexMLP().to(Device.XPU)
-    model.train()
-    optimizer = th.optim.Adam(model.parameters(), lr=lr)
+    gnn_shape = (36, 108, 216, 216)
+    mlp_shape = (128,)
+    batch_size = 64
+    actor_model = GraphSG(
+        node_count=board.size_square,
+        node_features=3,
+        output_size=board.size_square,
+        batch_size=batch_size,
+        num_envs=16,
+        gnn_shape=gnn_shape,
+        mlp_shape=mlp_shape,
+        edge_index=board.edge_index,
+    ).to(Device.XPU)
+    critic_model = GraphSG(
+        node_count=board.size_square,
+        node_features=3,
+        output_size=1,
+        batch_size=batch_size,
+        num_envs=16,
+        gnn_shape=gnn_shape,
+        mlp_shape=mlp_shape,
+        edge_index=board.edge_index,
+    ).to(Device.XPU)
+    actor_model.train()
+    critic_model.train()
+    actor_optimizer = th.optim.Adam(actor_model.parameters(), lr=lr)
+    critic_optimizer = th.optim.Adam(critic_model.parameters(), lr=lr * 1.5)
     # optimizer = th.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     # optimizer = th.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
-    optimizer_scheduler = LambdaLR(optimizer, get_learning_rate_decay())
-    return model, optimizer, optimizer_scheduler
+    return actor_model, critic_model, actor_optimizer, critic_optimizer
 
 
 def get_learning_rate_decay():
@@ -292,15 +149,21 @@ def get_adjusted_entropy(coef, step):
     return (2 * step / total_steps - 1 + ent_coef_shift) * coef
 
 
-def run(writer, model, optimizer):
-    env: gym.vector.VectorEnv = EpisodeStats(
-        gym.make_vec(
-            id=Logit7Env.__name__,
-            num_envs=n_envs,
-            color=False,
-            models=[None],
-            vectorization_mode=gym.VectorizeMode.SYNC,
-        )
+def run(writer):
+    env = MultiprocessEnv(
+        lambda seed, num_envs, color_, models=[]: EpisodeStats(
+            gym.make_vec(
+                id=Logit9GraphEnv.__name__,
+                num_envs=num_envs,
+                color=color_,
+                models=models,
+            ),
+            is_multiprocessed=True,
+        ),
+        2,
+        8,
+        action_shape=(1,),
+        color=False,
     )
     obs, _ = env.reset()
 
@@ -308,7 +171,8 @@ def run(writer, model, optimizer):
     for iteration, step in enumerate(
         range(1, total_steps + 1, n_envs * (1 + replay_runs))
     ):
-        optimizer.zero_grad()
+        actor_optimizer.zero_grad()
+        critic_optimizer.zero_grad()
 
         # t0 = perf_counter()
 
@@ -344,18 +208,26 @@ def run(writer, model, optimizer):
             train_on_replay(replay_buffer, step)
 
         if iteration % 10 == 0:
-            gradients = []
-            for param in model.parameters():
+            actor_gradients = []
+            for param in actor_model.parameters():
                 if param.grad is not None:
-                    gradients.append(param.grad.view(-1))  # Flatten the gradients
-            gradients = th.cat(gradients)  # Concatenate all gradients
-            gradient = gradients.norm()
+                    actor_gradients.append(param.grad.view(-1))
+            actor_gradients = th.cat(actor_gradients)
+            actor_gradient = actor_gradients.norm()
 
-            log_progress(writer, env, step, gradient)
+            critic_gradients = []
+            for param in critic_model.parameters():
+                if param.grad is not None:
+                    critic_gradients.append(param.grad.view(-1))
+            critic_gradients = th.cat(critic_gradients)
+            critic_gradient = critic_gradients.norm()
+
+            log_progress(env, step, actor_gradient, critic_gradient)
 
 
 def run_model(x):
-    policy_logits, value = model(x)
+    policy_logits = actor_model(x)
+    value = critic_model(x)
     batch_size = value.shape[0]
     batched_logits = policy_logits.reshape((batch_size, board.size_square))
     batched_probs = th.nn.functional.softmax(batched_logits, dim=1)
@@ -428,9 +300,10 @@ def train(
         batched_probs, value, target_policy, target_value, max_probs, step
     )
     loss.backward()
-    # th.nn.utils.clip_grad_norm_(model.parameters(), max_norm=100.0)
-    optimizer.step()
-    optimizer_scheduler.step()
+    # TODO: make sense of this function such that actor and critic have independent losses
+    actor_optimizer.step()
+    critic_optimizer.step()
+    # optimizer_scheduler.step()
 
 
 def train_on_replay(replay_buffer: ReplayBuffer, step: int):
@@ -504,7 +377,7 @@ def compute_loss(batched_probs, value, target_policy, target_value, max_probs, s
     )
 
 
-def log_progress(writer, env, step, gradient):
+def log_progress(env, step, actor_gradient, critic_gradient):
     actions = np.array(action_queue, dtype=np.float16)
     max_actions = np.array(max_action_queue, dtype=np.float16)
     # print(actions.size, max_actions.size)
@@ -532,8 +405,9 @@ def log_progress(writer, env, step, gradient):
     writer.add_scalar("losses/value_loss", np.mean(value_loss_queue), step)
     writer.add_scalar("misc/entropy", np.mean(entropy_queue), step)
     writer.add_scalar("misc/ent_coef", get_adjusted_entropy(ent_coef, step), step)
-    writer.add_scalar("misc/gradient", gradient, step)
-    writer.add_scalar("misc/lr", get_learning_rate_decay()(step), step)
+    writer.add_scalar("misc/actor_gradient", actor_gradient, step)
+    writer.add_scalar("misc/critic_gradient", critic_gradient, step)
+    # writer.add_scalar("misc/lr", get_learning_rate_decay()(step), step)
 
 
 def collect_worker_responses(boards_chunks: Iterable[tuple[HexBoard]]):
@@ -649,13 +523,17 @@ if __name__ == "__main__":
         process.start()
         workers.append((i, in_queue, out_queue))
 
-    model, optimizer, optimizer_scheduler = prepare_model()
+    actor_model, critic_model, actor_optimizer, critic_optimizer = prepare_model()
+    # actor_optimizer_scheduler = LambdaLR(actor_optimizer, get_learning_rate_decay())
+    # critic_optimizer_scheduler = LambdaLR(actor_optimizer, get_learning_rate_decay())
     try:
-        run(writer, model, optimizer)
+        run(writer, actor_model, critic_model, actor_optimizer, critic_optimizer)
     finally:
         writer.close()
 
         if not os.path.exists("custom"):
             os.mkdir("custom")
-        th.save(model.state_dict(), f"custom/custom-model-black.v0")
-        th.save(optimizer.state_dict(), f"custom/custom-optimizer-black.v0")
+        th.save(actor_model.state_dict(), f"custom/custom-model-black.v0")
+        th.save(critic_model.state_dict(), f"custom/custom-model-black.v0")
+        th.save(actor_optimizer.state_dict(), f"custom/custom-optimizer-black.v0")
+        th.save(critic_optimizer.state_dict(), f"custom/custom-optimizer-black.v0")

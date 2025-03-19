@@ -1,65 +1,102 @@
 [project]
 name = "hackable-engine"
-description = "Default template for PDM package"
+description = ""
 version = "0.1.0"
 authors = [
     { name = "Arek Kulczycki" },
     {name = "arekkulczycki", email = "ten.arek@gmail.com"},
 ]
 dependencies = [
-    "chess==1.9.*",
-    "nptyping==2.5.*",
-    "anytree==2.8.*",
+    "chess==1.11.*",
+#    "nptyping==2.5.*",
+    "anytree==2.12.*",
     "astar==0.99",
-    "torch==2.5.1+cxx11.abi",
-    "torchvision==0.20.1+cxx11.abi",
-    "torchaudio==2.5.1+cxx11.abi",
-    "intel-extension-for-pytorch==2.5.10+xpu",
-    "gymnasium>=1.0.0",
-    "matplotlib>=3.10.0",
-    "stable-baselines3>=2.5.0",
-    "tensorboard>=2.19.0",
-    "torch-geometric>=2.6.1",
-    "faster-fifo>=1.5.2",
-    "ipython>=8.32.0",
-    "pip>=25.0.1",
+    "intel-extension-for-pytorch==2.6.10+xpu",
+    "oneccl_bind_pt==2.6.0+xpu",
+    "torch==2.6.0+xpu",
+    "torchaudio==2.6.0+xpu",
+    "torchvision==0.21.0+xpu",
+    "gymnasium==1.1.*",
+    "matplotlib==3.10.*",
+#    "stable-baselines3>=2.5.0",
+    "tensorboard==2.19.*",
+    "torch-geometric==2.6.*",
+    "faster-fifo==1.5.2",
+    "janus==2.0.*",
 ]
 requires-python = "==3.12.8"
 readme = "README.md"
 license = {text = "MIT"}
 
+[project.optional-dependencies]
+dev = [
+    "ipython>=8.32.0",
+    "pip>=25.0.1",
+    "memray>=1.16.0",
+    "pympler>=1.1",
+]
+
 [options]
-package_dir = "arek_chess"
+package_dir = "hackable_engine"
 
 [tool.setuptools]
 packages = [
-    "arek_chess.board",
-    "arek_chess.board.chess",
-    "arek_chess.board.chess.mixins",
-    "arek_chess.board.hex",
-    "arek_chess.board.hex.mixins",
-    "arek_chess.common",
-    "arek_chess.common.memory",
-    "arek_chess.common.memory.adapters",
-    "arek_chess.common.queue",
-    "arek_chess.common.queue.adapters",
-    "arek_chess.common.queue.items",
-    "arek_chess.criteria",
-    "arek_chess.criteria.evaluation",
-    "arek_chess.criteria.evaluation.chess",
-    "arek_chess.criteria.evaluation.hex",
-    "arek_chess.criteria.selection",
-    "arek_chess.game_tree",
-    "arek_chess.workers",
+    "hackable_engine.board",
+    "hackable_engine.board.chess",
+    "hackable_engine.board.chess.mixins",
+    "hackable_engine.board.hex",
+    "hackable_engine.board.hex.mixins",
+    "hackable_engine.common",
+    "hackable_engine.common.memory",
+    "hackable_engine.common.memory.adapters",
+    "hackable_engine.common.queue",
+    "hackable_engine.common.queue.adapters",
+    "hackable_engine.common.queue.items",
+    "hackable_engine.criteria",
+    "hackable_engine.criteria.evaluation",
+    "hackable_engine.criteria.evaluation.chess",
+    "hackable_engine.criteria.evaluation.hex",
+    "hackable_engine.criteria.selection",
+    "hackable_engine.game_tree",
+    "hackable_engine.workers",
 ]
 
-[tool.pdm]
-distribution = false
-[tool.pdm.resolution.overrides]
-torch = "2.5.1+cxx11.abi"
+#[tool.pdm]
+#distribution = false
+#[tool.pdm.resolution.overrides]
+#torch = "2.5.1+cxx11.abi"
 
+#[[tool.pdm.source]]
+#name = "pytorch"
+#url = "https://download.pytorch.org/whl/xpu"
+#verify_ssl = true
+#
+#[[tool.pdm.source]]
+#name = "intel"
+#url = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+#verify_ssl = true
 
-[[tool.pdm.source]]
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/xpu"
+explicit = true
+#default = true
+
+[[tool.uv.index]]
 name = "intel"
 url = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
-verify_ssl = true
+explicit = true
+#default = true
+
+#[[tool.uv.index]]
+#name = "pypi"
+#url = "https://pypi.org/"
+#default = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }
+torchaudio = { index = "pytorch" }
+intel-extension-for-pytorch = { index = "intel" }
+oneccl_bind_pt = { index = "intel" }
+#intel-opencl-rt = { index = "intel" }

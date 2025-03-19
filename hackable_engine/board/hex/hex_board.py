@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from copy import copy
 from functools import reduce, lru_cache
@@ -15,10 +14,10 @@ from typing import (
     Optional,
 )
 
+import math
+import numpy as np
 import torch as th
 from astar import find_path
-from nptyping import Shape
-import numpy as np
 from numpy import asarray, empty, int8, mean, zeros, ndarray
 from torch_geometric.data import Data as GraphData, HeteroData
 
@@ -1029,7 +1028,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def get_neighbourhood(
         self, diameter: int = NEIGHBOURHOOD_DIAMETER, should_suppress: bool = False
-    ) -> ndarray[Shape, int8]:
+    ) -> ndarray:
         """
         Return a collection of states of cells around the cell that was played last.
 
@@ -1101,7 +1100,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def as_matrix(
         self, black_stone_val: FLOAT_TYPE = MINUS_ONE, empty_val: FLOAT_TYPE = ZERO
-    ) -> ndarray[Shape, FLOAT_TYPE]:
+    ) -> ndarray:
         """"""
 
         return self._as_matrix(
@@ -1120,8 +1119,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def as_matrix_legacy(
         self, black_stone_val: FLOAT_TYPE = MINUS_ONE, empty_val: FLOAT_TYPE = ZERO
-    ) -> ndarray[Shape, FLOAT_TYPE]:
-        array: ndarray[Shape, FLOAT_TYPE] = empty((1, self.size, self.size), dtype=FLOAT_TYPE)
+    ) -> ndarray:
+        array: ndarray = empty((1, self.size, self.size), dtype=FLOAT_TYPE)
         return self._as_matrix_to_array(
             array,
             self.size,
@@ -1134,13 +1133,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     # @numba.njit()
     @staticmethod
     def _as_matrix_to_array(
-        array: ndarray[Shape, FLOAT_TYPE],
+        array: ndarray,
         size: int,
         occupied_white: int,
         occupied_black: int,
         black_val: FLOAT_TYPE = MINUS_ONE,
         empty_val: FLOAT_TYPE = ZERO,
-    ) -> ndarray[Shape, FLOAT_TYPE]:
+    ) -> ndarray:
         """"""
 
         mask: BitBoard = 1
@@ -1165,7 +1164,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         occupied_black: int,
         black_val: FLOAT_TYPE = MINUS_ONE,
         empty_val: FLOAT_TYPE = ZERO,
-    ) -> ndarray[Shape, FLOAT_TYPE]:
+    ) -> ndarray:
         """"""
 
         mask: BitBoard = 1
@@ -1197,7 +1196,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     @staticmethod
     def _as_matrix_channelled(
-        array: ndarray[Shape, int8],
+        array: ndarray,
         size: int,
         occupied_white: int,
         occupied_black: int,
@@ -1219,7 +1218,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
     def _as_matrix_efficiency(
         self,
-        array: ndarray[Shape, int8],
+        array: ndarray,
         black_val: int8 = int8(MINUS_ONE),
         empty_val: int8 = int8(ZERO),
     ) -> ndarray:
@@ -1234,10 +1233,10 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     @staticmethod
     # @numba.njit()
     def _as_matrix_numba(
-        array: ndarray[Shape, int8],
+        array: ndarray,
         size: int,
-        o_white: ndarray[Shape, int8],
-        o_black: ndarray[Shape, int8],
+        o_white: ndarray,
+        o_black: ndarray,
         black_val: int8 = int8(MINUS_ONE),
         empty_val: int8 = int8(ZERO),
     ) -> ndarray:
@@ -1409,7 +1408,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         masks = [mask for mask in path if mask & self.unoccupied]
         return len(masks), masks
 
-    @lru_cache(maxsize=10_000_000)
+    @lru_cache(maxsize=4_000_000)
     def distance_missing_cached(
         self,
         mask_from: BitBoard,
@@ -1490,7 +1489,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         for pair in connection_points_pairs:
             path: list[BitBoard]
 
-            if un_oc.bit_count() >= self.size_square - 2 * self.size:
+            if un_oc.bit_count() >= self.size_square - self.size:
                 oc_co = self.occupied_co[color]
                 length, path = self.distance_missing_cached(*pair, color, un_oc, oc_co)
             else:
@@ -1827,7 +1826,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     def get_hetero_graph_node_features(self) -> ndarray:
         """
         Get node features, where the features are: stone color, edge of the board.
-        :return: tensor of shape (self.size_square, 1)
+        :return: tensor of shape (self.size_square, 3)
         """
 
         node_features = []
@@ -1848,6 +1847,71 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             blacks >>= 1
 
         return np.array([node_features], dtype=FLOAT_TYPE).transpose()
+
+    def get_hetero_graph_node_features_one_hot(self) -> ndarray:
+        """
+        Get node features, where the features are: stone color, edge of the board.
+        :return: tensor of shape (self.size_square, 9)
+        """
+
+        node_features = []
+
+        whites = self.occupied_co[True]
+        blacks = self.occupied_co[False]
+
+        for i in range(self.size_square):
+            row = i // self.size
+            col = i % self.size
+            (
+                is_empty,
+                is_white,
+                is_black,
+                is_no_edge_black,
+                is_top_edge_black,
+                is_bottom_edge_black,
+                is_no_edge_white,
+                is_left_edge_white,
+                is_right_edge_white,
+            ) = (0 for _ in range(9))
+            if blacks & 1:
+                is_black = 1
+            elif whites & 1:
+                is_white = 1
+            else:
+                is_empty = 1
+
+            if row == 0:
+                is_top_edge_black = 1
+            elif row == self.size - 1:
+                is_bottom_edge_black = 1
+            else:
+                is_no_edge_black = 1
+
+            if col == 0:
+                is_left_edge_white = 1
+            elif col == self.size - 1:
+                is_right_edge_white = 1
+            else:
+                is_no_edge_white = 1
+
+            node_features.append(
+                (
+                    is_empty,
+                    is_white,
+                    is_black,
+                    is_no_edge_black,
+                    is_top_edge_black,
+                    is_bottom_edge_black,
+                    is_no_edge_white,
+                    is_left_edge_white,
+                    is_right_edge_white,
+                )
+            )
+
+            whites >>= 1
+            blacks >>= 1
+
+        return np.array(node_features, dtype=FLOAT_TYPE)
 
     def get_hetero_graph_node_embedding(self) -> ndarray:
         """

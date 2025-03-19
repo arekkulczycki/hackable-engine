@@ -1,153 +1,147 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import os
 from argparse import ArgumentParser
+from collections import deque
 
 import numpy as np
 import torch as th
 import torch.nn as nn
 import torch.optim as optim
-import random
-from collections import deque
-import gymnasium as gym
+from gymnasium.vector import SyncVectorEnv
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
+
 from hackable_engine.board.hex.hex_board import HexBoard
+from hackable_engine.training.algorithms.util.replay_buffer import ReplayBuffer
 from hackable_engine.training.device import Device
-from hackable_engine.training.envs.hex.logit_7_graph_env import Logit7GraphEnv
-from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_env import (
-    MultiprocessEnv,
+from hackable_engine.training.envs.hex.logit_9_graph_env import Logit9GraphEnv
+from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_async_env import (
+    MultiprocessAsyncEnv,
 )
+from hackable_engine.training.envs.multiprocess_vector_env.util import EnvProgressData
 from hackable_engine.training.envs.wrappers.episode_stats import EpisodeStats
-from hackable_engine.training.models.mlp import MLP
+from hackable_engine.training.models.graph_gat import GraphGAT
 from hackable_engine.training.run import LOG_PATH
 
-num_episodes = 20000
-num_envs = 4
-num_workers = 4
-learning_rate = 1.5e-4
-batch_size = 64
-gamma = 0.9
-epsilon = 1.0
-epsilon_min = 0.01
-epsilon_decay = 0.9975
-target_update_frequency = 500
-buffer_size = 10000
+# th._dynamo.config.cache_size_limit = 16 * 1024 * 1024 * 1024
+# th._dynamo.config.suppress_errors = True
+# th.set_num_threads(1)
 
-action_queue = deque(maxlen=25 * num_envs)
-max_action_queue = deque(maxlen=num_envs)
-policy_loss_queue = deque(maxlen=5 * num_envs)
+board_size = 9
+# gnn_shape = (36, 108, 216, 216)  # for SGConv
+gnn_shape = (36, 72, 144, 216)  # for GATConv
+# gnn_shape = (32, 64, 128, 256)
+mlp_shape = (128,)
+num_episodes = 1800
+num_envs = 512
+num_workers = 4
+learning_rate = 2.4e-4
+batch_size = 64
+gamma_high = 0.95
+gamma_low = 0.05
+# gamma = 0.95
+epsilon = 0.5
+epsilon_min = 0.01
+target_update_frequency = 128
+buffer_size = 5000 * num_envs
+start_training = buffer_size * 0.01
+epochs = 8
+
+action_queue = deque(maxlen=board_size**2 * num_envs)
+# max_action_queue = deque(maxlen=num_envs)
+# policy_loss_queue = deque(maxlen=5 * num_envs)
 value_loss_queue = deque(maxlen=5 * num_envs)
 entropy_queue = deque(maxlen=5 * num_envs)
 
 
 def get_learning_rate_decay():
-    def wrapped(episode):
-        # return 1
-        # return max((1 - episode / num_episodes) ** 2, 0.01)
-        warm_up = 0.05
+    def reverse_sigmoid(episode):
+        x = episode / num_episodes
+        decay = -0.75 / (1 + np.e ** (-10 * (x - 0.1))) + 1
+        return decay
+
+    def warmup_sigmoid(episode):
+        warm_up = 0.15
         if episode / num_episodes < warm_up:
-            return 1 - (num_episodes * warm_up - episode) / (num_episodes * warm_up) / 3
-        return (1 - episode / ((1 - warm_up) * num_episodes) * 2 / 3) ** 2
+            x = episode / (warm_up * num_episodes)
+            return 0.66 / (1 + np.e ** (-10 * (x - 0.5))) + 0.34
+        x = (episode - warm_up * num_episodes) / ((1 - warm_up) * num_episodes)
+        decay = -0.66 / (1 + np.e ** (-8 * (x - 0.4))) + 1
+        return decay
 
-    return wrapped
+    def squared(episode):
+        warm_up = 0.2
+        if episode / num_episodes < warm_up:
+            return 1 - (num_episodes * warm_up - episode) / (num_episodes * warm_up) / 2
+        # fmt: off
+        return (1 - (episode-warm_up*num_episodes) / ((1-warm_up)*num_episodes) / 3 * 2) ** 2
+        # fmt: on
+
+    def one(episode):
+        return 1
+
+    return warmup_sigmoid
 
 
-class ReplayBuffer:
-    def __init__(self, capacity):
-        self.buffer = deque(maxlen=capacity)
-
-    def push(self, experience):
-        self.buffer.append(experience)
-
-    def sample(self, batch_size):
-        return random.sample(self.buffer, batch_size)
-
-    def size(self):
-        return len(self.buffer)
+def epsilon_decay(episode):
+    x = episode / num_episodes
+    hyperbolic = 1 / (1 + 99 * x**0.75)
+    # exponential = 0.995 ** episode
+    # return max((hyperbolic, exponential))
+    return hyperbolic
 
 
-def train():
+# def train():
+async def train():
     eps = epsilon
+    gamma = gamma_low
     episode_steps = board.size_square
-    for episode in range(num_episodes):
-        state, _ = envs.reset()
-        state = state.reshape(num_envs, board.size_square)
-
+    # if is_logit_env:
+    #     episode_steps = board.size_square
+    # else:
+    #     episode_steps = board.size_square**2 / 2 / epochs
+    state, _ = envs.reset()
+    state = state.copy()
+    # state = state.reshape(num_envs, board.size_square)
+    for episode in range(0, num_episodes):
+        print("episode", episode, "buffer", replay_buffer.size())
         steps = 0
         while True:
             steps += 1
             q_values = model(th.tensor(state, dtype=th.float32, device=Device.XPU))
-            action_queue.extend(q_values.flatten().tolist())
 
-            actions = np.array(
-                [
-                    (
-                        np.random.randint(0, board.size_square)
-                        if np.random.rand() < eps
-                        else q_values[i].argmax().item()
-                    )
-                    for i in range(len(state))
-                ]
+            if is_logit_env:
+                actions = get_logit_actions(eps, q_values)
+            else:
+                actions = get_seq_actions(eps, q_values)
+
+            # action_queue.extend(actions.flatten().tolist())
+            # state = run_env_sync(state, actions, gamma)
+            # loss, gamma, lr = run_train()
+            state, (loss, gamma, lr) = await asyncio.gather(
+                run_env(state, actions, gamma), run_train()
             )
-
-            next_state, reward, done, truncated, info = envs.step(actions)
-            next_state = next_state.reshape(num_envs, board.size_square)
-
-            for i in range(len(state)):
-                replay_buffer.push(
-                    (state[i], actions[i], reward[i], next_state[i], done[i])
-                )
-
-            state = next_state
-
-            if replay_buffer.size() > batch_size:
-                batch = replay_buffer.sample(batch_size)
-                states, actions, rewards, next_states, dones = zip(*batch)
-
-                states = th.tensor(
-                    np.array(states), dtype=th.float32, device=Device.XPU
-                )
-                actions = th.tensor(actions, dtype=th.float32, device=Device.XPU).to(
-                    th.int64
-                )
-                rewards = th.tensor(rewards, dtype=th.float32, device=Device.XPU)
-                next_states = th.tensor(
-                    np.array(next_states), dtype=th.float32, device=Device.XPU
-                )
-                dones = th.tensor(dones, dtype=th.float32, device=Device.XPU)
-
-                with th.no_grad():
-                    target_q_values = target_model(next_states)
-                    target = rewards + gamma * target_q_values.max(dim=1)[0] * (
-                        1 - dones
-                    )
-
-                q_values = model(states)
-                q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
-
-                loss = nn.MSELoss()(q_value, target)
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                # optimizer_scheduler.step()
-
-            if steps > episode_steps:
+            if loss is not None and steps > episode_steps:
                 value_loss_queue.append(loss.item())
 
-                probs = th.nn.functional.softmax(q_values.clone().detach())
-                entropy = -th.sum(probs * (probs + 1e-8).log(), dim=-1).mean()
+                if is_logit_env:
+                    entropy = get_logit_entropy(q_values)
+                else:
+                    entropy = get_seq_entropy(q_values)
                 entropy_queue.append(entropy.item())
 
                 break
 
         # reduce exploration
-        eps = max(epsilon_min, eps * epsilon_decay)
+        eps = max(epsilon_min, epsilon * epsilon_decay(episode))
+        optimizer_scheduler.step()
 
-        if episode % target_update_frequency == 0:
+        if episode % target_update_frequency == 4:
+            print("updating target")
             target_model.load_state_dict(model.state_dict())
 
-        if episode % 10 == 0:
+        if episode % 1 == 0:
             gradients = []
             for param in model.parameters():
                 if param.grad is not None:
@@ -155,42 +149,253 @@ def train():
             gradients = th.cat(gradients)
             gradient = gradients.norm()
 
-            log_progress(episode, episode_steps, gradient, eps)
+            log_progress(episode, episode_steps, gradient, eps, gamma, lr)
 
 
-def log_progress(episode, episode_steps, gradient, eps):
-    steps = episode * episode_steps
-    actions = np.array(action_queue)
-    writer.add_histogram(
-        "actions/probs",
-        actions,
-        bins="auto",
-        max_bins=100,
+async def run_env(states, actions, gamma):
+    next_states, rewards, dones, _, _ = await envs.step(actions)
+    # next_states = next_states.reshape(num_envs, board.size_square)
+
+    positions = np.random.randint(0, buffer_size, num_envs)
+    for position, i in zip(positions, range(num_envs)):
+        reward = rewards[i]
+        if gamma == gamma_high and reward < -1.0:
+            # likely the action was chosen at random, do not add to replay buffer
+            continue
+        replay_buffer.push(
+            position, (states[i], actions[i], reward, next_states[i], dones[i])
+        )
+
+    return next_states.copy()
+
+
+def run_env_sync(states, actions, gamma):
+    next_states, rewards, dones, _, _ = envs.step(actions)
+    # next_states = next_states.reshape(num_envs, board.size_square)
+
+    positions = np.random.randint(0, buffer_size, num_envs)
+    for position, i in zip(positions, range(num_envs)):
+        reward = rewards[i]
+        if gamma == gamma_high and reward < -1.0:
+            # likely the action was chosen at random, do not add to replay buffer
+            continue
+        replay_buffer.push(
+            position, (states[i], actions[i], reward, next_states[i], dones[i])
+        )
+
+    return next_states
+
+
+# def run_train():
+async def run_train():
+    loss = None
+    gamma = gamma_low
+    size = replay_buffer.size()
+    if size > start_training:
+        for i in range(epochs):
+            batch = replay_buffer.sample(batch_size)
+            states, actions, rewards, next_states, dones = zip(*batch)
+
+            gamma = calculate_gamma(np.array(rewards), np.array(dones))
+
+            states = th.tensor(np.array(states), dtype=th.float32, device=Device.XPU)
+            actions = th.tensor(actions, dtype=th.float32, device=Device.XPU)
+            if is_logit_env:
+                actions = actions.to(th.int64)
+            rewards = th.tensor(rewards, dtype=th.float32, device=Device.XPU)
+            next_states = th.tensor(
+                np.array(next_states), dtype=th.float32, device=Device.XPU
+            )
+            dones = th.tensor(dones, dtype=th.float32, device=Device.XPU)
+
+            if is_logit_env:
+                loss = get_logit_loss(
+                    states, next_states, rewards, dones, actions, gamma
+                )
+            else:
+                loss = get_seq_loss(states, next_states, rewards, dones, gamma)
+            # should_raise = False
+            # for name, tensor in [
+            #     ("states", states),
+            #     ("actions", actions),
+            #     ("rewards", rewards),
+            #     ("dones", dones),
+            #     ("next_states", next_states),
+            #     ("loss", loss),
+            # ]:
+            #     if th.any(th.isnan(tensor)):
+            #         print(name, tensor)
+            #         should_raise = True
+            # if should_raise:
+            #     raise ValueError("NAN")
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        del states, next_states, actions, rewards, dones
+    else:
+        print(f"{np.round(size / start_training * 100, 2)} %")
+    return loss, gamma, optimizer_scheduler.get_last_lr()[0]
+
+
+def get_logit_actions(eps, q_values):
+    return np.array(
+        [
+            (
+                np.random.randint(0, board.size_square)
+                if np.random.rand() < eps
+                else q_values[i].argmax().item()
+            )
+            for i in range(num_envs)
+        ],
+        dtype=np.float32,
     )
-    writer.add_scalar("episode/length", np.mean(envs.length_queue), steps)
-    writer.add_scalar("episode/fps", np.mean(envs.time_queue) * num_envs, steps)
-    # writer.add_scalar("rewards/mean_total", np.mean(env.return_queue), all_env_steps)
-    writer.add_scalar("rewards/mean_winner", np.mean(envs.winner_queue), steps)
-    writer.add_scalar("rewards/mean_final", np.mean(envs.reward_queue), steps)
-    # writer.add_scalar("losses/policy_loss", np.mean(policy_loss_queue), steps)
-    writer.add_scalar("losses/value_loss", np.mean(value_loss_queue), steps)
-    writer.add_scalar("misc/epsilon", eps, steps)
-    writer.add_scalar("misc/entropy", np.mean(entropy_queue), steps)
-    writer.add_scalar("misc/gradient", gradient, steps)
-    writer.add_scalar("misc/lr", get_learning_rate_decay()(episode), steps)
+
+
+def get_seq_actions(eps, q_values):
+    actions = to_probs(q_values.to(Device.CPU).detach())
+    for _ in range(int(num_envs * eps)):
+        actions[np.random.randint(0, num_envs - 1)] = np.random.rand()
+    return actions
+
+
+def get_logit_entropy(q_values):
+    probs = th.nn.functional.softmax(q_values.clone().detach(), dim=-1)
+    return -th.sum(probs * (probs + 1e-8).log(), dim=-1).mean()
+
+
+def get_seq_entropy(q_values):
+    return th.std(q_values)
+
+
+def get_logit_loss(states, next_states, rewards, dones, actions, gamma):
+    with th.no_grad():
+        target_q_values = target_model(next_states)
+        target = rewards + gamma * target_q_values.max(dim=1)[0] * (1 - dones)
+
+    q_values = model(states)
+    q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
+    loss = nn.functional.mse_loss(q_value, target)
+
+    if th.any(th.isnan(loss)):
+        print(q_value, target, actions, q_values, states)
+        raise ValueError("NAN")
+    return loss
+
+
+def get_seq_loss(states, next_states, rewards, dones, gamma):
+    actions = model(states).squeeze(1)
+    target_actions = target_model(next_states).squeeze(1).detach()
+    target = rewards + gamma * target_actions * (1 - dones)
+
+    return nn.functional.mse_loss(actions, target)
+
+
+def get_seq_advantage_loss(states, next_states, rewards, dones, gamma):
+    actions = model(states).squeeze(1)
+    target_actions = target_model(next_states).squeeze(1).detach()
+    target = rewards + gamma * target_actions * (1 - dones)
+    advantage = target - actions
+
+    loss = -(to_probs(actions) + 1e-8).log() * advantage
+    return loss.mean()
+
+
+def to_probs(actions):
+    return nn.functional.sigmoid(actions)
+    # mean = actions.mean()
+    # std = actions.std()
+    # return (nn.functional.tanh((actions - mean)/(std + 1e-8)) + 1) / 2
+
+
+def calculate_gamma(rewards, dones) -> float:
+    if not np.any(dones):
+        return gamma_high
+    mean_reward = (rewards * dones)[dones == 1].mean().item()
+    a = min(max(mean_reward + 1.25, 0), 1)
+    gamma = gamma_high * a + gamma_low * (1 - a)
+    return gamma
+
+
+def log_progress(episode, episode_steps, gradient, eps, gamma, lr):
+    # episode = episode * episode_steps  # * num_envs
+    """steps per env facilitates comparing efficiency of multi-env"""
+    # actions = np.array(action_queue)
+    # writer.add_histogram(
+    #     "actions/raw",
+    #     actions,
+    #     bins="auto",
+    #     max_bins=100,
+    # )
+    env_progress_data: EnvProgressData = envs.get_progress_data()
+    writer.add_scalar("episode/length", env_progress_data.length_mean, episode)
+    writer.add_scalar("episode/fps", env_progress_data.time_mean * num_envs, episode)
+    # writer.add_scalar("rewards/mean_total", env_progress_data.return_mean, episode)
+    writer.add_scalar("rewards/mean_winner", env_progress_data.winner_mean, episode)
+    writer.add_scalar("rewards/mean_final", env_progress_data.reward_mean, episode)
+    # writer.add_scalar("losses/policy_loss", np.mean(policy_loss_queue), episode)
+    writer.add_scalar("losses/value_loss", np.mean(value_loss_queue), episode)
+    writer.add_scalar("misc/gamma", gamma, episode)
+    writer.add_scalar("misc/epsilon", eps, episode)
+    writer.add_scalar("misc/entropy", np.mean(entropy_queue), episode)
+    writer.add_scalar("misc/gradient", gradient, episode)
+    writer.add_scalar("misc/lr", lr, episode)
 
 
 def setup_model():
-    model = MLP(
-        input_size=board.size_square, output_size=board.size_square, hidden_size=512
+    model = GraphGAT(
+        node_count=board.size_square,
+        node_features=9,
+        output_size=1,
+        batch_size=batch_size,
+        num_envs=num_envs,
+        gnn_shape=gnn_shape,
+        mlp_shape=mlp_shape,
+        edge_index=board.edge_index,
+        edge_types=nn.functional.one_hot(board.edge_types, num_classes=3),
+    ).to(Device.XPU)
+    target_model = GraphGAT(
+        node_count=board.size_square,
+        node_features=9,
+        output_size=1,
+        batch_size=batch_size,
+        num_envs=num_envs,
+        gnn_shape=gnn_shape,
+        mlp_shape=mlp_shape,
+        edge_index=board.edge_index,
+        edge_types=nn.functional.one_hot(board.edge_types, num_classes=3),
     ).to(Device.XPU)
 
-    target_model = MLP(
-        input_size=board.size_square, output_size=board.size_square, hidden_size=512
-    ).to(Device.XPU)
+    # model = th.compile(model)#, mode="max-autotune")
+    # target_model = th.compile(target_model)#, mode="max-autotune")
+    # model = GraphGAT(
+    #     input_size=3,
+    #     output_size=1,
+    #     batch_size=batch_size,
+    #     num_envs=num_envs,
+    #     graph_shape=(18, 72, 144, 216),
+    #     mlp_shape=(128, 128),
+    #     edge_index=board.edge_index,
+    #     edge_types=board.edge_types,
+    # ).to(Device.XPU)
+    # target_model = GraphGAT(
+    #     input_size=3,
+    #     output_size=1,
+    #     batch_size=batch_size,
+    #     num_envs=num_envs,
+    #     graph_shape=(18, 72, 144, 216),
+    #     mlp_shape=(128, 128),
+    #     edge_index=board.edge_index,
+    #     edge_types=board.edge_types,
+    # ).to(Device.XPU)
 
+    # optimizer = optim.SGD(
+    #     model.parameters(), lr=learning_rate, momentum=0.9, nesterov=True
+    # )
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    replay_buffer = ReplayBuffer(capacity=buffer_size)
+    replay_buffer = ReplayBuffer(
+        capacity=buffer_size, storage_type=ReplayBuffer.StorageType.LIST
+    )
     return model, target_model, optimizer, replay_buffer
 
 
@@ -223,49 +428,53 @@ def get_args():
 if __name__ == "__main__":
     args = get_args()
 
-    board_size = 7
     board = HexBoard("", size=board_size, use_graph=True)
     writer = SummaryWriter(
-        os.path.join(LOG_PATH, f"dqn_tensorboard", f"dqn_v{args.version}")
+        # os.path.join(LOG_PATH, f"dqn_tensorboard_{board_size}", f"dqn_v{args.version}")
+        os.path.join(LOG_PATH, f"dqn_tensorboard_{board_size}", f"dqn_v{args.version}")
     )
 
-    envs = EpisodeStats(
-        gym.make_vec(
-            id=Logit7GraphEnv.__name__,
-            num_envs=num_envs,
-            color=False,
-            models=[None],
-            vectorization_mode=gym.VectorizeMode.SYNC,
-        )
+    is_logit_env = True
+    envs = MultiprocessAsyncEnv(
+        lambda seed, num_envs, color_, models=[]: EpisodeStats(
+            SyncVectorEnv(
+                [
+                    lambda: Logit9GraphEnv(color=False, models=[None])
+                    for _ in range(num_envs)
+                ],
+                copy=False,
+            ),
+            is_multiprocessed=True,
+        ),
+        num_workers,
+        int(num_envs // num_workers),
+        action_shape=(1,),
+        color=False,
     )
-    # envs = MultiprocessEnv(
-    #     lambda seed, num_envs, color_, models=[]: EpisodeStats(
-    #         gym.make_vec(
-    #             id=Logit5GraphEnv.__name__,
-    #             num_envs=num_envs,
-    #             color=color_,
-    #             models=models,
-    #         ),
-    #         is_multiprocessed=True,
+    # envs = EpisodeStats(
+    #     SyncVectorEnv(
+    #         [lambda: Logit9GraphEnv(color=False, models=[None]) for _ in range(num_envs)],
+    #         copy=False,
     #     ),
-    #     num_workers,
-    #     int(num_envs // num_workers),
-    #     False,
+    #     is_multiprocessed=False,
     # )
     model, target_model, optimizer, replay_buffer = setup_model()
     optimizer_scheduler = LambdaLR(optimizer, get_learning_rate_decay())
     try:
-        train()
+        # with th.amp.autocast(Device.XPU.value, enabled=True, dtype=th.bfloat16):
+            # train()
+        asyncio.run(train())
     finally:
         writer.close()
 
         if not os.path.exists("simple_dqn"):
             os.mkdir("simple_dqn")
-        th.save(model.state_dict(), f"simple_dqn/dqn-model-black.v{args.version}")
+        color = "white" if args.color else "black"
+        th.save(model.state_dict(), f"simple_dqn/dqn-model-{color}.v{args.version}")
         th.save(
             target_model.state_dict(),
-            f"simple_dqn/dqn-target-model-black.v{args.version}",
+            f"simple_dqn/dqn-target-model-{color}.v{args.version}",
         )
         th.save(
-            optimizer.state_dict(), f"simple_dqn/dqn-optimizer-black.v{args.version}"
+            optimizer.state_dict(), f"simple_dqn/dqn-optimizer-{color}.v{args.version}"
         )

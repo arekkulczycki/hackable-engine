@@ -2,15 +2,14 @@
 from abc import ABC, abstractmethod
 from typing import Callable, Generic, Optional, Tuple, TypeVar
 
-from nptyping import NDArray, Shape, Single
-from numpy import dot, float32
+from numpy import dot, float32, ndarray
 
 from hackable_engine.board import GameBoardBase
 
 PENALIZER: float32 = float32(0.99)
 REVERSE_PENALIZER: float32 = float32(1.01)
 
-WeightsType = NDArray[Shape, Single]
+WeightsType = ndarray
 GameBoardT = TypeVar("GameBoardT", bound=GameBoardBase)
 
 

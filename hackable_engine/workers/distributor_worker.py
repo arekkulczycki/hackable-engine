@@ -3,7 +3,6 @@ import asyncio
 from typing import cast, Generic, List, Optional, Type, TypeVar
 
 import numpy as np
-from nptyping import NDArray
 
 from hackable_engine.board import GameBoardBase, GameMoveBase
 from hackable_engine.common.constants import (
@@ -168,7 +167,9 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
 
         # TODO: if it could be done efficiently, would be beneficial to check game over here
 
-        parent_board_repr = self.board.as_matrix().reshape(self.board.size, self.board.size)
+        parent_board_repr = self.board.as_matrix().reshape(
+            self.board.size, self.board.size
+        )
 
         only_forcing_moves = []
         eval_items = []
@@ -205,7 +206,7 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
 
         return self._items_with_scores(eval_items, scores)
 
-    def _get_eval_scores(self, board_matrices: List[NDArray]) -> List[np.float32]:
+    def _get_eval_scores(self, board_matrices: List[np.ndarray]) -> List[np.float32]:
         """"""
 
         return [
@@ -243,7 +244,9 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
         return eval_item
 
     @staticmethod
-    def _board_repr_from_parent(parent_board_repr: NDArray, move: GameMoveT) -> NDArray:
+    def _board_repr_from_parent(
+        parent_board_repr: np.ndarray, move: GameMoveT
+    ) -> np.ndarray:
         """"""
 
         board_repr = parent_board_repr.copy()

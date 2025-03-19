@@ -6,12 +6,10 @@ from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
 import gymnasium as gym
 import numpy as np
 from gymnasium.core import ActType, ObsType, RenderFrame
-from nptyping import NDArray
 
 from hackable_engine.board.hex.hex_board import HexBoard, Move
 from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.controller import Controller
-from hackable_engine.training.hyperparams import BATCH_SIZE
 
 # TODO: investigate why multiplying * 100 changed(equalized) proportion between
 #  mean_reward and mean_return, as they should have been proportional before too
@@ -41,7 +39,7 @@ class BaseEnv(gym.Env):
     action_space = gym.spaces.Box(MINUS_ONE, ONE, shape=(1,), dtype=FLOAT_TYPE)
 
     winner: Optional[bool]
-    obs: NDArray  # th.Tensor
+    obs: np.ndarray  # th.Tensor
 
     def __init__(
         self,
@@ -140,9 +138,9 @@ class BaseEnv(gym.Env):
         # must be last, because the policy should evaluate the first move candidate
         self.obs = self.observation_from_board()
         return self.obs, {
-            "action": 0.0,
+            "action": None,
             "winner": None,
-            "reward": 0.0,
+            "reward": None,
         }
 
     def _prepare_child_moves(self) -> None:
@@ -327,27 +325,36 @@ class BaseEnv(gym.Env):
         return FLOAT_TYPE(reward)
 
     def _get_intermediate_reward(self, n_moves):
+        return ZERO
         # return np.FLOAT_TYPE(self._get_intermediate_reward_absolute(n_moves))
-        return FLOAT_TYPE(self._get_intermediate_reward_relative(n_moves))
+        # return FLOAT_TYPE(self._get_intermediate_reward_relative(n_moves))
 
     def _get_intermediate_reward_absolute(self, n_moves):
         score = self._get_distance_score(n_moves, early_finish=False)
         self.last_intermediate_score = score
 
-        if not self.color:
-            score *= -1
+        if (self.color and score > 0) or (not self.color and score < 0):
+            return True
 
-        return score * ONE
+        return False
 
-    def _get_intermediate_reward_relative(self, n_moves):
+    def _get_intermediate_reward_relative_perf(self, n_moves) -> bool:
         score = self._get_distance_score_perf(n_moves, early_finish=False)
         relative_score = score - self.last_intermediate_score
         self.last_intermediate_score = score
 
         if (self.color and relative_score > 0) or (not self.color and relative_score < 0):
-            return relative_score * ONE
-        else:
-            return relative_score * MINUS_ONE
+            return True
+        return False
+
+    def _get_intermediate_reward_relative(self, n_moves) -> bool:
+        score = self._get_distance_score(n_moves, early_finish=False)
+        relative_score = score - self.last_intermediate_score
+        self.last_intermediate_score = score
+
+        if (self.color and relative_score > 0) or (not self.color and relative_score < 0):
+            return True
+        return False
 
     def _get_intersequence_reward(self, score):
         return ZERO
@@ -569,9 +576,9 @@ class BaseEnv(gym.Env):
         if force_stop_threshold == 0.5:
             return 1 / (1 + np.e ** (-24 * x + 18))
         else:
-            return 1 / (1 + np.e ** (-9 * x + 5))
+            return 1 / (1 + np.e ** (-13 * x + 9)) * 1.015
 
-    def observation_from_board(self) -> NDArray:
+    def observation_from_board(self) -> np.ndarray:
         """"""
 
         return self.controller.board.as_matrix().astype(FLOAT_TYPE)

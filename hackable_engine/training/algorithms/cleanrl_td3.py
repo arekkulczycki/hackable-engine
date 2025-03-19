@@ -9,7 +9,7 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import intel_extension_for_pytorch as ipex
+# import intel_extension_for_pytorch as ipex
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn import Conv2d
@@ -217,19 +217,21 @@ def run(version, policy_kwargs, env, env_name, device, loops, color):
         base_path,env_name,version,actor,target_actor,qf1,qf2,qf1_target,qf2_target,actor_optimizer,q_optimizer
     )  # fmt: on
     dtype = th.bfloat16  # TH_FLOAT_TYPE  # th.bfloat16
-    optim_actor, optim_actor_optimizer = ipex.optimize(
-        actor, optimizer=actor_optimizer, dtype=dtype
-    )
-    optim_actor = optim_actor.to(device)
-    optim_qf1, optim_q_optimizer = ipex.optimize(
-        qf1, optimizer=q_optimizer, dtype=dtype
-    )
-    q_optimizer_fake = optim.Adam(
-        list(qf1.parameters()) + list(qf2.parameters()), lr=LEARNING_RATE
-    )
-    optim_qf2, _ = ipex.optimize(qf2, optimizer=q_optimizer_fake, dtype=dtype)
-    # optim_actor, optim_qf1, optim_qf2 = actor, qf1, qf2
-    # optim_actor_optimizer, optim_q_optimizer = actor_optimizer, q_optimizer
+
+    # optim_actor, optim_actor_optimizer = ipex.optimize(
+    #     actor, optimizer=actor_optimizer, dtype=dtype
+    # )
+    # optim_actor = optim_actor.to(device)
+    # optim_qf1, optim_q_optimizer = ipex.optimize(
+    #     qf1, optimizer=q_optimizer, dtype=dtype
+    # )
+    # q_optimizer_fake = optim.Adam(
+    #     list(qf1.parameters()) + list(qf2.parameters()), lr=LEARNING_RATE
+    # )
+    # optim_qf2, _ = ipex.optimize(qf2, optimizer=q_optimizer_fake, dtype=dtype)
+
+    optim_actor, optim_qf1, optim_qf2 = actor, qf1, qf2
+    optim_actor_optimizer, optim_q_optimizer = actor_optimizer, q_optimizer
     # compilation crashes, ipex triton requires torch 2.7 https://github.com/intel/intel-xpu-backend-for-triton
     # compiled_target_actor = th.compile(target_actor)
     # compiled_qf1 = th.compile(qf1)

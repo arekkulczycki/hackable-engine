@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import random
+from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -14,19 +15,20 @@ from hackable_engine.board.hex.hex_board import HexBoard
 from hackable_engine.common.constants import TH_FLOAT_TYPE
 from hackable_engine.training.algorithms.util.replay_buffer import ReplayBuffer
 from hackable_engine.training.device import Device
+from hackable_engine.training.envs.multiprocess_vector_env.util import EnvProgressData
 from hackable_engine.training.hyperparams import *
-from hackable_engine.training.models.mixins.actor_seq_mixin import ActorMixin
-from hackable_engine.training.models.mixins.critic_seq_mixin import CriticMixin
+from hackable_engine.training.models.mixins.actor_logit_mixin import ActorLogitMixin
 from hackable_engine.training.models.graph_sg import GraphSG
 
 LOG_PATH = "./hackable_engine/training/logs/"
 
+logit_queue = deque(maxlen=N_ENVS * 81)
 
-class Critic(CriticMixin, GraphSG):
-    ...
 
-class Actor(ActorMixin, GraphSG):
-    ...
+class Critic(GraphSG): ...
+
+
+class Actor(ActorLogitMixin, GraphSG): ...
 
 
 def run(version, policy_kwargs, env, env_name, device):
@@ -103,22 +105,18 @@ def run(version, policy_kwargs, env, env_name, device):
     q_optimizer = optim.Adam(
         list(qf1.parameters()) + list(qf2.parameters()), lr=Q_LEARNING_RATE
     )
-    q_optimizer_scheduler = LambdaLR(
-        q_optimizer, get_learning_rate_decay()
-    )
+    q_optimizer_scheduler = LambdaLR(q_optimizer, get_learning_rate_decay())
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=LEARNING_RATE)
-    actor_optimizer_scheduler = LambdaLR(
-        actor_optimizer, get_learning_rate_decay()
-    )
+    actor_optimizer_scheduler = LambdaLR(actor_optimizer, get_learning_rate_decay())
     print("allocated MB", th.xpu.memory_allocated() / 1024 / 1024)
 
     env.single_observation_space.dtype = np.float32
     rb = ReplayBuffer(
         BUFFER_SIZE,
         env.single_observation_space,
-        # env.single_action_space,
+        env.single_action_space,
         # gym.spaces.Box(low=0, high=80, shape=(1,)),
-        gym.spaces.Box(low=0, high=1, shape=(81,)),
+        # gym.spaces.Box(low=0, high=1, shape=(81,)),
         device,
         n_envs=N_ENVS,
         handle_timeout_termination=False,
@@ -345,17 +343,16 @@ def train(
 
     obs, _ = env.reset(seed=1)
     for global_step in range(TOTAL_TIMESTEPS):
-        # ALGO LOGIC: put action logic here
         if global_step < LEARNING_STARTS:
             actions = np.array(
                 [env.single_action_space.sample() for _ in range(N_ENVS)]
             )
         else:
             th_obs = th.tensor(obs).to(device)
-            actions, _, _, _ = actor.get_action(th_obs)
+            actions, _, _, logits = actor.get_action(th_obs)
+            logit_queue.extend(logits.detach().cpu().flatten().numpy())
             actions = actions.detach().cpu().numpy()
 
-        actions = np.argmax(actions, axis=1)
         next_obs, rewards, terminations, truncations, infos = env.step(actions)
 
         real_next_obs = next_obs.copy()
@@ -369,87 +366,74 @@ def train(
         obs = next_obs  # for the next iteration
 
         if global_step > LEARNING_STARTS:
-            # t0 = perf_counter()
             data = rb.sample(BATCH_SIZE)
             with th.no_grad():
-                next_state_actions, next_state_log_pi, _, _ = actor.get_action(
+                _, next_state_log_pi, next_state_action_probs, _ = actor.get_action(
                     data.next_observations
                 )
-                qf1_next_target = qf1_target(data.next_observations, next_state_actions)
-                qf2_next_target = qf2_target(data.next_observations, next_state_actions)
-                min_qf_next_target = (
+                qf1_next_target = qf1_target(data.next_observations)
+                qf2_next_target = qf2_target(data.next_observations)
+
+                min_qf_next_target = next_state_action_probs * (
                     th.min(qf1_next_target, qf2_next_target) - alpha * next_state_log_pi
                 )
+
+                gamma = GAMMA
+                if not np.any(terminations):
+                    mean_reward = (rewards * terminations)[terminations == 1].mean().item()
+                    a = min(max(mean_reward + 1.5, 0), 1)
+                    gamma = GAMMA * a + 0.05 * (1 - a)
+
                 min_qf_next_target = min_qf_next_target.sum(dim=1)
                 next_q_value = data.rewards.flatten() + (
                     1 - data.dones.flatten()
-                ) * GAMMA * (min_qf_next_target).view(-1)
+                ) * gamma * (min_qf_next_target)
 
-            # t1 = perf_counter()
-            # t = t1 - t0
-            # if t > 0.5:
-            #     print("1 took", t)
-            qf1_a_values = qf1(data.observations, data.actions).view(-1)
-            qf2_a_values = qf2(data.observations, data.actions).view(-1)
+            qf1_values = qf1(data.observations)
+            qf2_values = qf2(data.observations)
+            qf1_values_gathered = qf1_values.gather(1, data.actions.long())
+            qf2_values_gathered = qf2_values.gather(1, data.actions.long())
+            qf1_a_values = qf1_values_gathered.view(-1)
+            qf2_a_values = qf2_values_gathered.view(-1)
             qf1_loss = F.mse_loss(qf1_a_values, next_q_value)
             qf2_loss = F.mse_loss(qf2_a_values, next_q_value)
             qf_loss = qf1_loss + qf2_loss
 
             q_optimizer.zero_grad()
             qf_loss.backward()
-            # TODO: check if still clipping still needed for gradient explosion
-            # th.nn.utils.clip_grad_norm_(qf1.parameters(), MAX_GRAD_NORM)
-            # th.nn.utils.clip_grad_norm_(qf2.parameters(), MAX_GRAD_NORM)
+
             q_optimizer.step()
             q_optimizer_scheduler.step()
 
-            # t2 = perf_counter()
-            # t = t2 - t1
-            # if t > 0.5:
-            #     print("2 took", t)
-            if global_step % POLICY_FREQUENCY == 0:  # TD 3 Delayed update support
-                for _ in range(
-                    POLICY_FREQUENCY
-                ):  # compensate for the delay by doing 'actor_update_interval' instead of 1
-                    pi, log_pi, _, std = actor.get_action(data.observations)
+            if global_step % POLICY_FREQUENCY == 0:
+                for _ in range(POLICY_FREQUENCY):
+                    _, log_pi, action_probs, _ = actor.get_action(data.observations)
 
-                    # t30 = perf_counter()
+                    with th.no_grad():
+                        qf1_values = qf1(data.observations)
+                        qf2_values = qf2(data.observations)
+                        min_qf_values = th.min(qf1_values, qf2_values)
 
-                    qf1_pi = qf1(data.observations, pi)
-                    qf2_pi = qf2(data.observations, pi)
-                    min_qf_pi = th.min(qf1_pi, qf2_pi)
-                    actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
-
-                    # t31 = perf_counter()
+                    actor_loss = (
+                        action_probs * ((alpha * log_pi) - min_qf_values)
+                    ).mean()
 
                     actor_optimizer.zero_grad()
                     actor_loss.backward()
-                    # TODO: check if still clipping still needed for gradient explosion
-                    # th.nn.utils.clip_grad_norm_(actor.parameters(), MAX_GRAD_NORM)
                     actor_optimizer.step()
                     actor_optimizer_scheduler.step()
 
-                    # t32 = perf_counter()
-
                     if ENTROPY_AUTOTUNE:
-                        with th.no_grad():
-                            _, log_pi, _, _ = actor.get_action(data.observations)
                         alpha_loss = (
-                            -log_alpha.exp() * (log_pi + target_entropy)
+                            action_probs.detach()
+                            * (-log_alpha.exp() * (log_pi + target_entropy).detach())
                         ).mean()
 
                         a_optimizer.zero_grad()
                         alpha_loss.backward()
                         a_optimizer.step()
-                        alpha = max(log_alpha.exp().item(), MIN_ENTROPY_ALPHA)
+                        alpha = log_alpha.exp().item()
 
-                    # t33 = perf_counter()
-                    # print("took", t33 - t32, t32 - t31, t31 - t30, t30 - t2)
-            # t3 = perf_counter()
-            # t = t3 - t2
-            # if t > 0.5:
-            #     print("3 took", t, t3full-t2, t30-t3full, t31-t30, t32-t31)
-            # update the target networks
             if global_step % TARGET_NETWORK_FREQUENCY == 0:
                 for param, target_param in zip(
                     qf1.parameters(), qf1_target.parameters()
@@ -463,38 +447,34 @@ def train(
                     target_param.data.copy_(
                         TAU * param.data + (1 - TAU) * target_param.data
                     )
-            # t4 = perf_counter()
-            # t = t4 - t3
-            # if t > 0.5:
-            #     print("4 took", t)
+
             if global_step % 100 == 0:
                 all_env_steps = global_step * N_ENVS
-                action_array = np.array(env.action_queue)
-                try:
+                env_progress_data: EnvProgressData = env.get_progress_data()
+                logit_array = np.array(logit_queue)
+                if logit_array.size > 1000:
                     writer.add_histogram(
                         "charts/actions",
-                        np.array(env.action_queue),
+                        logit_array,
                         bins="auto",
                         max_bins=100,
                     )
-                except:
-                    print("histogram failed, action array size:", action_array.shape)
                 writer.add_scalar(
-                    "charts/episode_len", np.mean(env.length_queue), all_env_steps
+                    "charts/episode_len", env_progress_data.length_mean, all_env_steps
                 )
                 writer.add_scalar(
                     "charts/episode_fps",
-                    np.mean(env.time_queue) * N_ENVS,
+                    env_progress_data.time_mean * N_ENVS,
                     all_env_steps,
                 )
                 writer.add_scalar(
-                    "charts/mean_return", np.mean(env.return_queue), all_env_steps
+                    "charts/mean_return", env_progress_data.return_mean, all_env_steps
                 )
                 writer.add_scalar(
-                    "charts/mean_winner", np.mean(env.winner_queue), all_env_steps
+                    "charts/mean_winner", env_progress_data.winner_mean, all_env_steps
                 )
                 writer.add_scalar(
-                    "charts/mean_reward", np.mean(env.reward_queue), all_env_steps
+                    "charts/mean_reward", env_progress_data.reward_mean, all_env_steps
                 )
                 # writer.add_scalar("charts/mean_reward", np.mean(final_rewards), global_step)
                 writer.add_scalar(
@@ -508,10 +488,22 @@ def train(
                 writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, all_env_steps)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), all_env_steps)
                 writer.add_scalar("losses/alpha", alpha, all_env_steps)
-                writer.add_scalar("misc/entropy(std)", std.mean(), all_env_steps)
-                writer.add_scalar("misc/actor_gradient", calculate_gradient(actor.parameters()), all_env_steps)
-                writer.add_scalar("misc/q1_gradient", calculate_gradient(qf1.parameters()), all_env_steps)
-                writer.add_scalar("misc/q2_gradient", calculate_gradient(qf2.parameters()), all_env_steps)
+                # writer.add_scalar("misc/entropy(std)", std.mean(), all_env_steps)
+                writer.add_scalar(
+                    "misc/actor_gradient",
+                    calculate_gradient(actor.parameters()),
+                    all_env_steps,
+                )
+                writer.add_scalar(
+                    "misc/q1_gradient",
+                    calculate_gradient(qf1.parameters()),
+                    all_env_steps,
+                )
+                writer.add_scalar(
+                    "misc/q2_gradient",
+                    calculate_gradient(qf2.parameters()),
+                    all_env_steps,
+                )
                 writer.add_scalar(
                     "misc/lr",
                     actor_optimizer_scheduler.get_last_lr()[0],
@@ -533,9 +525,7 @@ def calculate_gradient(params):
     gradients = []
     for param in params:
         if param.grad is not None:
-            gradients.append(
-                param.grad.view(-1)
-            )  # Flatten the gradients
+            gradients.append(param.grad.view(-1))  # Flatten the gradients
     gradients = th.cat(gradients)  # Concatenate all gradients
     return gradients.norm()
 

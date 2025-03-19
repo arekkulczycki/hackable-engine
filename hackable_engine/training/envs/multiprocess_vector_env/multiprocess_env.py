@@ -1,3 +1,6 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from collections import deque
 from multiprocessing import Lock, Process
 from queue import Empty, Full
@@ -9,13 +12,13 @@ from faster_fifo import Queue
 from gymnasium import Env
 from gymnasium.core import ObsType, ActType
 from gymnasium.vector.vector_env import VectorEnv
-from nptyping.ndarray import NDArray
+from numpy import ndarray
 
 from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.common.memory.adapters.shared_memory_adapter import (
     SharedMemoryAdapter,
 )
-from hackable_engine.training.hyperparams import BATCH_SIZE
+from hackable_engine.training.envs.multiprocess_vector_env.util import EnvProgressData
 
 
 class MultiprocessEnv:
@@ -25,20 +28,26 @@ class MultiprocessEnv:
         num_workers: int,
         env_per_worker: int,
         color: bool = True,
+        action_shape: tuple[int, ...] | None = None,
     ):
         self.make_local_env = make_env
         self.local_env = make_env(num_workers, env_per_worker, color)
+        self.local_env.unwrapped._rewards.astype(FLOAT_TYPE, copy=False)
         self.num_workers = num_workers
         self.env_per_worker = env_per_worker
         self.num_envs = num_workers * env_per_worker
+        self.action_shape = action_shape or self.single_action_space.shape
+        self.color = color
 
         self.shm = SharedMemoryAdapter()
         self.shm_data_key = "remote_env_{i}_{t}"
 
         self.queues = {i: Queue(max_size_bytes=1024 * 1024) for i in range(num_workers)}
+        # self.queues: dict[int, Queue[dict[str, str]]] = {i: Queue() for i in range(num_workers)}
         self.read_locks = {i: Lock() for i in range(num_workers)}
         self.write_locks = {i: Lock() for i in range(num_workers)}
         self.parent_queue = Queue(max_size_bytes=1024 * 1024)
+        # self.parent_queue: Queue[dict[str, Any]] = Queue()
         self.processes = {
             i: ProcessEnv(
                 i,
@@ -48,6 +57,7 @@ class MultiprocessEnv:
                 self.read_locks[i],
                 make_env,
                 env_per_worker,
+                self.action_shape,
                 color,
             )
             for i in range(num_workers)
@@ -62,7 +72,6 @@ class MultiprocessEnv:
         self.buf_blank = np.zeros((self.num_envs,), dtype=bool)
         self.buf_rews = np.zeros((self.num_envs,), dtype=FLOAT_TYPE)
         self.buf_infos = [{} for _ in range(self.num_envs)]
-        self.color = color
 
         self.time_queue = deque(maxlen=self.num_envs)
         self.return_queue = deque(maxlen=self.num_envs)
@@ -70,6 +79,15 @@ class MultiprocessEnv:
         self.winner_queue = deque(maxlen=self.num_envs)
         self.length_queue = deque(maxlen=self.num_envs)
         self.action_queue = deque(maxlen=self.num_envs * 4)
+
+    def get_progress_data(self) -> EnvProgressData:
+        return EnvProgressData(
+            time_mean=np.mean(self.time_queue),
+            length_mean=np.mean(self.length_queue),
+            return_mean=np.mean(self.return_queue),
+            reward_mean=np.mean(self.reward_queue),
+            winner_mean=np.mean(self.winner_queue),
+        )
 
     @property
     def single_observation_space(self):
@@ -84,8 +102,8 @@ class MultiprocessEnv:
         *,
         seed: int | None = None,
         options: dict[str, Any] | None = None,
-        env_ids: list[int] | None = None  # TODO: implement an option to reset a subset
-    ) -> tuple[ObsType, dict[str, Any]]:  # type: ignore
+        env_ids: list[int] | None = None,  # TODO: implement an option to reset a subset
+    ) -> tuple[ObsType, None]:  # type: ignore
         for process_id in range(self.num_workers):
             self.queues[process_id].put({"command": "reset"})
 
@@ -93,6 +111,7 @@ class MultiprocessEnv:
         while any(pending):
             try:
                 responses = self.parent_queue.get_many(block=True, timeout=1.0)
+                # responses = (self.parent_queue.get(block=True, timeout=1.0),)
             except Empty:
                 continue
             for response in responses:
@@ -110,20 +129,23 @@ class MultiprocessEnv:
 
                 pending[process_id] = False
 
-        return np.copy(self.buf_obs), {}
+        # return np.copy(self.buf_obs), {}
+        return self.buf_obs, None
 
     def step(
         self, actions: ActType
-    ) -> tuple[NDArray, NDArray, NDArray, NDArray, list[dict]]:
+    ) -> tuple[ndarray, ndarray, ndarray, ndarray, list[None]]:
         self.send_actions(actions)
         return self.step_wait()
 
-    def step_wait(self) -> tuple[NDArray, NDArray, NDArray, NDArray, list[dict]]:
+    def step_wait(self) -> tuple[ndarray, ndarray, ndarray, ndarray, list[None]]:
         # Wait for at least 1 env to be ready here
+        # self.tr.diff()
         responses = []
         while len(responses) < self.num_workers:
             try:
                 responses.extend(self.parent_queue.get_many(block=True, timeout=1.0))
+                # responses.extend((self.parent_queue.get(block=True, timeout=1.0),))
             except Empty:
                 continue
 
@@ -138,11 +160,11 @@ class MultiprocessEnv:
         # for t in threads:
         #     t.join()
         return (
-            self.buf_obs.copy(),
-            self.buf_rews.copy(),
-            self.buf_dones.copy(),
+            self.buf_obs,#.copy(),
+            self.buf_rews,#.copy(),
+            self.buf_dones,#.copy(),
             np.zeros((self.num_envs,), dtype=bool),  # self.buf_blank.copy(),
-            [{} for _ in range(self.num_envs)],  # deepcopy(self.buf_infos),
+            [None for _ in range(self.num_envs)],  # deepcopy(self.buf_infos),
         )
 
     def _get_data_from_process(self, process_id: int, has_episode: bool):
@@ -200,13 +222,14 @@ class MultiprocessEnv:
                 (self.env_per_worker,),
                 dtype=FLOAT_TYPE,
             )
-            act_info = self._get_data(
-                self.shm_data_key.format(i=process_id, t="act"),
-                (self.env_per_worker,),
-                dtype=FLOAT_TYPE,
-            )
+        #     act_info = self._get_data(
+        #         self.shm_data_key.format(i=process_id, t="act"),
+        #         (self.env_per_worker,),
+        #         dtype=np.int64,
+        #     )
+        #
+        # self.action_queue.extend(act_info)
 
-        self.action_queue.extend(act_info)
         for i in np.where(dones):
             if has_episode:
                 self.time_queue.extend(time_info[i])
@@ -222,12 +245,12 @@ class MultiprocessEnv:
         self.buf_dones[start:stop] = dones
         # self.buf_infos[start:stop] = info
 
-    def send_actions(self, action_list: NDArray) -> None:
+    def send_actions(self, action_list: ndarray) -> None:
         for process_id in range(self.num_workers):
             # Thread(target=self._send_action_to_process, args=(process_id, action_list)).start()
             self._send_action_to_process(process_id, action_list)
 
-    def _send_action_to_process(self, process_id: int, action_list: NDArray):
+    def _send_action_to_process(self, process_id: int, action_list: ndarray):
         actions = action_list[
             process_id * self.env_per_worker : (process_id + 1) * self.env_per_worker
         ]
@@ -254,10 +277,10 @@ class MultiprocessEnv:
         for process_id, p in self.processes.items():
             p.terminate()
 
-    def _get_data(self, key: str, shape: tuple[int, ...], dtype) -> NDArray:
+    def _get_data(self, key: str, shape: tuple[int, ...], dtype) -> ndarray:
         return np.ndarray(shape=shape, dtype=dtype, buffer=self.shm.get(key))
 
-    def _set_data(self, key: str, data: NDArray) -> None:
+    def _set_data(self, key: str, data: ndarray) -> None:
         self.shm.set(key, data.tobytes())
 
 
@@ -266,12 +289,13 @@ class ProcessEnv(Process):
     def __init__(
         self,
         process_id: int,
-        in_queue: Queue,
-        out_queue: Queue,
+        in_queue: Queue[dict[str, str]],
+        out_queue: Queue[dict[str, Any]],
         in_lock: Lock,
         out_lock: Lock,
         make_env,
         env_per_worker,
+        action_shape,
         color,
     ):
         super().__init__(daemon=True)
@@ -284,11 +308,13 @@ class ProcessEnv(Process):
         #     )
         self.process_id = process_id
         self.env_per_worker = env_per_worker
+        self.action_shape = action_shape
         self.in_queue = in_queue
         self.out_queue = out_queue
         self.in_lock = in_lock
         self.out_lock = out_lock
         self.env: VectorEnv = make_env(process_id, env_per_worker, color, [None])
+        self.env.unwrapped._rewards = self.env.unwrapped._rewards.astype(FLOAT_TYPE)
 
         self.shm = SharedMemoryAdapter()
         self.shm_data_key = f"remote_env_{process_id}_{{t}}"
@@ -350,18 +376,80 @@ class ProcessEnv(Process):
                     self.shm_data_key.format(t="rew"),
                     infos["episode"]["r"].astype(FLOAT_TYPE),
                 )
+            # print(infos["reward"].dtype)
             self._set_data(self.shm_data_key.format(t="win"), infos["winner"])
             self._set_data(self.shm_data_key.format(t="reww"), infos["reward"])
             self._set_data(self.shm_data_key.format(t="act"), infos["action"])
 
         self.out_queue.put({"process_id": self.process_id, "has_episode": has_episode})
 
-    def _get_actions(self) -> NDArray:
+    def _get_actions(self) -> ndarray:
         return np.ndarray(
-            shape=(self.env_per_worker, *self.env.single_action_space.shape),
+            shape=(self.env_per_worker, *self.action_shape),
             dtype=FLOAT_TYPE,
             buffer=self.shm.get(self.shm_actions_key),
         )
 
-    def _set_data(self, key: str, data: NDArray) -> None:
+    def _set_data(self, key: str, data: ndarray) -> None:
         self.shm.set(key, data.tobytes())
+
+
+class MultiprocessEnvRunner(Process):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(daemon=True)
+        self.env = MultiprocessEnv(*args, **kwargs)
+        # TODO: must expose the monitoring queues, maybe through shm?
+        self.in_queue: Queue = Queue()
+        self.out_queue: Queue = Queue()
+
+    def run(self):
+        should_get = True
+        while True:
+            if should_get:
+                try:
+                    d = self.in_queue.get(block=True, timeout=1.0)
+                except Empty:
+                    continue
+            if d["command"] == "reset":
+                try:
+                    self.out_queue.put(self.env.reset())
+                except Full:
+                    sleep(1)
+                    should_get = False
+                    print(f"runner: out queue full")
+                    continue
+                else:
+                    should_get = True
+            elif d["command"] == "step":
+                try:
+                    self.out_queue.put(self.env.step(d["actions"]))
+                except Full:
+                    sleep(1)
+                    should_get = False
+                    print(f"runner: out queue full")
+                    continue
+                else:
+                    should_get = True
+            elif d["command"] == "progress":
+                try:
+                    self.out_queue.put(self.env.get_progress_data())
+                except Full:
+                    sleep(1)
+                    should_get = False
+                    print(f"runner: out queue full")
+                    continue
+                else:
+                    should_get = True
+
+    def reset(self, *args, **kwargs):
+        self.in_queue.put({"command": "reset"})
+        return self.out_queue.get(block=True)
+
+    def step(self, actions):
+        self.in_queue.put({"command": "step", "actions": actions})
+        return self.out_queue.get(block=True)
+
+    def get_progress_data(self):
+        self.in_queue.put({"command": "progress"})
+        return self.out_queue.get(block=True)

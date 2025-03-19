@@ -2,8 +2,6 @@
 from struct import pack, unpack
 from typing import Any, Optional
 
-from nptyping import NDArray
-
 from numpy import float32, ndarray
 
 from hackable_engine.board import GameBoardBase
@@ -46,7 +44,7 @@ class MemoryManager:
         return ndarray(shape=(size,), dtype=float32, buffer=action_bytes)
 
     def set_action(self, action: WeightsType, size: int) -> None:
-        data: NDArray = ndarray(shape=(size,), dtype=float32)
+        data: ndarray = ndarray(shape=(size,), dtype=float32)
         data[:] = (*action,)
 
         self.memory.set("action", data.tobytes())

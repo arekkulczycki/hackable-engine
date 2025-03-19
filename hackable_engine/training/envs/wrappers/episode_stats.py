@@ -47,7 +47,7 @@ class EpisodeStats(RecordEpisodeStatistics):
         """Resets the environment using kwargs and resets the episode returns and lengths."""
         obs, info = super().reset(seed=seed, options=options)
 
-        # self.episode_start_times = np.full(self.num_envs, time.perf_counter())
+        self.episode_start_times = np.full(self.num_envs, time.perf_counter())
         self.episode_returns = np.zeros(self.num_envs, dtype=FLOAT_TYPE)
         self.episode_lengths = np.zeros(self.num_envs, dtype=int)
         self.prev_dones = np.zeros(self.num_envs, dtype=bool)

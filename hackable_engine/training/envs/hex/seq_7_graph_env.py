@@ -35,11 +35,28 @@ class Seq7GraphEnv(Seq7Env):
         ]
         # fmt: on
 
+    def reset(
+        self,
+        *,
+        seed = None,
+        options = None,
+    ):
+        obs, _ = super().reset(seed=seed, options=options)
+        return obs, {
+            "action": FLOAT_TYPE(0.0),
+            "winner": None,
+            "reward": FLOAT_TYPE(0.0),
+        }
+
+    def render(self, mode="human", close=False):
+        # return super().render()
+        return ""
+
     def observation_from_board(self) -> np.ndarray:
         return self.controller.board.get_homo_graph_node_features()
 
 
 register(
-    id="Raw7GraphEnv",
-    entry_point="hackable_engine.training.envs.hex.raw_7_graph_env:Raw7GraphEnv",
+    id="Seq7GraphEnv",
+    entry_point="hackable_engine.training.envs.hex.seq_7_graph_env:Seq7GraphEnv",
 )

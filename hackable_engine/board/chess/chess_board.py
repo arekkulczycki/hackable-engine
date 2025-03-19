@@ -4,18 +4,64 @@ from __future__ import annotations
 import collections
 import sys
 from functools import reduce
-from typing import (Counter, Dict, Hashable, Iterator, List, Literal, Optional, Tuple, Union, cast)
+from typing import (
+    Counter,
+    Dict,
+    Hashable,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
 
-from chess import (BB_ALL, BB_DARK_SQUARES, BB_DIAG_ATTACKS, BB_DIAG_MASKS, BB_FILE_ATTACKS, BB_FILE_MASKS,
-                   BB_KING_ATTACKS, BB_KNIGHT_ATTACKS, BB_LIGHT_SQUARES, BB_PAWN_ATTACKS, BB_RANK_1, BB_RANK_3,
-                   BB_RANK_4, BB_RANK_5, BB_RANK_6, BB_RANK_8, BB_RANK_ATTACKS, BB_RANK_MASKS, BISHOP, Bitboard, Board,
-                   Color, KING, KNIGHT, Move, Outcome, PAWN, PieceType, QUEEN, ROOK, Square, Termination, _BoardState,
-                   scan_reversed, square_distance, square_file, square_rank)
-from nptyping import Int, NDArray, Shape, Single
-from numpy import empty, float32, zeros
+from chess import (
+    BB_ALL,
+    BB_DARK_SQUARES,
+    BB_DIAG_ATTACKS,
+    BB_DIAG_MASKS,
+    BB_FILE_ATTACKS,
+    BB_FILE_MASKS,
+    BB_KING_ATTACKS,
+    BB_KNIGHT_ATTACKS,
+    BB_LIGHT_SQUARES,
+    BB_PAWN_ATTACKS,
+    BB_RANK_1,
+    BB_RANK_3,
+    BB_RANK_4,
+    BB_RANK_5,
+    BB_RANK_6,
+    BB_RANK_8,
+    BB_RANK_ATTACKS,
+    BB_RANK_MASKS,
+    BISHOP,
+    Bitboard,
+    Board,
+    Color,
+    KING,
+    KNIGHT,
+    Move,
+    Outcome,
+    PAWN,
+    PieceType,
+    QUEEN,
+    ROOK,
+    Square,
+    Termination,
+    _BoardState,
+    scan_reversed,
+    square_distance,
+    square_file,
+    square_rank,
+)
+from numpy import empty, float32, zeros, ndarray
 
 from hackable_engine.board import GameBoardBase
-from hackable_engine.board.chess.serializers.chess_board_serializer_mixin import ChessBoardSerializerMixin
+from hackable_engine.board.chess.serializers.chess_board_serializer_mixin import (
+    ChessBoardSerializerMixin,
+)
 
 # fmt: off
 SQUARES = [
@@ -304,7 +350,7 @@ class ChessBoard(Board, ChessBoardSerializerMixin, GameBoardBase):
 
         return 0
 
-    def get_square_control_map_for_both(self) -> Tuple[NDArray[Shape["64"], Int], NDArray[Shape["64"], Int]]:
+    def get_square_control_map_for_both(self) -> tuple[ndarray, ndarray]:
         """
         Returns list of 64 values, accumulated attacks on each square.
         """
@@ -350,8 +396,12 @@ class ChessBoard(Board, ChessBoardSerializerMixin, GameBoardBase):
                 file_m,
                 diag_m,
             )
-            attackers_white = get_bit_count((attackers_both | (pawn_att_white & pawns)) & oc_co_white)
-            attackers_black = get_bit_count((attackers_both | (pawn_att_black & pawns)) & oc_co_black)
+            attackers_white = get_bit_count(
+                (attackers_both | (pawn_att_white & pawns)) & oc_co_white
+            )
+            attackers_black = get_bit_count(
+                (attackers_both | (pawn_att_black & pawns)) & oc_co_black
+            )
             total = attackers_white - attackers_black
             arr[square] = total
             if attackers_white and turn:
@@ -386,7 +436,7 @@ class ChessBoard(Board, ChessBoardSerializerMixin, GameBoardBase):
             | (diag_att[diag_mask & occupied] & q_and_b)
         )
 
-    def get_empty_square_map(self) -> NDArray[Shape["64"], Int]:
+    def get_empty_square_map(self) -> ndarray:
         """
         Returns list of 64 values, each is empty or not.
         """
@@ -398,9 +448,7 @@ class ChessBoard(Board, ChessBoardSerializerMixin, GameBoardBase):
             arr[square] = (non_occupied >> square) & 1
         return arr
 
-    def get_occupied_square_value_map(
-        self, color: Color
-    ) -> NDArray[Shape["64"], Single]:
+    def get_occupied_square_value_map(self, color: Color) -> ndarray:
         """
         Returns list of 64 values, value of a piece on each square.
 
@@ -435,7 +483,7 @@ class ChessBoard(Board, ChessBoardSerializerMixin, GameBoardBase):
 
     def get_occupied_square_value_map_for_both(
         self,
-    ) -> Tuple[NDArray[Shape["64"], Single], NDArray[Shape["64"], Single]]:
+    ) -> tuple[ndarray, ndarray]:
         """"""
 
         pawns = self.pawns
@@ -501,7 +549,7 @@ class ChessBoard(Board, ChessBoardSerializerMixin, GameBoardBase):
     @staticmethod
     def generate_king_proximity_map_normalized(
         king: Square,
-    ) -> NDArray[Shape["64"], Single]:
+    ) -> ndarray:
         """
         Returns list of 64 values, each distance from king.
         Normalized so that:
@@ -516,9 +564,7 @@ class ChessBoard(Board, ChessBoardSerializerMixin, GameBoardBase):
             arr[square] = float32(square_distance(square, king))
         return (float32(7) - arr) / float32(7)
 
-    def get_king_proximity_map_normalized(
-        self, color: Color
-    ) -> NDArray[Shape["64"], Single]:
+    def get_king_proximity_map_normalized(self, color: Color) -> ndarray:
         king: Bitboard = self.kings & self.occupied_co[color]
         return KING_PROXIMITY_MAPS_NORMALIZED[king]
 
@@ -1017,7 +1063,7 @@ class ChessBoard(Board, ChessBoardSerializerMixin, GameBoardBase):
         return ",".join([move.uci() for move in self.move_stack])
 
 
-KING_PROXIMITY_MAPS_NORMALIZED: Dict[Bitboard, NDArray[Shape["64"], Single]] = {
+KING_PROXIMITY_MAPS_NORMALIZED: dict[Bitboard, ndarray] = {
     mask: ChessBoard.generate_king_proximity_map_normalized(square)
     for mask, square in zip(BB_SQUARES, SQUARES)
 }
