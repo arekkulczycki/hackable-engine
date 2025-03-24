@@ -3,7 +3,6 @@ from random import choices
 
 import gymnasium as gym
 import numpy as np
-from torch.nn import functional as F
 from gymnasium.envs.registration import register
 
 from hackable_engine.board.hex.move import Move
@@ -108,6 +107,7 @@ class Logit7GraphEnv(Seq7Env):
         win_percentage = (
             np.mean(self.results) if len(self.results) >= 4 else 0.9  # 0.4
         )
+        # win_percentage = win_percentage ** 0.5
         # square = (1 - win_percentage) ** 2
         # if choices([True, False], weights=((1 - win_percentage) / 4, 0.75 + win_percentage/4)):
         if choices([True, False], weights=((1 - win_percentage) * 99/100, 0.01 + win_percentage)):

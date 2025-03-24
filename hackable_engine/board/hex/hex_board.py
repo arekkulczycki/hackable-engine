@@ -1098,24 +1098,15 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return array
 
-    def as_matrix(
-        self, black_stone_val: FLOAT_TYPE = MINUS_ONE, empty_val: FLOAT_TYPE = ZERO
-    ) -> ndarray:
+    def as_matrix(self) -> ndarray:
         """"""
 
         return self._as_matrix(
-            self.size, self.size_square, self.occupied_co[True], self.occupied_co[False]
+            self.size,
+            self.size_square,
+            self.occupied_co[True],
+            self.occupied_co[False],
         )
-        # array: ndarray[Shape, FLOAT_TYPE] = empty((1, self.size, self.size), dtype=FLOAT_TYPE)
-        #
-        # return self._as_matrix(
-        #     array,
-        #     self.size,
-        #     self.occupied_co[True],
-        #     self.occupied_co[False],
-        #     black_stone_val,
-        #     empty_val,
-        # )
 
     def as_matrix_legacy(
         self, black_stone_val: FLOAT_TYPE = MINUS_ONE, empty_val: FLOAT_TYPE = ZERO
@@ -1162,25 +1153,24 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         size_square: int,
         occupied_white: int,
         occupied_black: int,
-        black_val: FLOAT_TYPE = MINUS_ONE,
-        empty_val: FLOAT_TYPE = ZERO,
     ) -> ndarray:
         """"""
 
         mask: BitBoard = 1
-        array: list[BitBoard] = []
+        array: list[tuple[int, int, int]] = []
 
         for i in range(size_square):
+            empty, white, black = 0, 0, 0
             if mask & occupied_black:
-                value = black_val
+                black = 1
             elif mask & occupied_white:
-                value = ONE
+                white = 1
             else:
-                value = empty_val
-            array.append(value)
+                empty = 1
+            array.append((empty, white, black))
             mask <<= 1
 
-        return np.array(array, dtype=FLOAT_TYPE).reshape((1, size, size))
+        return np.array(array, dtype=FLOAT_TYPE).reshape((3, size, size))
 
     def as_matrix_channelled(self) -> ndarray:
         """"""
@@ -1814,6 +1804,33 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             blacks >>= 1
 
         return np.array([node_features], dtype=FLOAT_TYPE).transpose()
+
+    def get_homo_graph_node_features_one_hot(self) -> ndarray:
+        """
+        Get node features, where the only feature is stone color (or lack thereof), but one-hot encoded.
+        :return: tensor of shape (self.size_square, 3)
+        """
+
+        node_features = []
+
+        whites = self.occupied_co[True]
+        blacks = self.occupied_co[False]
+
+        for _ in range(self.size_square):
+            is_empty, is_white, is_black = 0, 0, 0
+            if whites & 1:
+                is_white = 1
+            elif blacks & 1:
+                is_black = 1
+            else:
+                is_empty = 1
+
+            node_features.append((is_empty, is_white, is_black))
+
+            whites >>= 1
+            blacks >>= 1
+
+        return np.array(node_features, dtype=FLOAT_TYPE)
 
     def to_hetero_graph_data(self) -> HeteroData:
         """"""

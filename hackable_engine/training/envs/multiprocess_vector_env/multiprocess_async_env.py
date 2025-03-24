@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-import asyncio
 from threading import Thread
 from typing import Callable, Any
 
 import janus
+import numpy as np
 from gymnasium import Env
-from gymnasium.core import ObsType
 
 from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_env import (
-    MultiprocessEnv, MultiprocessEnvRunner, EnvProgressData,
+    MultiprocessEnv,
+    EnvProgressData,
 )
 
 
@@ -41,10 +41,12 @@ class MultiprocessAsyncEnv:
         seed: int | None = None,
         options: dict[str, Any] | None = None,
         env_ids: list[int] | None = None,  # TODO: implement an option to reset a subset
-    ) -> tuple[ObsType, dict[str, Any]]:  # type: ignore
+    ) -> list[np.ndarray]:  # type: ignore
         return self.env.reset(seed=seed, options=options, env_ids=env_ids)
 
-    async def step(self, actions):
+    async def step(
+        self, actions
+    ) -> tuple[np.ndarray, list[np.float32], list[bool], list[bool], list[None]]:
         await self.out_queue.async_q.put(actions)
         return await self.in_queue.async_q.get()
 
@@ -78,3 +80,7 @@ class MultiprocessAsyncEnv:
     @property
     def action_queue(self):
         return self.env.action_queue
+
+    @property
+    def single_observation_space(self):
+        return self.env.single_observation_space

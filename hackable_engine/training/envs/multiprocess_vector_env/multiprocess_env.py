@@ -10,7 +10,7 @@ from typing import Callable, Any
 import numpy as np
 from faster_fifo import Queue
 from gymnasium import Env
-from gymnasium.core import ObsType, ActType
+from gymnasium.core import ActType
 from gymnasium.vector.vector_env import VectorEnv
 from numpy import ndarray
 
@@ -42,11 +42,11 @@ class MultiprocessEnv:
         self.shm = SharedMemoryAdapter()
         self.shm_data_key = "remote_env_{i}_{t}"
 
-        self.queues = {i: Queue(max_size_bytes=1024 * 1024) for i in range(num_workers)}
+        self.queues = {i: Queue(max_size_bytes=10 * 1024 * 1024) for i in range(num_workers)}
         # self.queues: dict[int, Queue[dict[str, str]]] = {i: Queue() for i in range(num_workers)}
         self.read_locks = {i: Lock() for i in range(num_workers)}
         self.write_locks = {i: Lock() for i in range(num_workers)}
-        self.parent_queue = Queue(max_size_bytes=1024 * 1024)
+        self.parent_queue = Queue(max_size_bytes=num_workers * 10 * 1024 * 1024)
         # self.parent_queue: Queue[dict[str, Any]] = Queue()
         self.processes = {
             i: ProcessEnv(
@@ -76,7 +76,7 @@ class MultiprocessEnv:
         self.time_queue = deque(maxlen=self.num_envs)
         self.return_queue = deque(maxlen=self.num_envs)
         self.reward_queue = deque(maxlen=self.num_envs)
-        self.winner_queue = deque(maxlen=self.num_envs)
+        self.winner_queue = deque(maxlen=self.num_envs)  # of np.float16 type
         self.length_queue = deque(maxlen=self.num_envs)
         self.action_queue = deque(maxlen=self.num_envs * 4)
 
@@ -103,7 +103,7 @@ class MultiprocessEnv:
         seed: int | None = None,
         options: dict[str, Any] | None = None,
         env_ids: list[int] | None = None,  # TODO: implement an option to reset a subset
-    ) -> tuple[ObsType, None]:  # type: ignore
+    ) -> list[ndarray]:  # type: ignore
         for process_id in range(self.num_workers):
             self.queues[process_id].put({"command": "reset"})
 
@@ -129,16 +129,16 @@ class MultiprocessEnv:
 
                 pending[process_id] = False
 
-        # return np.copy(self.buf_obs), {}
-        return self.buf_obs, None
+        # return np.split(self.buf_obs, self.num_envs, axis=0)
+        return [element.copy() for element in np.split(self.buf_obs, self.num_envs, axis=0)]
 
     def step(
         self, actions: ActType
-    ) -> tuple[ndarray, ndarray, ndarray, ndarray, list[None]]:
+    ) -> tuple[list[ndarray], list[np.float32], list[bool], list[bool], list[None]]:
         self.send_actions(actions)
         return self.step_wait()
 
-    def step_wait(self) -> tuple[ndarray, ndarray, ndarray, ndarray, list[None]]:
+    def step_wait(self) -> tuple[list[ndarray], list[np.float32], list[bool], list[bool], list[None]]:
         # Wait for at least 1 env to be ready here
         # self.tr.diff()
         responses = []
@@ -160,10 +160,11 @@ class MultiprocessEnv:
         # for t in threads:
         #     t.join()
         return (
-            self.buf_obs,#.copy(),
-            self.buf_rews,#.copy(),
-            self.buf_dones,#.copy(),
-            np.zeros((self.num_envs,), dtype=bool),  # self.buf_blank.copy(),
+            # np.split(self.buf_obs, self.num_envs, axis=0),#.copy(),
+            [element.copy() for element in np.split(self.buf_obs, self.num_envs, axis=0)],
+            self.buf_rews.tolist(),#.copy(),
+            self.buf_dones.tolist(),#.copy(),
+            [False for _ in range(self.num_envs)],  # self.buf_blank.copy(),
             [None for _ in range(self.num_envs)],  # deepcopy(self.buf_infos),
         )
 
@@ -215,7 +216,7 @@ class MultiprocessEnv:
             win_info = self._get_data(
                 self.shm_data_key.format(i=process_id, t="win"),
                 (self.env_per_worker,),
-                dtype=bool,
+                dtype=np.float16,
             )
             reww_info = self._get_data(
                 self.shm_data_key.format(i=process_id, t="reww"),
@@ -376,8 +377,7 @@ class ProcessEnv(Process):
                     self.shm_data_key.format(t="rew"),
                     infos["episode"]["r"].astype(FLOAT_TYPE),
                 )
-            # print(infos["reward"].dtype)
-            self._set_data(self.shm_data_key.format(t="win"), infos["winner"])
+            self._set_data(self.shm_data_key.format(t="win"), infos["winner"].astype(np.float16))
             self._set_data(self.shm_data_key.format(t="reww"), infos["reward"])
             self._set_data(self.shm_data_key.format(t="act"), infos["action"])
 

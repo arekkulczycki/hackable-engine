@@ -2,13 +2,13 @@
 import torch as th
 from torch import nn
 from torch.nn import functional as F
-from torch_geometric.nn import GATv2Conv
+from torch_geometric.nn import RGCNConv, FastRGCNConv
 
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
 
 
-class GraphGAT(BaseModule):
+class GraphRGCN(BaseModule):
 
     def __init__(
         self,
@@ -18,7 +18,6 @@ class GraphGAT(BaseModule):
         batch_size,
         num_envs,
         gnn_shape,
-        gnn_heads,
         mlp_shape,
         edge_index,
         edge_types,
@@ -30,12 +29,11 @@ class GraphGAT(BaseModule):
         self.num_envs = num_envs
         self.batch_size = batch_size
         self.gnn_shape = gnn_shape
-        self.gnn_heads = gnn_heads
         self.mlp_shape = mlp_shape
         self.use_res = use_res
 
         self.edge_index = edge_index.to(Device.XPU)
-        self.edge_types = nn.functional.one_hot(edge_types, num_classes=3).to(Device.XPU)
+        self.edge_types = edge_types.to(Device.XPU)
 
         self.setup_graph_feature_extractor()
         self.setup_mlp(output_size)
@@ -47,49 +45,41 @@ class GraphGAT(BaseModule):
         if self.use_res:
             self.res_proj_0 = nn.Linear(
                 self.node_features,
-                self.gnn_shape[0] * self.gnn_heads,
+                self.gnn_shape[0],
                 device=Device.XPU,
             )
             self.res_proj_1 = nn.Linear(
-                self.gnn_shape[0] * self.gnn_heads,
-                self.gnn_shape[1] * self.gnn_heads,
+                self.gnn_shape[0],
+                self.gnn_shape[1],
                 device=Device.XPU,
             )
             self.res_proj_2 = nn.Linear(
-                self.gnn_shape[1] * self.gnn_heads,
-                self.gnn_shape[2] * self.gnn_heads,
+                self.gnn_shape[1],
+                self.gnn_shape[2],
                 device=Device.XPU,
             )
             self.res_proj_3 = nn.Linear(
-                self.gnn_shape[2] * self.gnn_heads, self.gnn_shape[3], device=Device.XPU
+                self.gnn_shape[2], self.gnn_shape[3], device=Device.XPU
             )
-        self.conv1 = GATv2Conv(
+        self.conv1 = RGCNConv(
             self.node_features,
             self.gnn_shape[0],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
+            num_relations=3,
         )
-        self.conv2 = GATv2Conv(
-            self.gnn_shape[0] * self.gnn_heads,
+        self.conv2 = RGCNConv(
+            self.gnn_shape[0],
             self.gnn_shape[1],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
+            num_relations=3,
         )
-        self.conv3 = GATv2Conv(
-            self.gnn_shape[1] * self.gnn_heads,
+        self.conv3 = RGCNConv(
+            self.gnn_shape[1],
             self.gnn_shape[2],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
+            num_relations=3,
         )
-        self.conv4 = GATv2Conv(
-            self.gnn_shape[2] * self.gnn_heads,
+        self.conv4 = RGCNConv(
+            self.gnn_shape[2],
             self.gnn_shape[3],
-            heads=1,
-            concat=True,
-            edge_dim=3,
+            num_relations=3,
         )
         self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4)
         # self.norm1 = GraphNorm(shape[0])
@@ -112,33 +102,30 @@ class GraphGAT(BaseModule):
         return x.flatten(1, -1)
 
     def extract_features(self, x):
-        # expecting x to be already one-hot
-        # x = F.one_hot((x + 1).long(), num_classes=3).to(TH_FLOAT_TYPE)
-
-        # GATConv expects a large graph instead of batches, so we'll rely on edge_index to unfold the graph later
+        # RGCN expects a large graph instead of batches, so we'll rely on edge_index to unfold the graph later
         batch_size = x.shape[0]
         x = x.view(-1, self.node_features)
 
         if self.use_res:
             res0 = self.res_proj_0(x)
-        x = F.relu(self.conv1(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.relu(self.conv1(x, self.edge_index, edge_type=self.edge_types))
         # x = self.norm1(x, batch, batch_size)
         # x = F.dropout(x, p=0.2)
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        x = F.relu(self.conv2(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.relu(self.conv2(x, self.edge_index, edge_type=self.edge_types))
         # x = self.norm2(x, batch, batch_size)
         # x = F.dropout(x, p=0.2)
         if self.use_res:
             x = x + res1
             res2 = self.res_proj_2(x)
-        x = F.relu(self.conv3(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.relu(self.conv3(x, self.edge_index, edge_type=self.edge_types))
         # x = self.norm3(x, batch, batch_size)
         if self.use_res:
             x = x + res2
             res3 = self.res_proj_3(x)
-        x = F.relu(self.conv4(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.relu(self.conv4(x, self.edge_index, edge_type=self.edge_types))
         if self.use_res:
             x = x + res3
 

@@ -2,9 +2,8 @@
 import torch as th
 from torch import nn
 from torch.nn import functional as F
-from torch_geometric.nn import SGConv, GCNConv, GraphNorm
+from torch_geometric.nn import SGConv
 
-from hackable_engine.common.constants import TH_FLOAT_TYPE
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
 
@@ -45,15 +44,17 @@ class GraphSG(BaseModule):
         self.res_proj_1 = nn.Linear(shape[0], shape[1], device=Device.XPU)
         self.res_proj_2 = nn.Linear(shape[1], shape[2], device=Device.XPU)
         self.res_proj_3 = nn.Linear(shape[2], shape[3], device=Device.XPU)
+        self.res_proj_4 = nn.Linear(shape[3], shape[4], device=Device.XPU)
         self.conv1 = SGConv(self.node_features, shape[0], K=1)
         self.conv2 = SGConv(shape[0], shape[1], K=1)
         self.conv3 = SGConv(shape[1], shape[2], K=1)
         self.conv4 = SGConv(shape[2], shape[3], K=1)
+        self.conv5 = SGConv(shape[3], shape[4], K=1)
         # self.conv1 = GCNConv(input_size, shape[0])
         # self.conv2 = GCNConv(shape[0], shape[1])
         # self.conv3 = GCNConv(shape[1], shape[2])
         # self.conv4 = GCNConv(shape[2], shape[3])
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4)
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
         # self.norm1 = GraphNorm(shape[0])
         # self.norm2 = GraphNorm(shape[1])
         # self.norm3 = GraphNorm(shape[2])
@@ -68,8 +69,7 @@ class GraphSG(BaseModule):
         self.mlp = tuple(mlp)
 
     def forward(self, x, *args):
-        # x = self.feature_expansion(x.flatten().unsqueeze(1))
-        x = x.flatten(1, -1)  # will have no effect on 2-dim tensors, will flatten 3-dim into 2-dim
+        # x = x.flatten(1, -1)  # will have no effect on 2-dim tensors, will flatten 3-dim into 2-dim
         x = self.extract_features(x)
         if self.is_seq:
             x = x.flatten(-2, -1)
@@ -77,29 +77,31 @@ class GraphSG(BaseModule):
         return x.flatten(1, -1)
 
     def extract_features(self, x):
-        x = F.one_hot((x + 1).long(), num_classes=3).to(TH_FLOAT_TYPE)
-        # a, b, c = x.shape
-        # x = x.flatten(0, 1)
         res0 = self.res_proj_0(x)
         x = F.relu(self.conv1(x, self.edge_index))
         # x = self.norm1(x, batch, batch_size)
-        # x = F.dropout(x, p=0.2)
         x = x + res0
+
         res1 = self.res_proj_1(x)
         # x = F.relu(F.dropout(x, p=0.2))
         x = F.relu(self.conv2(x, self.edge_index))
         # x = self.norm2(x, batch, batch_size)
-        # x = F.dropout(x, p=0.2)
         x = x + res1
+
         res2 = self.res_proj_2(x)
         # x = F.relu(F.dropout(x, p=0.2))
         x = F.relu(self.conv3(x, self.edge_index))
         # x = self.norm3(x, batch, batch_size)
         x = x + res2
+
         res3 = self.res_proj_3(x)
         x = F.relu(self.conv4(x, self.edge_index))
         x = x + res3
-        # x = x.reshape(a, b, self.gnn_shape[-1])
+
+        res4 = self.res_proj_4(x)
+        x = F.relu(self.conv5(x, self.edge_index))
+        x = x + res4
+
         return x
 
     def initialize_gnn_weights(self):
