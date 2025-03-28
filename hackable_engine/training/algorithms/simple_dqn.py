@@ -17,8 +17,7 @@ from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.training.algorithms.util.replay_buffer import ReplayBuffer
 from hackable_engine.training.constants import LRShape, get_learning_rate_decay
 from hackable_engine.training.device import Device
-from hackable_engine.training.envs.hex.logit_11_graph_env import Logit11GraphEnv
-from hackable_engine.training.envs.hex.logit_9_graph_env import Logit9GraphEnv
+from hackable_engine.training.envs.hex.logit_13_graph_env import Logit13GraphEnv
 from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_async_env import (
     MultiprocessAsyncEnv,
 )
@@ -35,39 +34,41 @@ from hackable_engine.training.run import LOG_PATH
 # th._dynamo.config.suppress_errors = True
 # th.set_num_threads(1)
 
+# fmt: off
 cnn_shape = (256, 512, 1024)
 cnn_kernels = (5, 3, 3)
 cnn_strides = (1, 1, 1, 1)
 cnn_paddings = (0, 0, 0, 0)
 GNN_SHAPES = {
-    GraphSG: (54, 108, 216, 432, 432),  # 54 for 9 features, 36 for 3
-    GraphRGCN: (54, 108, 216, 216),
-    GraphGAT: (36, 72, 144, 216),
-    GraphGIN: (108, 108, 108, 108),
-    GraphGINE: (108, 108, 108, 108),
-}
+    GraphSG: (54, 108, 216, 324, 432),  # 54 for 9 features, 36 for 3
+    GraphRGCN: (54, 108, 144, 180, 216),
+    GraphGAT: (54, 72, 90, 108, 216),
+    GraphGIN: (54, 108, 144, 180, 216),  # maybe lower dim + faster run with 16 epochs & 2048 envs
+    GraphGINE: (216, 216, 216, 216, 216),
+} # fmt: on
 
-board_size = 11
+board_size = 13
+env_class = Logit13GraphEnv
 model_class = GraphSG
 gnn_shape = GNN_SHAPES[model_class]
-mlp_shape = (128,) # board_size ** 2)
+mlp_shape = (256,)# board_size**2)
 num_episodes = 1024
-episode_env_steps = board_size ** 2
-base_num_envs = 1024  # GraphSG runs on 1024, GraphGAT on 512, CNN on 2048, to be comparable
+episode_env_steps = board_size**2
+base_num_envs = 1024
 """relative for tensorboard graphs, such that training sessions are comparable"""
 num_envs = 1024
-num_workers = 4
-learning_rate = 2e-4
+num_workers = 8
+learning_rate = 1.2e-4
 lr_shape = LRShape.WARMUP_SIGMOID
 batch_size = 64
 gamma_low = 0.05
 gamma_high = 0.95
-epsilon = 0.5
+epsilon_max = 0.5
 epsilon_min = 0.005
 target_update_frequency = 128
-buffer_size_low = 30 * episode_env_steps * base_num_envs
-buffer_size_high = 30 * episode_env_steps * base_num_envs
-start_training = buffer_size_low * 0.05
+buffer_size_low = 7 * episode_env_steps * base_num_envs
+buffer_size_high = 35 * episode_env_steps * base_num_envs
+start_training = buffer_size_low * 0.5
 epochs = 8
 episode_step = num_envs // base_num_envs
 assert episode_step >= 1
@@ -81,62 +82,120 @@ entropy_queue = deque(maxlen=5 * num_envs)
 
 def epsilon_decay(episode):
     x = episode / num_episodes
-    hyperbolic = 10 / (1 + 999 * x ** 0.5)
+    hyperbolic = 10 / (0.01 + 999.99 * x**0.5)
     # exponential = 0.995 ** episode
     # return max((hyperbolic, exponential))
     return min(1, hyperbolic)
 
 
 class DQN:
-    def __init__(self, envs):
+    def __init__(self, envs, color, load_version: int | None = None):
         self.envs = envs
-        self.model = model_class(  # does best with high learning rates like 6e-4
-            node_count=board.size_square,
-            node_features=9,
-            output_size=1,
-            batch_size=batch_size,
-            num_envs=num_envs,
-            gnn_shape=gnn_shape,
-            # gnn_heads=6,
-            mlp_shape=mlp_shape,
-            edge_index=board.edge_index,
-            # edge_types=board.edge_types,
-            # use_res=True,
-        ).to(Device.XPU).to(th.float32)
-        self.target_model = model_class(
-            node_count=board.size_square,
-            node_features=9,
-            output_size=1,
-            batch_size=batch_size,
-            num_envs=num_envs,
-            gnn_shape=gnn_shape,
-            # gnn_heads=6,
-            mlp_shape=mlp_shape,
-            edge_index=board.edge_index,
-            # edge_types=board.edge_types,
-            # use_res=True,
-        ).to(Device.XPU).to(th.float32)
+        self.model = (
+            model_class(  # does best with high learning rates like 6e-4
+                node_count=board.size_square,
+                node_features=9,
+                output_size=1,
+                batch_size=batch_size,
+                num_envs=num_envs,
+                gnn_shape=gnn_shape,
+                # gnn_heads=6,
+                mlp_shape=mlp_shape,
+                edge_index=board.edge_index,
+                # edge_types=board.edge_types,
+                # use_res=False,
+            )
+            .to(Device.XPU)
+            .to(th.float32)
+        )
+        self.target_model = (
+            model_class(
+                node_count=board.size_square,
+                node_features=9,
+                output_size=1,
+                batch_size=batch_size,
+                num_envs=num_envs,
+                gnn_shape=gnn_shape,
+                # gnn_heads=6,
+                mlp_shape=mlp_shape,
+                edge_index=board.edge_index,
+                # edge_types=board.edge_types,
+                # use_res=False,
+            )
+            .to(Device.XPU)
+            .to(th.float32)
+        )
+
+        # optimizer = optim.SGD(
+        #     model.parameters(), lr=learning_rate, momentum=0.9, nesterov=True
+        # )
+        weight_decay = 1e-5 if model_class is GraphSG else 0
+        """use weight_decay for models which tend to have growing gradient towards the end"""
+        self.optimizer = optim.Adam(
+            [
+                {
+                    "params": [
+                        param
+                        for layer in self.model.gnn
+                        for param in layer.parameters()
+                    ],
+                    "lr": learning_rate,
+                },
+                {
+                    "params": [
+                        param
+                        for layer in self.model.mlp
+                        for param in layer.parameters()
+                    ],
+                    "lr": learning_rate,
+                },
+            ],
+            weight_decay=weight_decay,
+        )
+        self.replay_buffer = ReplayBuffer(
+            capacity=buffer_size_low, storage_type=ReplayBuffer.StorageType.LIST
+        )
+        # self.optimizer_scheduler = LambdaLR(
+        #     self.optimizer, get_learning_rate_decay(lr_shape, num_episodes)
+        # )
+        self.optimizer_scheduler = LambdaLR(
+            self.optimizer,
+            [
+                get_learning_rate_decay(lr_shape, num_episodes),
+                get_learning_rate_decay(LRShape.WARMUP_SIGMOID, num_episodes * 1.5),
+            ],
+        )
+        self.obs: list[np.ndarray] = []
+
+        if load_version:
+            self.model.load_state_dict(
+                th.load(
+                    f"simple_dqn/dqn-model-{color}.v{load_version}", weights_only=True
+                )
+            )
+            self.target_model.load_state_dict(
+                th.load(
+                    f"simple_dqn/dqn-target-model-{color}.v{load_version}",
+                    weights_only=True,
+                )
+            )
+            self.optimizer.load_state_dict(
+                th.load(
+                    f"simple_dqn/dqn-optimizer-{color}.v{load_version}",
+                    weights_only=True,
+                )
+            )
 
         th._dynamo.reset()
         self.model = th.compile(self.model)
         self.target_model = th.compile(self.target_model)
 
-        # optimizer = optim.SGD(
-        #     model.parameters(), lr=learning_rate, momentum=0.9, nesterov=True
-        # )
-        # TODO: use weight_decay for models which tend to have growing gradient towards the end
-        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate, weight_decay=1e-5)
-        self.replay_buffer = ReplayBuffer(
-            capacity=buffer_size_low, storage_type=ReplayBuffer.StorageType.LIST
-        )
-        self.optimizer_scheduler = LambdaLR(self.optimizer, get_learning_rate_decay(lr_shape, num_episodes))
-        self.obs: list[np.ndarray] = []
-
     def run(self):
         asyncio.run(self.train())
 
     async def train(self):
-        eps = epsilon
+        eps = epsilon_max
+        target_update_f = target_update_frequency / 2
         gamma = gamma_low
         self.obs = self.envs.reset()
 
@@ -157,7 +216,7 @@ class DQN:
 
                 # obs = self.run_env_sync(self.obs, actions, gamma)
                 # loss, gamma, lr = await self.train_on_buffer()
-                self.obs, (loss, gamma, lr) = await asyncio.gather(
+                self.obs, (loss, gamma) = await asyncio.gather(
                     self.run_env(self.obs, actions, gamma), self.train_on_buffer()
                 )
 
@@ -172,13 +231,15 @@ class DQN:
 
                     break
 
-            eps = max(epsilon_min, epsilon * epsilon_decay(episode))
-            self.optimizer_scheduler.step()
+            eps = epsilon_max * epsilon_decay(episode) + epsilon_min
+            for i in range(episode_step):
+                self.optimizer_scheduler.step()
 
-            if episode % target_update_frequency == 4:
+            if episode % target_update_f == 2:
                 print("updating target")
                 self.target_model.load_state_dict(self.model.state_dict())
-                if episode > target_update_frequency:
+                if episode > target_update_f:
+                    target_update_f = target_update_frequency
                     self.replay_buffer.capacity = buffer_size_high
 
             if episode % 1 == 0:
@@ -189,7 +250,8 @@ class DQN:
                 gradients = th.cat(gradients)
                 gradient = gradients.norm()
 
-                log_progress(episode, episode_env_steps, gradient, eps, gamma, lr)
+                lr_gnn, lr_mlp = self.optimizer_scheduler.get_last_lr()
+                log_progress(episode, episode_env_steps, gradient, eps, gamma, lr_gnn, lr_mlp)
 
     async def run_env(self, last_obss, actions, gamma):
         obss, rewards, dones, _, _ = await envs.step(actions)
@@ -256,7 +318,7 @@ class DQN:
             del states, next_states, actions, rewards, dones
         else:
             print(f"{np.round(size / start_training * 100, 2)} %")
-        return loss, gamma, self.optimizer_scheduler.get_last_lr()[0]
+        return loss, gamma
 
     @staticmethod
     def get_logit_actions(eps, q_values):
@@ -335,7 +397,7 @@ def calculate_gamma(rewards, dones) -> float:
     return gamma
 
 
-def log_progress(episode, episode_steps, gradient, eps, gamma, lr):
+def log_progress(episode, episode_steps, gradient, eps, gamma, lr_gnn, lr_mlp):
     # episode = episode * episode_steps  # * num_envs
     """steps per env facilitates comparing efficiency of multi-env"""
     # actions = np.array(action_queue)
@@ -357,7 +419,8 @@ def log_progress(episode, episode_steps, gradient, eps, gamma, lr):
     writer.add_scalar("misc/epsilon", eps, episode)
     writer.add_scalar("misc/entropy", np.mean(entropy_queue), episode)
     writer.add_scalar("misc/gradient", gradient, episode)
-    writer.add_scalar("misc/lr", lr, episode)
+    writer.add_scalar("misc/lr_gnn", lr_gnn, episode)
+    writer.add_scalar("misc/lr_mlp", lr_mlp, episode)
 
 
 def get_args():
@@ -370,16 +433,20 @@ def get_args():
         default="",
     )
     parser.add_argument(
-        "-l", "--load-version", type=int, default=0, help="version of the model to load"
+        "-l",
+        "--load-version",
+        type=int,
+        help="version of the model to load",
+        required=False,
     )
     parser.add_argument(
-        "-v", "--version", type=int, default=0, help="version of the model to save"
+        "-v", "--version", type=int, help="version of the model to save", required=True
     )
     parser.add_argument(
         "-c",
         "--color",
         type=int,
-        default=1,
+        required=True,
         help="which color player should be trained",
     )
 
@@ -408,7 +475,8 @@ if __name__ == "__main__":
     }
     writer.add_text(
         "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in params.items()])),
+        "|param|value|\n|-|-|\n%s"
+        % ("\n".join([f"|{key}|{value}|" for key, value in params.items()])),
     )
 
     is_logit_env = True
@@ -416,7 +484,7 @@ if __name__ == "__main__":
         lambda seed, num_envs, color_, models=[]: EpisodeStats(
             SyncVectorEnv(
                 [
-                    lambda: Logit11GraphEnv(color=False, models=[None])
+                    lambda: env_class(color=False, models=[None])
                     for _ in range(num_envs)
                 ],
                 copy=False,
@@ -428,7 +496,8 @@ if __name__ == "__main__":
         action_shape=(1,),
         color=False,
     )
-    dqn = DQN(envs)
+    color = "white" if args.color else "black"
+    dqn = DQN(envs, color, args.load_version)
     try:
         # with th.xpu.amp.autocast(enabled=True, dtype=TH_FLOAT_TYPE):
         # with th.amp.autocast(Device.XPU.value, enabled=True, dtype=th.bfloat16):
@@ -438,7 +507,6 @@ if __name__ == "__main__":
 
         if not os.path.exists("simple_dqn"):
             os.mkdir("simple_dqn")
-        color = "white" if args.color else "black"
         th.save(dqn.model.state_dict(), f"simple_dqn/dqn-model-{color}.v{args.version}")
         th.save(
             dqn.target_model.state_dict(),

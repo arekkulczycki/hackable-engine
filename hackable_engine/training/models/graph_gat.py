@@ -35,7 +35,9 @@ class GraphGAT(BaseModule):
         self.use_res = use_res
 
         self.edge_index = edge_index.to(Device.XPU)
-        self.edge_types = nn.functional.one_hot(edge_types, num_classes=3).to(Device.XPU)
+        self.edge_types = nn.functional.one_hot(edge_types, num_classes=3).to(
+            Device.XPU
+        )
 
         self.setup_graph_feature_extractor()
         self.setup_mlp(output_size)
@@ -61,7 +63,12 @@ class GraphGAT(BaseModule):
                 device=Device.XPU,
             )
             self.res_proj_3 = nn.Linear(
-                self.gnn_shape[2] * self.gnn_heads, self.gnn_shape[3], device=Device.XPU
+                self.gnn_shape[2] * self.gnn_heads,
+                self.gnn_shape[3] * self.gnn_heads,
+                device=Device.XPU,
+            )
+            self.res_proj_4 = nn.Linear(
+                self.gnn_shape[3] * self.gnn_heads, self.gnn_shape[4], device=Device.XPU
             )
         self.conv1 = GATv2Conv(
             self.node_features,
@@ -87,14 +94,18 @@ class GraphGAT(BaseModule):
         self.conv4 = GATv2Conv(
             self.gnn_shape[2] * self.gnn_heads,
             self.gnn_shape[3],
+            heads=self.gnn_heads,
+            concat=True,
+            edge_dim=3,
+        )
+        self.conv5 = GATv2Conv(
+            self.gnn_shape[3] * self.gnn_heads,
+            self.gnn_shape[4],
             heads=1,
             concat=True,
             edge_dim=3,
         )
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4)
-        # self.norm1 = GraphNorm(shape[0])
-        # self.norm2 = GraphNorm(shape[1])
-        # self.norm3 = GraphNorm(shape[2])
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
 
     def setup_mlp(self, output_size):
         mlp = []
@@ -106,42 +117,44 @@ class GraphGAT(BaseModule):
         self.mlp = tuple(mlp)
 
     def forward(self, x, *args):
-        # x = x.flatten(1, -1)  # will have no effect on 2-dim tensors, will flatten 3-dim into 2-dim
         x = self.extract_features(x)
         x = self.make_decision(x)
         return x.flatten(1, -1)
 
     def extract_features(self, x):
-        # expecting x to be already one-hot
-        # x = F.one_hot((x + 1).long(), num_classes=3).to(TH_FLOAT_TYPE)
-
         # GATConv expects a large graph instead of batches, so we'll rely on edge_index to unfold the graph later
         batch_size = x.shape[0]
         x = x.view(-1, self.node_features)
 
         if self.use_res:
             res0 = self.res_proj_0(x)
-        x = F.relu(self.conv1(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.dropout(F.relu(self.conv1(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
         # x = self.norm1(x, batch, batch_size)
-        # x = F.dropout(x, p=0.2)
+
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        x = F.relu(self.conv2(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.dropout(F.relu(self.conv2(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
         # x = self.norm2(x, batch, batch_size)
-        # x = F.dropout(x, p=0.2)
+
         if self.use_res:
             x = x + res1
             res2 = self.res_proj_2(x)
-        x = F.relu(self.conv3(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.dropout(F.relu(self.conv3(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
         # x = self.norm3(x, batch, batch_size)
+
         if self.use_res:
             x = x + res2
             res3 = self.res_proj_3(x)
-        x = F.relu(self.conv4(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.dropout(F.relu(self.conv4(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+
         if self.use_res:
             x = x + res3
+            res4 = self.res_proj_4(x)
+        x = F.dropout(F.relu(self.conv5(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
 
+        if self.use_res:
+            x = x + res4
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
@@ -155,5 +168,10 @@ class GraphGAT(BaseModule):
 
     def initialize_mlp_weights(self):
         for layer in self.mlp:
-            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="relu")
+            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="leaky_relu")
             th.nn.init.zeros_(layer.bias)
+
+    def make_decision(self, x: th.Tensor):
+        for layer in self.mlp[:-1]:
+            x = F.leaky_relu(layer(x))
+        return self.mlp[-1](x)

@@ -15,12 +15,12 @@ def get_learning_rate_decay(lr_shape, num_episodes):
         return decay
 
     def warmup_sigmoid(episode):
-        warm_up = 0.15
+        warm_up = 0.12
         if episode / num_episodes < warm_up:
             x = episode / (warm_up * num_episodes)
-            return 0.5 / (1 + np.e ** (-10 * (x - 0.5))) + 0.5
+            return 0.99 / (1 + np.e ** (-10 * (x - 0.5))) + 0.01
         x = (episode - warm_up * num_episodes) / ((1 - warm_up) * num_episodes)
-        decay = -0.70 / (1 + np.e ** (-9 * (x - 0.3))) + 1.04
+        decay = -0.69 / (1 + np.e ** (-10 * (x - 0.3))) + 1.025
         return decay
 
     def squared(episode):

@@ -12,29 +12,30 @@ MINUS_ONE: FLOAT_TYPE = FLOAT_TYPE(-1)
 MINUS_ONEHALF: FLOAT_TYPE = FLOAT_TYPE(-1.5)
 MINUS_TWO: FLOAT_TYPE = FLOAT_TYPE(-2)
 
-class Logit9GraphEnv(Logit7GraphEnv):
+class Logit13GraphEnv(Logit7GraphEnv):
     """"""
 
-    ENV_NAME = "logit9ghex"
+    ENV_NAME = "logit13ghex"
 
     observation_space = gym.spaces.Box(
-        0, 1, shape=(81, 9), dtype=FLOAT_TYPE
+        0, 1, shape=(169, 9), dtype=FLOAT_TYPE
         # 0, 1, shape=(3, 9, 9), dtype=FLOAT_TYPE
     )  # should be int8
     # action_space = gym.spaces.Box(MINUS_ONE, ONE, shape=(81,), dtype=FLOAT_TYPE)
-    action_space = gym.spaces.Discrete(81)
+    action_space = gym.spaces.Discrete(169)
 
     def __init__(self, *args, **kwargs):
         """"""
 
         super().__init__(*args, **kwargs)
-        self.BOARD_SIZE: int = 9
+        self.BOARD_SIZE: int = 13
         self.MAX_MOVES: int = self.BOARD_SIZE**2
         self.DECISIVE_DISTANCE_ADVANTAGE: int = 4
         self.OPENINGS = [
-            "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9",
-            "i1", "i2", "i3", "i4", "i5", "i6", "i7", "i8", "i9",
-            "c2", "c8", "d2", "d8", "e2", "e8", "f2", "f8", "g2", "g8",
+            "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11", "a12", "a13",
+            "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9", "m10", "m11", "m12", "m13",
+            "c2", "c12", "d2", "d12", "e2", "e12", "f2", "f12", "g2", "g12", "h2", "h12", "i2", "i12", "k2", "k12",
+            "f3", "g3", "h3", "i3", "f9", "g9", "h9", "i9"
         ]
         # fmt: on
 
@@ -50,6 +51,6 @@ class Logit9GraphEnv(Logit7GraphEnv):
 
 
 register(
-    id="Logit9GraphEnv",
-    entry_point="hackable_engine.training.envs.hex.logit_9_graph_env:Logit9GraphEnv",
+    id="Logit13GraphEnv",
+    entry_point="hackable_engine.training.envs.hex.logit_13_graph_env:Logit13GraphEnv",
 )

@@ -47,6 +47,7 @@ class GraphGIN(BaseModule):
             self.res_proj_1 = lambda x: x#nn.Linear(shape[0], shape[1], device=Device.XPU)
             self.res_proj_2 = lambda x: x#nn.Linear(shape[1], shape[2], device=Device.XPU)
             self.res_proj_3 = lambda x: x#nn.Linear(shape[2], shape[3], device=Device.XPU)
+            self.res_proj_4 = lambda x: x#nn.Linear(shape[2], shape[3], device=Device.XPU)
 
         self.embedding = nn.Linear(self.node_features, shape[0])
         nn.init.kaiming_uniform_(self.embedding.weight)
@@ -72,7 +73,12 @@ class GraphGIN(BaseModule):
             nn.ReLU(),
             nn.Linear(shape[3], shape[3])
         ), train_eps=True)
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4)
+        self.conv5 = GINConv(nn.Sequential(
+            nn.Linear(shape[3], shape[4]),
+            nn.ReLU(),
+            nn.Linear(shape[4], shape[4])
+        ), train_eps=True)
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
 
 
     def setup_mlp(self, gnn_shape, mlp_shape, output_size, is_seq = False):
@@ -96,34 +102,39 @@ class GraphGIN(BaseModule):
         batch_size = x.shape[0]
         # batch = self.batch if batch_size == self.batch_size else self.batch_envs
 
+        # GINConv expects a large graph instead of batches, so we'll rely on edge_index to unfold the graph later
         x = x.view(-1, self.node_features)
         x = self.embedding(x)
 
         if self.use_res:
             res0 = self.res_proj_0(x)
-        x = F.relu(self.conv1(x, self.edge_index))
+        x = F.dropout(F.relu(self.conv1(x, self.edge_index)), p=0.2)
         # x = self.norm1(x, batch, batch_size)
-        # x = F.dropout(x, p=0.2)
+
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        # x = F.relu(F.dropout(x, p=0.2))
-        x = F.relu(self.conv2(x, self.edge_index))
+        x = F.dropout(F.relu(self.conv2(x, self.edge_index)), p=0.2)
         # x = self.norm2(x, batch, batch_size)
-        # x = F.dropout(x, p=0.2)
+
         if self.use_res:
             x = x + res1
             res2 = self.res_proj_2(x)
-        # x = F.relu(F.dropout(x, p=0.2))
-        x = F.relu(self.conv3(x, self.edge_index))
+        x = F.dropout(F.relu(self.conv3(x, self.edge_index)), p=0.2)
         # x = self.norm3(x, batch, batch_size)
+
         if self.use_res:
             x = x + res2
             res3 = self.res_proj_3(x)
-        x = F.relu(self.conv4(x, self.edge_index))
+        x = F.dropout(F.relu(self.conv4(x, self.edge_index)), p=0.2)
+
         if self.use_res:
             x = x + res3
+            res4 = self.res_proj_4(x)
+        x = F.dropout(F.relu(self.conv5(x, self.edge_index)), p=0.2)
 
+        if self.use_res:
+            x = x + res4
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
@@ -140,11 +151,11 @@ class GraphGIN(BaseModule):
 
     def initialize_mlp_weights(self):
         for layer in self.mlp:
-            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="relu")
+            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="leaky_relu")
             # th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="tanh")
             th.nn.init.zeros_(layer.bias)
 
-    # def make_decision(self, x: th.Tensor):
-    #     for layer in self.mlp[:-1]:
-    #         x = th.tanh(layer(x))
-    #     return self.mlp[-1](x)
+    def make_decision(self, x: th.Tensor):
+        for layer in self.mlp[:-1]:
+            x = F.leaky_relu(layer(x))
+        return self.mlp[-1](x)

@@ -63,6 +63,9 @@ class GraphGINE(BaseModule):
             self.res_proj_3 = (
                 lambda x: x
             )  # nn.Linear(shape[2], shape[3], device=Device.XPU)
+            self.res_proj_4 = (
+                lambda x: x
+            )  # nn.Linear(shape[2], shape[3], device=Device.XPU)
         # self.embedding = nn.Embedding(self.node_features, shape[0])
         self.embedding = nn.Linear(self.node_features, shape[0])
         nn.init.kaiming_uniform_(self.embedding.weight)
@@ -91,11 +94,17 @@ class GraphGINE(BaseModule):
             ),
             edge_dim=3,
         )
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4)
+        self.conv5 = GINEConv(
+            nn.Sequential(
+                nn.Linear(shape[3], shape[4]), nn.ReLU(), nn.Linear(shape[4], shape[4])
+            ),
+            edge_dim=3,
+        )
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
         self.norm1 = GraphNorm(shape[0])
         self.norm2 = GraphNorm(shape[1])
         self.norm3 = GraphNorm(shape[2])
-        # self.norm4 = GraphNorm(shape[3])
+        self.norm4 = GraphNorm(shape[3])
 
         self.batch_envs = th.repeat_interleave(
             th.arange(self.num_envs), self.node_count
@@ -124,8 +133,6 @@ class GraphGINE(BaseModule):
         return x.flatten(1, -1)
 
     def extract_features(self, x):
-        # x = x.flatten(0, 1)
-        # x = self.embedding(x.to(th.int))
         batch_size = x.shape[0]
         batch = self.batch if batch_size == self.batch_size else self.batch_envs
 
@@ -134,32 +141,34 @@ class GraphGINE(BaseModule):
 
         if self.use_res:
             res0 = self.res_proj_0(x)
-        x = F.relu(self.conv1(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.dropout(F.relu(self.conv1(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
         x = self.norm1(x, batch, batch_size)
-        # x = self.norm1(x)
-        # x = F.dropout(x, p=0.2)
+
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        # x = F.relu(F.dropout(x, p=0.2))
-        x = F.relu(self.conv2(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.dropout(F.relu(self.conv2(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
         x = self.norm2(x, batch, batch_size)
-        # x = self.norm2(x)
-        # x = F.dropout(x, p=0.2)
+
         if self.use_res:
             x = x + res1
             res2 = self.res_proj_2(x)
-        # x = F.relu(F.dropout(x, p=0.2))
-        x = F.relu(self.conv3(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.dropout(F.relu(self.conv3(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
         x = self.norm3(x, batch, batch_size)
-        # x = self.norm3(x)
+
         if self.use_res:
             x = x + res2
             res3 = self.res_proj_3(x)
-        x = F.relu(self.conv4(x, self.edge_index, edge_attr=self.edge_types))
+        x = F.dropout(F.relu(self.conv4(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+        x = self.norm4(x, batch, batch_size)
+
         if self.use_res:
             x = x + res3
+            res4 = self.res_proj_4(x)
+        x = F.dropout(F.relu(self.conv5(x, self.edge_index, edge_attr=self.edge_types)), p = 0.2)
 
+        if self.use_res:
+            x = x + res4
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
@@ -176,11 +185,11 @@ class GraphGINE(BaseModule):
 
     def initialize_mlp_weights(self):
         for layer in self.mlp:
-            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="relu")
+            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="leaky_relu")
             # th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="tanh")
             th.nn.init.zeros_(layer.bias)
 
-    # def make_decision(self, x: th.Tensor):
-    #     for layer in self.mlp[:-1]:
-    #         x = th.tanh(layer(x))
-    #     return self.mlp[-1](x)
+    def make_decision(self, x: th.Tensor):
+        for layer in self.mlp[:-1]:
+            x = F.leaky_relu(layer(x))
+        return self.mlp[-1](x)

@@ -44,47 +44,46 @@ class GraphRGCN(BaseModule):
     def setup_graph_feature_extractor(self):
         if self.use_res:
             self.res_proj_0 = nn.Linear(
-                self.node_features,
-                self.gnn_shape[0],
-                device=Device.XPU,
+                self.node_features, self.gnn_shape[0], device=Device.XPU
             )
             self.res_proj_1 = nn.Linear(
-                self.gnn_shape[0],
-                self.gnn_shape[1],
-                device=Device.XPU,
+                self.gnn_shape[0], self.gnn_shape[1], device=Device.XPU
             )
             self.res_proj_2 = nn.Linear(
-                self.gnn_shape[1],
-                self.gnn_shape[2],
-                device=Device.XPU,
+                self.gnn_shape[1], self.gnn_shape[2], device=Device.XPU
             )
             self.res_proj_3 = nn.Linear(
                 self.gnn_shape[2], self.gnn_shape[3], device=Device.XPU
             )
-        self.conv1 = RGCNConv(
+            self.res_proj_4 = nn.Linear(
+                self.gnn_shape[3], self.gnn_shape[4], device=Device.XPU
+            )
+        self.conv1 = FastRGCNConv(
             self.node_features,
             self.gnn_shape[0],
             num_relations=3,
         )
-        self.conv2 = RGCNConv(
+        self.conv2 = FastRGCNConv(
             self.gnn_shape[0],
             self.gnn_shape[1],
             num_relations=3,
         )
-        self.conv3 = RGCNConv(
+        self.conv3 = FastRGCNConv(
             self.gnn_shape[1],
             self.gnn_shape[2],
             num_relations=3,
         )
-        self.conv4 = RGCNConv(
+        self.conv4 = FastRGCNConv(
             self.gnn_shape[2],
             self.gnn_shape[3],
             num_relations=3,
         )
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4)
-        # self.norm1 = GraphNorm(shape[0])
-        # self.norm2 = GraphNorm(shape[1])
-        # self.norm3 = GraphNorm(shape[2])
+        self.conv5 = FastRGCNConv(
+            self.gnn_shape[3],
+            self.gnn_shape[4],
+            num_relations=3,
+        )
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
 
     def setup_mlp(self, output_size):
         mlp = []
@@ -108,27 +107,34 @@ class GraphRGCN(BaseModule):
 
         if self.use_res:
             res0 = self.res_proj_0(x)
-        x = F.relu(self.conv1(x, self.edge_index, edge_type=self.edge_types))
+        x = F.dropout(F.relu(self.conv1(x, self.edge_index, edge_type=self.edge_types)), p=0.2)
         # x = self.norm1(x, batch, batch_size)
-        # x = F.dropout(x, p=0.2)
+
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        x = F.relu(self.conv2(x, self.edge_index, edge_type=self.edge_types))
+        x = F.dropout(F.relu(self.conv2(x, self.edge_index, edge_type=self.edge_types)), p=0.2)
         # x = self.norm2(x, batch, batch_size)
-        # x = F.dropout(x, p=0.2)
+
         if self.use_res:
             x = x + res1
             res2 = self.res_proj_2(x)
-        x = F.relu(self.conv3(x, self.edge_index, edge_type=self.edge_types))
+        x = F.dropout(F.relu(self.conv3(x, self.edge_index, edge_type=self.edge_types)), p=0.2)
         # x = self.norm3(x, batch, batch_size)
+
         if self.use_res:
             x = x + res2
             res3 = self.res_proj_3(x)
-        x = F.relu(self.conv4(x, self.edge_index, edge_type=self.edge_types))
+        x = F.dropout(F.relu(self.conv4(x, self.edge_index, edge_type=self.edge_types)), p=0.2)
+        # x = self.norm4(x, batch, batch_size)
+
         if self.use_res:
             x = x + res3
+            res4 = self.res_proj_4(x)
+        x = F.dropout(F.relu(self.conv5(x, self.edge_index, edge_type=self.edge_types)), p=0.2)
 
+        if self.use_res:
+            x = x + res4
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
@@ -142,5 +148,10 @@ class GraphRGCN(BaseModule):
 
     def initialize_mlp_weights(self):
         for layer in self.mlp:
-            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="relu")
+            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="leaky_relu")
             th.nn.init.zeros_(layer.bias)
+
+    def make_decision(self, x: th.Tensor):
+        for layer in self.mlp[:-1]:
+            x = F.leaky_relu(layer(x))
+        return self.mlp[-1](x)

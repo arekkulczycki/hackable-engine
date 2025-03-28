@@ -21,7 +21,7 @@ class Logit7GraphEnv(Seq7Env):
     ENV_NAME = "logit7ghex"
 
     observation_space = gym.spaces.Box(
-        -1, 1, shape=(49, 1), dtype=FLOAT_TYPE
+        -1, 1, shape=(49, 9), dtype=FLOAT_TYPE
     )  # should be int8
     action_space = gym.spaces.Box(MINUS_ONE, ONE, shape=(49,), dtype=FLOAT_TYPE)
 
@@ -134,12 +134,15 @@ class Logit7GraphEnv(Seq7Env):
         #     return FLOAT_TYPE(self._get_intermediate_reward_relative(n_moves))
         return ZERO
 
-    # def _quick_win_value(self, n_moves: int) -> float:
-    #     """The more moves are played the higher the punishment."""
-    #
-    #     return ZERO
-    #     # return ((max(0, (n_moves - 2 * self.BOARD_SIZE)) / self.MAX_MOVES) ** 2) * ONE
+    def observation_from_board(self) -> np.ndarray:
+        # for GraphGAT / GraphGINE
+        return self.controller.board.get_hetero_graph_node_features_one_hot()
 
+        # for GraphSG / GraphGIN
+        # return self.controller.board.get_homo_graph_node_features_one_hot()
+
+        # for CNN
+        # return self.controller.board.as_matrix()
 
 
 register(
