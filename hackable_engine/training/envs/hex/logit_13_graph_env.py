@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from random import choices
+
 import gymnasium as gym
 import numpy as np
 from gymnasium.envs.registration import register
@@ -48,6 +50,15 @@ class Logit13GraphEnv(Logit7GraphEnv):
 
         # for CNN
         # return self.controller.board.as_matrix()
+
+    def _make_opponent_move(self, n_moves):
+        win_percentage = (
+            np.mean(self.results) if len(self.results) >= 4 else 0.9
+        )
+        if choices([True, False], weights=((1 - win_percentage) * 0.5 + 0.01, 0.49 + win_percentage * 0.5)):
+            self._make_random_move(self.controller.board)
+        else:
+            self._make_logical_move(self.controller.board)
 
 
 register(

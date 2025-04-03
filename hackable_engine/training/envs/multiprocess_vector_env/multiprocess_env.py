@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from asyncio import timeout
 from collections import deque
 from multiprocessing import Lock, Process
 from queue import Empty, Full
@@ -400,8 +401,8 @@ class MultiprocessEnvRunner(Process):
         super().__init__(daemon=True)
         self.env = MultiprocessEnv(*args, **kwargs)
         # TODO: must expose the monitoring queues, maybe through shm?
-        self.in_queue: Queue = Queue()
-        self.out_queue: Queue = Queue()
+        self.in_queue: Queue = Queue(max_size_bytes=10 * 1024 * 1024)
+        self.out_queue: Queue = Queue(max_size_bytes=10 * 1024 * 1024)
 
     def run(self):
         should_get = True
@@ -444,7 +445,7 @@ class MultiprocessEnvRunner(Process):
 
     def reset(self, *args, **kwargs):
         self.in_queue.put({"command": "reset"})
-        return self.out_queue.get(block=True)
+        return self.out_queue.get(block=True, timeout=15)
 
     def step(self, actions):
         self.in_queue.put({"command": "step", "actions": actions})

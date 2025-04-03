@@ -6,9 +6,11 @@ import janus
 import numpy as np
 from gymnasium import Env
 
+from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_env import (
     MultiprocessEnv,
     EnvProgressData,
+    MultiprocessEnvRunner,
 )
 
 
@@ -23,7 +25,11 @@ class MultiprocessAsyncEnv:
     ):
         # self.env = MultiprocessEnvRunner(
         self.env = MultiprocessEnv(
-            make_env, num_workers, env_per_worker, color, action_shape
+            make_env,
+            num_workers,
+            env_per_worker,
+            color,
+            action_shape,
         )
         # self.env.start()
         self.in_queue = janus.Queue(maxsize=num_workers * env_per_worker)
@@ -46,7 +52,7 @@ class MultiprocessAsyncEnv:
 
     async def step(
         self, actions
-    ) -> tuple[np.ndarray, list[np.float32], list[bool], list[bool], list[None]]:
+    ) -> tuple[np.ndarray, list[FLOAT_TYPE], list[bool], list[bool], list[None]]:
         await self.out_queue.async_q.put(actions)
         return await self.in_queue.async_q.get()
 
@@ -58,29 +64,5 @@ class MultiprocessAsyncEnv:
             in_queue.put(self.env.step(out_queue.get()))
 
     @property
-    def time_queue(self):
-        return self.env.time_queue
-
-    @property
-    def return_queue(self):
-        return self.env.return_queue
-
-    @property
-    def reward_queue(self):
-        return self.env.reward_queue
-
-    @property
-    def winner_queue(self):
-        return self.env.winner_queue
-
-    @property
-    def length_queue(self):
-        return self.env.length_queue
-
-    @property
-    def action_queue(self):
-        return self.env.action_queue
-
-    @property
     def single_observation_space(self):
-        return self.env.single_observation_space
+        return self.env.local_env.single_observation_space

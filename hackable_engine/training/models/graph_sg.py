@@ -114,12 +114,6 @@ class GraphSG(BaseModule):
                 )
                 if layer.lin.bias is not None:
                     th.nn.init.zeros_(layer.lin.bias)
-            else:
-                th.nn.init.kaiming_uniform_(
-                    layer.weight, mode="fan_in", nonlinearity="relu"
-                )
-                if layer.bias is not None:
-                    th.nn.init.zeros_(layer.bias)
 
     def initialize_mlp_weights(self):
         for layer in self.mlp:
@@ -131,5 +125,6 @@ class GraphSG(BaseModule):
 
     def make_decision(self, x: th.Tensor):
         for layer in self.mlp[:-1]:
-            x = F.dropout(F.leaky_relu(layer(x)), p=0.5)
+            x = F.leaky_relu(layer(x), negative_slope=0.05)
+            # x = F.dropout(F.leaky_relu(layer(x)), p=0.5)
         return self.mlp[-1](x)
