@@ -7,7 +7,7 @@ from gymnasium.envs.registration import register
 
 from hackable_engine.board.hex.move import Move
 from hackable_engine.common.constants import FLOAT_TYPE
-from hackable_engine.training.envs.hex.seq_7_env import Seq7Env
+from hackable_engine.training.envs.hex.base_env import BaseEnv
 
 ZERO: FLOAT_TYPE = FLOAT_TYPE(0)
 ONE: FLOAT_TYPE = FLOAT_TYPE(1)
@@ -15,7 +15,7 @@ MINUS_ONE: FLOAT_TYPE = FLOAT_TYPE(-1)
 MINUS_ONEHALF: FLOAT_TYPE = FLOAT_TYPE(-1.5)
 MINUS_TWO: FLOAT_TYPE = FLOAT_TYPE(-2)
 
-class Logit7GraphEnv(Seq7Env):
+class Logit7GraphEnv(BaseEnv):
     """"""
 
     ENV_NAME = "logit7ghex"
@@ -79,6 +79,7 @@ class Logit7GraphEnv(Seq7Env):
                     "action": move_pos_int,
                     "winner": False,
                     "reward": self.reward,
+                    "legal": False,
                     # "opening": self.opening,
                 },
             )
@@ -99,6 +100,7 @@ class Logit7GraphEnv(Seq7Env):
                 "action": 0,
                 "winner": winner == self.color,
                 "reward": reward if winner is not None else ZERO,
+                "legal": True,
                 # "opening": self.opening,
             },
         )

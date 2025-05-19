@@ -53,7 +53,22 @@ def get_random_mask(bb: BitBoard, n: int) -> BitBoard:
 
 
 def int_to_binary_array(n: int, size: int):
+    """First element in the array is the bottom-right corner of the board."""
     arr = np.zeros(size, dtype=np.int8)
+    i = 0
+    while n:
+        v = n & 1
+        if v:
+            arr[i] = v
+        n >>= 1
+        i += 1
+
+    return arr
+
+
+def int_to_binary_float_array(n: int, size: int):
+    """First element in the array is the bottom-right corner of the board."""
+    arr = np.zeros(size, dtype=np.float32)
     i = 0
     while n:
         v = n & 1
@@ -76,3 +91,11 @@ def exhaust_generator(g: Generator) -> int:
     for _ in g:
         i += 1
     return i
+
+
+def split_mask_to_uint64_array(mask: int):
+    return np.array((
+        np.uint64(mask & ((1 << 64) - 1)),
+        np.uint64((mask >> 64) & ((1 << 64) - 1)),
+        np.uint64((mask >> 128) & ((1 << 64) - 1)),
+    ), dtype=np.uint64)

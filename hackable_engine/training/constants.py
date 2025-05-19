@@ -12,7 +12,7 @@ class LRShape(Enum):
 def get_learning_rate_decay(lr_shape, num_episodes, warm_up_len):
     def reverse_sigmoid(episode):
         x = episode / num_episodes
-        decay = -0.66 / (1 + np.e ** (-6 * (x - 0.5))) + 1
+        decay = -0.66 / (1 + np.e ** (-8 * (x - 0.5))) + 1
         return decay
 
     def warmup_sigmoid(episode):
@@ -58,6 +58,7 @@ class TargetUpdateMode(Enum):
 class GammaMode(Enum):
     MANUAL = 0
     TRAINED = 1
+    RETRAINED = 2
 
 
 class BufferMode(Enum):

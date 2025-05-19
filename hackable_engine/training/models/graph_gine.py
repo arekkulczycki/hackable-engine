@@ -19,6 +19,7 @@ class GraphGINE(BaseModule):
         output_size,
         batch_size,
         num_envs,
+        num_epochs,
         gnn_shape,
         mlp_shape,
         edge_index,
@@ -30,6 +31,7 @@ class GraphGINE(BaseModule):
         self.node_count = node_count
         self.node_features = node_features
         self.num_envs = num_envs
+        self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
@@ -52,27 +54,38 @@ class GraphGINE(BaseModule):
     def setup_graph_feature_extractor(self, shape):
         if self.use_res:
             self.res_proj_0 = (
-                lambda x: x
-            )  # nn.Linear(self.node_features, shape[0], device=Device.XPU)
+                # lambda x: x
+                nn.Linear(self.node_features, shape[0], device=Device.XPU)
+            )
             self.res_proj_1 = (
-                lambda x: x
-            )  # nn.Linear(shape[0], shape[1], device=Device.XPU)
+                # lambda x: x
+                nn.Linear(shape[0], shape[1], device=Device.XPU)
+            )
             self.res_proj_2 = (
-                lambda x: x
-            )  # nn.Linear(shape[1], shape[2], device=Device.XPU)
+                # lambda x: x
+                nn.Linear(shape[1], shape[2], device=Device.XPU)
+            )
             self.res_proj_3 = (
-                lambda x: x
-            )  # nn.Linear(shape[2], shape[3], device=Device.XPU)
+                # lambda x: x
+                nn.Linear(shape[2], shape[3], device=Device.XPU)
+            )
             self.res_proj_4 = (
-                lambda x: x
-            )  # nn.Linear(shape[2], shape[3], device=Device.XPU)
+                # lambda x: x
+                nn.Linear(shape[3], shape[4], device=Device.XPU)
+            )
+            self.res_proj_5 = (
+                # lambda x: x
+                nn.Linear(shape[4], shape[5], device=Device.XPU)
+            )
         # self.embedding = nn.Embedding(self.node_features, shape[0])
-        self.embedding = nn.Linear(self.node_features, shape[0])
-        nn.init.kaiming_uniform_(self.embedding.weight)
-        nn.init.zeros_(self.embedding.bias)
+        # self.embedding = nn.Linear(self.node_features, shape[0])
+        # nn.init.kaiming_uniform_(self.embedding.weight)
+        # nn.init.zeros_(self.embedding.bias)
         self.conv1 = GINEConv(
             nn.Sequential(
-                nn.Linear(shape[0], shape[0]), nn.ReLU(), nn.Linear(shape[0], shape[0])
+                nn.Linear(self.node_features, shape[0]),
+                nn.ReLU(),
+                nn.Linear(shape[0], shape[0]),
             ),
             edge_dim=3,
         )
@@ -100,12 +113,23 @@ class GraphGINE(BaseModule):
             ),
             edge_dim=3,
         )
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
+        self.conv6 = GINEConv(
+            nn.Sequential(
+                nn.Linear(shape[4], shape[5]), nn.ReLU(), nn.Linear(shape[5], shape[5])
+            ),
+            edge_dim=3,
+        )
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6)
         self.norm1 = GraphNorm(shape[0])
         self.norm2 = GraphNorm(shape[1])
         self.norm3 = GraphNorm(shape[2])
         self.norm4 = GraphNorm(shape[3])
+        self.norm5 = GraphNorm(shape[4])
 
+        buffer_ratio = self.batch_size * self.num_epochs // self.num_envs
+        self.batch_epochs = th.repeat_interleave(
+            th.arange(self.batch_size * buffer_ratio), self.node_count
+        ).to(Device.XPU)
         self.batch_envs = th.repeat_interleave(
             th.arange(self.num_envs), self.node_count
         ).to(Device.XPU)
@@ -124,51 +148,80 @@ class GraphGINE(BaseModule):
 
         self.mlp = tuple(mlp)
 
+        self.legality_layer = nn.Linear(
+            self.gnn_shape[-1], output_size, device=Device.XPU
+        )
+
     def forward(self, x, *args):
         x = x.flatten(0, 1)
         x = self.extract_features(x)
         if self.is_seq:
             x = x.flatten(-2, -1)
-        x = self.make_decision(x)
-        return x.flatten(1, -1)
+        x, legality = self.make_decision(x)
+        if self.training:
+            return x.flatten(1, -1), legality.flatten(1, -1)
+        else:
+            return x.flatten(), legality.flatten()
 
     def extract_features(self, x):
-        batch_size = x.shape[0]
-        batch = self.batch if batch_size == self.batch_size else self.batch_envs
+        batch_size = x.shape[0] if self.training else 1
+        batch = (
+            self.batch
+            if batch_size == self.batch_size
+            else self.batch_envs if batch_size == self.num_envs else self.batch_epochs
+        )
 
         x = x.view(-1, self.node_features)
-        x = self.embedding(x)
+        # x = self.embedding(x)
 
         if self.use_res:
             res0 = self.res_proj_0(x)
-        x = F.dropout(F.relu(self.conv1(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+        x = F.dropout(
+            F.relu(self.conv1(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+        )
         x = self.norm1(x, batch, batch_size)
 
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        x = F.dropout(F.relu(self.conv2(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+        x = F.dropout(
+            F.relu(self.conv2(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+        )
         x = self.norm2(x, batch, batch_size)
 
         if self.use_res:
             x = x + res1
             res2 = self.res_proj_2(x)
-        x = F.dropout(F.relu(self.conv3(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+        x = F.dropout(
+            F.relu(self.conv3(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+        )
         x = self.norm3(x, batch, batch_size)
 
         if self.use_res:
             x = x + res2
             res3 = self.res_proj_3(x)
-        x = F.dropout(F.relu(self.conv4(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+        x = F.dropout(
+            F.relu(self.conv4(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+        )
         x = self.norm4(x, batch, batch_size)
 
         if self.use_res:
             x = x + res3
             res4 = self.res_proj_4(x)
-        x = F.dropout(F.relu(self.conv5(x, self.edge_index, edge_attr=self.edge_types)), p = 0.2)
+        x = F.dropout(
+            F.relu(self.conv5(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+        )
+        x = self.norm5(x, batch, batch_size)
 
         if self.use_res:
             x = x + res4
+            res5 = self.res_proj_5(x)
+        x = F.dropout(
+            F.relu(self.conv6(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+        )
+
+        if self.use_res:
+            x = x + res5
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
@@ -185,11 +238,19 @@ class GraphGINE(BaseModule):
 
     def initialize_mlp_weights(self):
         for layer in self.mlp:
-            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="leaky_relu")
-            # th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="tanh")
+            th.nn.init.kaiming_normal_(
+                layer.weight, mode="fan_in", nonlinearity="leaky_relu"
+            )
             th.nn.init.zeros_(layer.bias)
 
+        th.nn.init.kaiming_uniform_(
+            self.legality_layer.weight, mode="fan_in", nonlinearity="leaky_relu"
+        )
+        th.nn.init.zeros_(self.legality_layer.bias)
+
     def make_decision(self, x: th.Tensor):
+        legality = self.legality_layer(x)
+
         for layer in self.mlp[:-1]:
             x = F.leaky_relu(layer(x))
-        return self.mlp[-1](x)
+        return self.mlp[-1](x), legality

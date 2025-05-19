@@ -43,18 +43,21 @@ class GraphGIN(BaseModule):
 
     def setup_graph_feature_extractor(self, shape):
         if self.use_res:
-            self.res_proj_0 = lambda x: x#nn.Linear(self.node_features, shape[0], device=Device.XPU)
-            self.res_proj_1 = lambda x: x#nn.Linear(shape[0], shape[1], device=Device.XPU)
-            self.res_proj_2 = lambda x: x#nn.Linear(shape[1], shape[2], device=Device.XPU)
-            self.res_proj_3 = lambda x: x#nn.Linear(shape[2], shape[3], device=Device.XPU)
-            self.res_proj_4 = lambda x: x#nn.Linear(shape[2], shape[3], device=Device.XPU)
+            self.res_proj_0 = nn.Linear(self.node_features, shape[0], device=Device.XPU)
+            self.res_proj_01 = nn.Linear(self.node_features, shape[1], device=Device.XPU)
+            self.res_proj_02 = nn.Linear(self.node_features, shape[2], device=Device.XPU)
+            self.res_proj_1 = nn.Linear(shape[0], shape[1], device=Device.XPU)
+            self.res_proj_2 = nn.Linear(shape[1], shape[2], device=Device.XPU)
+            self.res_proj_3 = nn.Linear(shape[2], shape[3], device=Device.XPU)
+            self.res_proj_4 = nn.Linear(shape[3], shape[4], device=Device.XPU)
+            self.res_proj_5 = nn.Linear(shape[4], shape[5], device=Device.XPU)
 
-        self.embedding = nn.Linear(self.node_features, shape[0])
-        nn.init.kaiming_uniform_(self.embedding.weight)
-        nn.init.zeros_(self.embedding.bias)
+        # self.embedding = nn.Linear(self.node_features, shape[0])
+        # nn.init.kaiming_uniform_(self.embedding.weight)
+        # nn.init.zeros_(self.embedding.bias)
 
         self.conv1 = GINConv(nn.Sequential(
-            nn.Linear(shape[0], shape[0]),
+            nn.Linear(self.node_features, shape[0]),
             nn.ReLU(),
             nn.Linear(shape[0], shape[0])
         ), train_eps=True)
@@ -78,7 +81,12 @@ class GraphGIN(BaseModule):
             nn.ReLU(),
             nn.Linear(shape[4], shape[4])
         ), train_eps=True)
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
+        self.conv6 = GINConv(nn.Sequential(
+            nn.Linear(shape[4], shape[5]),
+            nn.ReLU(),
+            nn.Linear(shape[5], shape[5])
+        ), train_eps=True)
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6)
 
 
     def setup_mlp(self, gnn_shape, mlp_shape, output_size, is_seq = False):
@@ -90,51 +98,66 @@ class GraphGIN(BaseModule):
 
         self.mlp = tuple(mlp)
 
+        self.legality_layer = nn.Linear(
+            self.gnn_shape[-1], output_size, device=Device.XPU
+        )
+
     def forward(self, x, *args):
         x = x.flatten(0, 1)
         x = self.extract_features(x)
         if self.is_seq:
             x = x.flatten(-2, -1)
-        x = self.make_decision(x)
-        return x.flatten(1, -1)
+        x, legality = self.make_decision(x)
+        if self.training:
+            return x.flatten(1, -1), legality.flatten(1, -1)
+        else:
+            return x.flatten(), legality.flatten()
 
     def extract_features(self, x):
-        batch_size = x.shape[0]
+        batch_size = x.shape[0] if self.training else 1
         # batch = self.batch if batch_size == self.batch_size else self.batch_envs
 
         # GINConv expects a large graph instead of batches, so we'll rely on edge_index to unfold the graph later
         x = x.view(-1, self.node_features)
-        x = self.embedding(x)
+        # x = self.embedding(x)
 
         if self.use_res:
             res0 = self.res_proj_0(x)
-        x = F.dropout(F.relu(self.conv1(x, self.edge_index)), p=0.2)
+            res01 = self.res_proj_01(x)
+            res02 = self.res_proj_02(x)
+        x = F.dropout(F.relu(self.conv1(x, self.edge_index)), p=0.25)
         # x = self.norm1(x, batch, batch_size)
 
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        x = F.dropout(F.relu(self.conv2(x, self.edge_index)), p=0.2)
+        x = F.dropout(F.relu(self.conv2(x, self.edge_index)), p=0.25)
         # x = self.norm2(x, batch, batch_size)
 
         if self.use_res:
-            x = x + res1
+            x = x + res1 + res01
             res2 = self.res_proj_2(x)
-        x = F.dropout(F.relu(self.conv3(x, self.edge_index)), p=0.2)
+        x = F.dropout(F.relu(self.conv3(x, self.edge_index)), p=0.25)
         # x = self.norm3(x, batch, batch_size)
 
         if self.use_res:
-            x = x + res2
+            x = x + res2 + res02
             res3 = self.res_proj_3(x)
-        x = F.dropout(F.relu(self.conv4(x, self.edge_index)), p=0.2)
+        x = F.dropout(F.relu(self.conv4(x, self.edge_index)), p=0.25)
 
         if self.use_res:
-            x = x + res3
+            x = x + res3 + res02
             res4 = self.res_proj_4(x)
-        x = F.dropout(F.relu(self.conv5(x, self.edge_index)), p=0.2)
+        x = F.dropout(F.relu(self.conv5(x, self.edge_index)), p=0.25)
 
         if self.use_res:
-            x = x + res4
+            x = x + res4 + res02
+            res5 = self.res_proj_5(x)
+        x = F.dropout(F.relu(self.conv6(x, self.edge_index)), p=0.25)
+
+        if self.use_res:
+            x = x + res5 + res02
+            # x = x + res4 + res02
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
@@ -155,7 +178,14 @@ class GraphGIN(BaseModule):
             # th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="tanh")
             th.nn.init.zeros_(layer.bias)
 
+        th.nn.init.kaiming_uniform_(
+            self.legality_layer.weight, mode="fan_in", nonlinearity="leaky_relu"
+        )
+        th.nn.init.zeros_(self.legality_layer.bias)
+
     def make_decision(self, x: th.Tensor):
+        legality = self.legality_layer(x)
+
         for layer in self.mlp[:-1]:
             x = F.leaky_relu(layer(x))
-        return self.mlp[-1](x)
+        return self.mlp[-1](x), legality

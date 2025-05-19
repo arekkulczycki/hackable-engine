@@ -1,23 +1,22 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import os.path
-import shutil
-import traceback
-from collections import deque
+from collections import deque, defaultdict
 from enum import Enum
 from multiprocessing import Process
 from queue import Empty
-from random import random
+from random import sample
 from struct import pack, unpack
 from typing import Generator
 
-import numpy as np
 import aiofiles
+import numpy as np
 from faster_fifo import Queue, Full
 
+from hackable_engine.board.hex.bitboard_utils import generate_masks, split_mask_to_uint64_array
 from hackable_engine.common.constants import FLOAT_TYPE
 
-Experience = tuple[np.array, float, float, np.array, bool]
+Experience = tuple[np.array, float, float, np.array, bool, int, int]
 
 
 class ReplayBuffer:
@@ -25,8 +24,17 @@ class ReplayBuffer:
         LIST = 0
         DEQUE = 1
 
-    def __init__(self, capacity: int, storage_type=StorageType.DEQUE):
+    def __init__(
+        self,
+        board_size: int,
+        capacity: int,
+        storage_type=StorageType.DEQUE,
+        priority_rate: float = 0.0,
+    ):
         self.count: int = 0
+        self.board_size: int = board_size
+        self.board_size_squared: int = board_size**2
+        self.board_mask: int = (1 << self.board_size_squared) - 1
         self.capacity: int = capacity
         self.storage_type: ReplayBuffer.StorageType = storage_type
 
@@ -35,13 +43,25 @@ class ReplayBuffer:
         else:
             self.buffer = []
 
-        self.backup: DiskBackup | None = None
+        self.priority_indices: set[int] = set()
+        self.priority_rate: float = priority_rate
+        """Between 0 and 1, the % of sampled items took from the priority pool."""
 
-    def setup_disk_backup(self, capacity: int, batch_size: int, obs_shape: tuple[int, ...], version: int):
+        self.control_stats_dict: dict[int, dict[int, np.array]] = defaultdict(dict)
+        self.control_stats_keys: dict[int, set[tuple[int, int]]] = defaultdict(set)
+        self.control_stats_terminal_keys: set[tuple[int, int]] = set()
+        # self.control_stats_keys_arr: np.array = np.empty(shape=(2_000_000, 2, 3), dtype=np.uint64)  # 91 MB
+        """Keep track of what keys are already present for the data and facilitate quick subset lookups."""
+
+        self.backup: DiskBackupProcess | None = None
+
+    def setup_disk_backup(
+        self, capacity: int, batch_size: int, obs_shape: tuple[int, ...], version: int
+    ):
         self.in_queue = Queue(maxsize=10 * 1024 * 1024)
         self.out_queue = Queue(maxsize=10 * 1024 * 1024)
 
-        self.backup = DiskBackup(
+        self.backup = DiskBackupProcess(
             self.out_queue, self.in_queue, capacity, batch_size, obs_shape, version
         )
         self.backup.start()
@@ -51,23 +71,173 @@ class ReplayBuffer:
             self.buffer.append(experience)
         else:
             if self.count < self.capacity:
-                self.count += 1
                 self.buffer.append(experience)
+                position = self.count
+                self.count += 1
             else:
                 if self.backup is not None and self.backup.active:
                     # store on disk mostly experiences with non-zero rewards
-                    if experience[2] != 0 or random() > 0.95:
+                    if experience[2] != 0:  # or random() > 0.95:
                         try:
                             self.out_queue.put_nowait(self.buffer[position])
                         except Full:
                             pass
                 self.buffer[position] = experience
 
-    def sample(self, size: int) -> Generator[Experience, None, None]:
-        batch_ids = np.random.randint(self.size(), size=size)
-        batch = (self.buffer[i] for i in batch_ids)
+            is_terminal = experience[2] != 0
+            is_legal = experience[2] >= -1
+            ocb = experience[-2]
+            ocw = experience[-1]
+            if (
+                is_legal and
+                ocb not in self.control_stats_dict
+                or ocw not in self.control_stats_dict[ocb]
+            ):
+                self.control_stats_dict[ocb][ocw] = self.initialize_oc_stats(ocb, ocw)
+                # self.control_stats_keys_arr[position][0] = split_mask_to_uint64_array(ocb)
+                # self.control_stats_keys_arr[position][1] = split_mask_to_uint64_array(ocw)
+                if not is_terminal:
+                    self.control_stats_keys[ocb.bit_count()].add((ocb, ocw))
 
-        if self.backup is not None and self.backup.active and self.size() >= self.capacity:
+            if is_terminal:  # prioritize non-zero rewards
+                self.priority_indices.add(position)
+                if is_legal:
+                    self.propagate_oc_to_children(ocb, ocw)
+                    self.control_stats_terminal_keys.add((ocb, ocw))
+            else:
+                self.priority_indices.discard(position)
+
+    def propagate_oc_to_children(self, ocb: int, ocw: int):
+        """Find all keys that have a subset of white stones AND a subset of black stones."""
+
+        # for ocb_child, ocw_child in self.find_mask_subsets_vectorized(ocb, ocw):
+        #     child_control_stats = self.control_stats_dict[ocb_child][ocw_child]
+        #     # iterate over all cells in the board
+        #     for mask in generate_masks(self.board_mask):
+        #         c = mask.bit_length() - 1
+        #         if mask & ocb:
+        #             child_control_stats[c][0] += 1
+        #         elif mask & ocw:
+        #             child_control_stats[c][1] += 1
+        #         else:
+        #             child_control_stats[c][2] += 1
+
+        max_count = ocb.bit_count() - 1
+        for count in range(max_count):
+            for ocb_child, ocw_child in self.control_stats_keys[count]:
+                if ocb_child & ocb != ocb_child or ocw_child & ocw != ocw_child:
+                    continue
+
+                child_control_stats = self.control_stats_dict[ocb_child][ocw_child]
+                self.increment_oc_stats(child_control_stats, ocb, ocw)
+
+    def increment_oc_stats(self, arr: np.array, ocb: int, ocw: int) -> np.array:
+        # iterate over all cells in the board
+        for mask in generate_masks(self.board_mask):
+            c = mask.bit_length() - 1
+            if mask & ocb:
+                arr[c][0] += 1
+            elif mask & ocw:
+                arr[c][1] += 1
+            else:
+                arr[c][2] += 1
+
+    def initialize_oc_stats(self, ocb: int, ocw: int) -> np.array:
+        arr = np.zeros(dtype=FLOAT_TYPE, shape=(self.board_size_squared, 3))
+
+        # increment with itself to avoid zeros
+        self.increment_oc_stats(arr, ocb, ocw)
+
+        # add from all terminal experiences where current is subset of ocb and ocw
+        # TODO: check performance, is this worth it?
+        for ocb_parent, ocw_parent in self.control_stats_terminal_keys:
+            if ocb & ocb_parent != ocb or ocw & ocw_parent != ocw:
+                continue
+            self.increment_oc_stats(arr, ocb_parent, ocw_parent)
+
+        return arr
+
+    def find_closest_prob_oc_stats(self, ocb: int, ocw: int):
+        if ocb in self.control_stats_dict and ocw in self.control_stats_dict[ocb]:
+            return self.get_prob_oc_stats(self.control_stats_dict[ocb][ocw])
+
+        keys = self.control_stats_keys[ocb.bit_count() - 1]
+        for ocb_child, ocw_child in keys:
+            # check if it's a subset of both ocb and ocw
+            if ocb_child & ocb != ocb_child or ocw_child & ocw != ocw_child:
+                continue
+
+            return self.get_prob_oc_stats(self.control_stats_dict[ocb_child][ocw_child])
+        return self.get_avg_prob_oc_stats()
+
+    def get_avg_prob_oc_stats(self) -> np.array:
+        return np.zeros(dtype=FLOAT_TYPE, shape=(self.board_size_squared, 3)) + 1 / 3
+
+    def find_mask_subsets_vectorized(self, ocb: int, ocw: int) -> Generator[tuple[int, int], None, None]:
+        # Convert target into 3-part chunks
+        ocb_chunks = split_mask_to_uint64_array(ocb)
+        ocw_chunks = split_mask_to_uint64_array(ocw)
+
+        child_ocb_arr = self.control_stats_keys_arr[:, 0, :]  # shape (N, 3)
+        child_ocw_arr = self.control_stats_keys_arr[:, 1, :]  # shape (N, 3)
+
+        # Check subset condition: (x & target) == x for all 3 chunks
+        condition_ocb = np.all((child_ocb_arr & ocb_chunks) == child_ocb_arr, axis=1)
+        condition_ocw = np.all((child_ocw_arr & ocw_chunks) == child_ocw_arr, axis=1)
+
+        subset_arr = self.control_stats_keys_arr[condition_ocb & condition_ocw]  # shape (N, 2, 3)
+        return self.subset_arr_to_pairs(subset_arr)
+        # Combine masks
+        # mask = mask_A & mask_B
+        # return [self.control_stats_keys_arr[i] for i in np.where(condition_ocb & condition_ocw)[0]]
+
+    def subset_arr_to_pairs(self, subset_arr) -> Generator[tuple[int, int], None, None]:
+        yield from (
+            (
+                self.combine_chunks_to_int(pair[0]),  # first bitmask
+                self.combine_chunks_to_int(pair[1])  # second bitmask
+            )
+            for pair in subset_arr
+        )
+
+    @staticmethod
+    def combine_chunks_to_int(chunks):
+        return int(chunks[0]) + (int(chunks[1]) << 64) + (int(chunks[2]) << 128)
+
+    @staticmethod
+    def get_prob_oc_stats(oc_stats: np.array) -> np.array:
+        return oc_stats / np.sum(oc_stats, axis=-1, keepdims=True)
+
+    def get_prob_oc_stats_from_experience(self, experience: Experience) -> np.array:
+        oc_stats = self.control_stats_dict[experience[-2]][experience[-1]]
+        try:
+            return oc_stats / np.sum(oc_stats, axis=-1, keepdims=True)
+        except ZeroDivisionError:
+            return (
+                np.zeros(dtype=FLOAT_TYPE, shape=(self.board_size_squared, 3)) + 1 / 3
+            )
+
+    def sample(self, size: int) -> Generator[Experience, None, None]:
+        priority_size = int(size * self.priority_rate)
+        try:
+            priority_batch_ids = sample(sorted(self.priority_indices), k=priority_size)
+        except ValueError:
+            population = len(self.priority_indices)
+            if population < size:
+                priority_batch_ids = list(self.priority_indices)
+                priority_size = population
+            else:
+                priority_batch_ids = sample(sorted(self.priority_indices), k=size)
+                priority_size = size
+
+        batch_ids = sample(range(self.size()), k=(size - priority_size))
+        batch = (self.buffer[i] for i in batch_ids + priority_batch_ids)
+
+        if (
+            self.backup is not None
+            and self.backup.active
+            and self.size() >= self.capacity
+        ):
             try:
                 backup_batches = self.in_queue.get_many_nowait(max_messages_to_get=size)
             except Empty:
@@ -84,8 +254,84 @@ class ReplayBuffer:
         else:
             return self.count
 
+    async def dump_to_disk(self, obs_shape: tuple[int, ...]):
+        # disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer")
+        disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer_nonrandom")
+        for position, experience in enumerate(self.buffer):
+            await disk.store(position, experience)
 
-class DiskBackup(Process):
+    async def load_init_buffer(self, obs_shape: tuple[int, ...], size: int):
+        # disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer")
+        disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer_nonrandom")
+
+        for position in range(size):
+            experience = await disk.get(position)
+            if experience:
+                self.push(position, experience)
+            else:
+                break
+
+
+class DiskBackup:
+
+    def __init__(self, obs_shape: tuple[int, ...], path: str | None = None):
+        self.keys = ("last_obs", "action", "reward", "obs", "done")
+        self.path = path or "/var/tmp/hackable_engine/replay_buffer"
+        # if os.path.exists(self.path):
+        #     shutil.rmtree(self.path)
+        os.makedirs(self.path, exist_ok=True)
+
+        self.obs_shape = (1, *obs_shape)
+        self.arr_size = obs_shape[0] * obs_shape[1] * 4  # float32 is 4 bytes
+
+    async def store(self, position: int, experience: Experience):
+        value = (
+            experience[0].tobytes()
+            + pack("f", experience[1])
+            + pack("f", experience[2])
+            + experience[3].tobytes()
+            + (bytes([1 if experience[4] else 0]))
+            + experience[5].to_bytes(
+                22, byteorder="big", signed=False
+            )  # TODO: 22 depends on board size, here 13x13
+            + experience[6].to_bytes(22, byteorder="big", signed=False)
+        )
+        await self.set_file_content(f"replay_buffer_{position}", value)
+
+    async def get(self, position: int) -> Experience | None:
+        try:
+            content = await self.get_file_content(f"replay_buffer_{position}")
+        except FileNotFoundError:
+            return None
+        lengths = (self.arr_size, 4, 4, self.arr_size, 1, 22, 22)
+        pieces = []
+        start = 0
+        end = 0
+        for l in lengths:
+            end += l
+            pieces.append(content[start:end])
+            start += l
+
+        return (
+            np.frombuffer(pieces[0], dtype=FLOAT_TYPE).reshape(self.obs_shape),
+            unpack("f", pieces[1])[0],
+            unpack("f", pieces[2])[0],
+            np.frombuffer(pieces[3], dtype=FLOAT_TYPE).reshape(self.obs_shape),
+            bool(pieces[4]),
+            int.from_bytes(pieces[5], byteorder="big", signed=False),
+            int.from_bytes(pieces[6], byteorder="big", signed=False),
+        )
+
+    async def get_file_content(self, file_name: str) -> bytes:
+        async with aiofiles.open(f"{self.path}/{file_name}", mode="rb") as f:
+            return await f.read()
+
+    async def set_file_content(self, file_name: str, content: bytes) -> None:
+        async with aiofiles.open(f"{self.path}/{file_name}", mode="wb") as f:
+            return await f.write(content)
+
+
+class DiskBackupProcess(Process):
     """
     Constantly store experiences on disk and provide a number (`batch_size`) of experiences in a queue to be consumed.
     """
@@ -99,7 +345,8 @@ class DiskBackup(Process):
         obs_shape: tuple[int, ...],
         version: int,
     ):
-        super().__init__(daemon=True)
+        super(Process, self).__init__(daemon=True)
+        self.disk = DiskBackup(obs_shape, version)
 
         self.in_queue: Queue = in_queue
         self.out_queue: Queue = out_queue
@@ -110,15 +357,6 @@ class DiskBackup(Process):
         self._write_pointer = 0
         self._read_pointer = 0
         self.batch_size = batch_size
-        self.obs_shape = (1, *obs_shape)
-
-        self.keys = ("last_obs", "action", "reward", "obs", "done")
-        self.path = f"/var/tmp/hackable_engine/dqn_v{version}_replay_buffer"
-        # if os.path.exists(self.path):
-        #     shutil.rmtree(self.path)
-        os.makedirs(self.path, exist_ok=True)
-
-        self.arr_size = obs_shape[0] * obs_shape[1] * 4
 
     @property
     def write_pointer(self):
@@ -169,40 +407,8 @@ class DiskBackup(Process):
             *(self.get(self.read_pointer) for _ in range(self.batch_size))
         )
 
-    async def store(self, position: int, experience: Experience):
-        value = (
-            experience[0].tobytes()
-            + pack("f", experience[1])
-            + pack("f", experience[2])
-            + experience[3].tobytes()
-            + (bytes(1) if experience[4] else bytes(0))
-        )
-        await self.set_file_content(f"replay_buffer_{position}", value)
-
     async def get(self, position: int) -> Experience | None:
+        return await self.disk.get(position)
 
-        content = await self.get_file_content(f"replay_buffer_{position}")
-        lengths = (self.arr_size, 4, 4, self.arr_size, 1)
-        pieces = []
-        start = 0
-        end = 0
-        for l in lengths:
-            end += l
-            pieces.append(content[start:end])
-            start += l
-
-        return (
-            np.frombuffer(pieces[0], dtype=FLOAT_TYPE).reshape(self.obs_shape),
-            unpack("f", pieces[1])[0],
-            unpack("f", pieces[2])[0],
-            np.frombuffer(pieces[3], dtype=FLOAT_TYPE).reshape(self.obs_shape),
-            bool(pieces[4]),
-        )
-
-    async def get_file_content(self, file_name: str) -> bytes:
-        async with aiofiles.open(f"{self.path}/{file_name}", mode="rb") as f:
-            return await f.read()
-
-    async def set_file_content(self, file_name: str, content: bytes) -> None:
-        async with aiofiles.open(f"{self.path}/{file_name}", mode="wb") as f:
-            return await f.write(content)
+    async def store(self, position: int, experience: Experience):
+        await self.disk.store(position, experience)

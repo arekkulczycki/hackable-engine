@@ -1,6 +1,7 @@
 .idea
 .pyre
 hackable_engine/board/cpp_board/
+simple_dqn
 **/node_modules
 
 hex9*
