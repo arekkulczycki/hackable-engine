@@ -57,25 +57,44 @@ class GraphGAT(BaseModule):
                 self.gnn_shape[1] * self.gnn_heads,
                 device=Device.XPU,
             )
+            # self.res_proj_01 = nn.Linear(
+            #     self.node_features,
+            #     self.gnn_shape[1] * self.gnn_heads,
+            #     device=Device.XPU,
+            # )
             self.res_proj_2 = nn.Linear(
                 self.gnn_shape[1] * self.gnn_heads,
                 self.gnn_shape[2] * self.gnn_heads,
                 device=Device.XPU,
             )
+            # self.res_proj_02 = nn.Linear(
+            #     self.node_features,
+            #     self.gnn_shape[2] * self.gnn_heads,
+            #     device=Device.XPU,
+            # )
             self.res_proj_3 = nn.Linear(
                 self.gnn_shape[2] * self.gnn_heads,
                 self.gnn_shape[3] * self.gnn_heads,
                 device=Device.XPU,
             )
+            # self.res_proj_03 = nn.Linear(
+            #     self.node_features,
+            #     self.gnn_shape[3] * self.gnn_heads,
+            #     device=Device.XPU,
+            # )
             self.res_proj_4 = nn.Linear(
                 self.gnn_shape[3] * self.gnn_heads, self.gnn_shape[4], device=Device.XPU
             )
+            # self.res_proj_04 = nn.Linear(
+            #     self.node_features, self.gnn_shape[4], device=Device.XPU
+            # )
         self.conv1 = GATv2Conv(
             self.node_features,
             self.gnn_shape[0],
             heads=self.gnn_heads,
             concat=True,
             edge_dim=3,
+            # residual=self.use_res,
         )
         self.conv2 = GATv2Conv(
             self.gnn_shape[0] * self.gnn_heads,
@@ -83,6 +102,7 @@ class GraphGAT(BaseModule):
             heads=self.gnn_heads,
             concat=True,
             edge_dim=3,
+            # residual=self.use_res,
         )
         self.conv3 = GATv2Conv(
             self.gnn_shape[1] * self.gnn_heads,
@@ -90,6 +110,7 @@ class GraphGAT(BaseModule):
             heads=self.gnn_heads,
             concat=True,
             edge_dim=3,
+            # residual=self.use_res,
         )
         self.conv4 = GATv2Conv(
             self.gnn_shape[2] * self.gnn_heads,
@@ -97,6 +118,7 @@ class GraphGAT(BaseModule):
             heads=self.gnn_heads,
             concat=True,
             edge_dim=3,
+            # residual=self.use_res,
         )
         self.conv5 = GATv2Conv(
             self.gnn_shape[3] * self.gnn_heads,
@@ -104,6 +126,7 @@ class GraphGAT(BaseModule):
             heads=1,
             concat=True,
             edge_dim=3,
+            # residual=self.use_res,
         )
         self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
 
@@ -116,45 +139,54 @@ class GraphGAT(BaseModule):
 
         self.mlp = tuple(mlp)
 
+        self.legality_layer = nn.Linear(self.gnn_shape[-1], output_size, device=Device.XPU)
+
     def forward(self, x, *args):
         x = self.extract_features(x)
-        x = self.make_decision(x)
-        return x.flatten(1, -1)
+        x, legality = self.make_decision(x)
+        if self.training:
+            return x.flatten(1, -1), legality.flatten(1, -1)
+        else:
+            return x.flatten(), legality.flatten()
 
     def extract_features(self, x):
         # GATConv expects a large graph instead of batches, so we'll rely on edge_index to unfold the graph later
-        batch_size = x.shape[0]
+        batch_size = x.shape[0] if self.training else 1
         x = x.view(-1, self.node_features)
 
         if self.use_res:
             res0 = self.res_proj_0(x)
-        x = F.dropout(F.relu(self.conv1(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+            # res01 = self.res_proj_0(x)
+            # res02 = self.res_proj_0(x)
+            # res03 = self.res_proj_0(x)
+            # res04 = self.res_proj_0(x)
+        x = F.dropout(F.relu(self.conv1(x, self.edge_index, edge_attr=self.edge_types)), p=0.25)
         # x = self.norm1(x, batch, batch_size)
 
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        x = F.dropout(F.relu(self.conv2(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+        x = F.dropout(F.relu(self.conv2(x, self.edge_index, edge_attr=self.edge_types)), p=0.25)
         # x = self.norm2(x, batch, batch_size)
 
         if self.use_res:
-            x = x + res1
+            x = x + res1 #+ res01
             res2 = self.res_proj_2(x)
-        x = F.dropout(F.relu(self.conv3(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+        x = F.dropout(F.relu(self.conv3(x, self.edge_index, edge_attr=self.edge_types)), p=0.25)
         # x = self.norm3(x, batch, batch_size)
 
         if self.use_res:
-            x = x + res2
+            x = x + res2 #+ res02
             res3 = self.res_proj_3(x)
-        x = F.dropout(F.relu(self.conv4(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+        x = F.dropout(F.relu(self.conv4(x, self.edge_index, edge_attr=self.edge_types)), p=0.25)
 
         if self.use_res:
-            x = x + res3
+            x = x + res3 #+ res03
             res4 = self.res_proj_4(x)
-        x = F.dropout(F.relu(self.conv5(x, self.edge_index, edge_attr=self.edge_types)), p=0.2)
+        x = F.dropout(F.relu(self.conv5(x, self.edge_index, edge_attr=self.edge_types)), p=0.25)
 
         if self.use_res:
-            x = x + res4
+            x = x + res4 #+ res04
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
@@ -171,7 +203,12 @@ class GraphGAT(BaseModule):
             th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="leaky_relu")
             th.nn.init.zeros_(layer.bias)
 
+        th.nn.init.kaiming_uniform_(self.legality_layer.weight, mode="fan_in", nonlinearity="leaky_relu")
+        th.nn.init.zeros_(self.legality_layer.bias)
+
     def make_decision(self, x: th.Tensor):
+        legality = self.legality_layer(x)
+
         for layer in self.mlp[:-1]:
             x = F.leaky_relu(layer(x))
-        return self.mlp[-1](x)
+        return self.mlp[-1](x), legality

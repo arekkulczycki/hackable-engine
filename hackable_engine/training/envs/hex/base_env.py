@@ -86,12 +86,15 @@ class BaseEnv(gym.Env):
         self.current_move: Move | None = None
 
         self.did_force_stop: bool = False
-        self.results: deque[float] = deque(maxlen=1000)
+        self.results: deque[float] = deque(maxlen=100)
 
     def render(self, mode="human", close=False) -> RenderFrame:
         """"""
 
-        n = self.controller.board.size_square - self.controller.board.unoccupied.bit_count()
+        n = (
+            self.controller.board.size_square
+            - self.controller.board.unoccupied.bit_count()
+        )
         if n:
             if self.winner is None:
                 print("environment reset before game finished")
@@ -343,7 +346,9 @@ class BaseEnv(gym.Env):
         relative_score = score - self.last_intermediate_score
         self.last_intermediate_score = score
 
-        if (self.color and relative_score > 0) or (not self.color and relative_score < 0):
+        if (self.color and relative_score > 0) or (
+            not self.color and relative_score < 0
+        ):
             return True
         return False
 
@@ -352,7 +357,9 @@ class BaseEnv(gym.Env):
         relative_score = score - self.last_intermediate_score
         self.last_intermediate_score = score
 
-        if (self.color and relative_score > 0) or (not self.color and relative_score < 0):
+        if (self.color and relative_score > 0) or (
+            not self.color and relative_score < 0
+        ):
             return True
         return False
 
@@ -471,13 +478,15 @@ class BaseEnv(gym.Env):
         # )
 
     @staticmethod
-    def _make_random_move(board):
+    def _make_random_move(board) -> Move:
         """"""
 
         moves = list(board.legal_moves)
-        board.push(choice(moves))
+        move = choice(moves)
+        board.push(move)
+        return move
 
-    def _make_logical_move(self, board):
+    def _make_logical_move(self, board) -> Move:
         """"""
 
         opp_color = not self.color
@@ -488,8 +497,8 @@ class BaseEnv(gym.Env):
             if best_move and np.random.choice((True, False)):
                 continue  # in order for the opponent to not always play the same move
 
-            score = self._get_distance_score(n_moves)
-            # score = self._get_distance_score_perf(n_moves)
+            # score = self._get_distance_score(n_moves)
+            score = self._get_distance_score_perf(n_moves)
             if best_move is None or (
                 (
                     (opp_color and score > best_score)
@@ -500,30 +509,33 @@ class BaseEnv(gym.Env):
                 best_score = score
 
         board.push(best_move)
+        return best_move
 
-    def get_logical_move(self) -> tuple[Move, float, int]:
-        n_moves = len(self.controller.board.move_stack)
-        color = self.controller.board.turn
-
-        best_move: Optional[Move] = None
-        best_score = None
-        for move in self.controller.board.legal_moves:
-            score = self._get_distance_score_perf(n_moves)
-            # score = self._get_distance_score(n_moves)
-
-            if best_move is None or (
-                ((color and score > best_score) or (not color and score < best_score))
-            ):
-                best_move = move
-                best_score = score
-        return best_move, best_score, n_moves
+    # def get_logical_move(self) -> tuple[Move, float, int]:
+    #     n_moves = len(self.controller.board.move_stack)
+    #     color = self.controller.board.turn
+    #
+    #     best_move: Optional[Move] = None
+    #     best_score = None
+    #     for move in self.controller.board.legal_moves:
+    #         score = self._get_distance_score_perf(n_moves)
+    #         # score = self._get_distance_score(n_moves)
+    #
+    #         if best_move is None or (
+    #             ((color and score > best_score) or (not color and score < best_score))
+    #         ):
+    #             best_move = move
+    #             best_score = score
+    #     return best_move, best_score, n_moves
 
     def get_move_from_logits(self, logits):
         best_move: Optional[Move] = None
         best_score = None
         for move in self.controller.board.legal_moves:
             score = logits[move.mask.bit_length() - 1]
-            if best_move is None or (score > best_score and choice([True, False])):  # inherent randomization
+            if best_move is None or (
+                score > best_score and choice([True, False])
+            ):  # inherent randomization
                 best_move = move
                 best_score = score
 

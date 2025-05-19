@@ -2,7 +2,7 @@
 import torch as th
 from torch import nn
 from torch.nn import functional as F
-from torch_geometric.nn import RGCNConv, FastRGCNConv
+from torch_geometric.nn import FastRGCNConv
 
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
@@ -58,6 +58,9 @@ class GraphRGCN(BaseModule):
             self.res_proj_4 = nn.Linear(
                 self.gnn_shape[3], self.gnn_shape[4], device=Device.XPU
             )
+            self.res_proj_5 = nn.Linear(
+                self.gnn_shape[4], self.gnn_shape[5], device=Device.XPU
+            )
         self.conv1 = FastRGCNConv(
             self.node_features,
             self.gnn_shape[0],
@@ -83,7 +86,12 @@ class GraphRGCN(BaseModule):
             self.gnn_shape[4],
             num_relations=3,
         )
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
+        self.conv6 = FastRGCNConv(
+            self.gnn_shape[4],
+            self.gnn_shape[5],
+            num_relations=3,
+        )
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6)
 
     def setup_mlp(self, output_size):
         mlp = []
@@ -94,47 +102,57 @@ class GraphRGCN(BaseModule):
 
         self.mlp = tuple(mlp)
 
+        self.legality_layer = nn.Linear(self.gnn_shape[-1], output_size, device=Device.XPU)
+
     def forward(self, x, *args):
         # x = x.flatten(1, -1)  # will have no effect on 2-dim tensors, will flatten 3-dim into 2-dim
         x = self.extract_features(x)
-        x = self.make_decision(x)
-        return x.flatten(1, -1)
+        x, legality = self.make_decision(x)
+        if self.training:
+            return x.flatten(1, -1), legality.flatten(1, -1)
+        else:
+            return x.flatten(), legality.flatten()
 
     def extract_features(self, x):
         # RGCN expects a large graph instead of batches, so we'll rely on edge_index to unfold the graph later
-        batch_size = x.shape[0]
+        batch_size = x.shape[0] if self.training else 1
         x = x.view(-1, self.node_features)
 
         if self.use_res:
             res0 = self.res_proj_0(x)
-        x = F.dropout(F.relu(self.conv1(x, self.edge_index, edge_type=self.edge_types)), p=0.2)
+        x = F.dropout(F.relu(self.conv1(x, self.edge_index, edge_type=self.edge_types)), p=0.25)
         # x = self.norm1(x, batch, batch_size)
 
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        x = F.dropout(F.relu(self.conv2(x, self.edge_index, edge_type=self.edge_types)), p=0.2)
+        x = F.dropout(F.relu(self.conv2(x, self.edge_index, edge_type=self.edge_types)), p=0.25)
         # x = self.norm2(x, batch, batch_size)
 
         if self.use_res:
             x = x + res1
             res2 = self.res_proj_2(x)
-        x = F.dropout(F.relu(self.conv3(x, self.edge_index, edge_type=self.edge_types)), p=0.2)
+        x = F.dropout(F.relu(self.conv3(x, self.edge_index, edge_type=self.edge_types)), p=0.25)
         # x = self.norm3(x, batch, batch_size)
 
         if self.use_res:
             x = x + res2
             res3 = self.res_proj_3(x)
-        x = F.dropout(F.relu(self.conv4(x, self.edge_index, edge_type=self.edge_types)), p=0.2)
+        x = F.dropout(F.relu(self.conv4(x, self.edge_index, edge_type=self.edge_types)), p=0.25)
         # x = self.norm4(x, batch, batch_size)
 
         if self.use_res:
             x = x + res3
             res4 = self.res_proj_4(x)
-        x = F.dropout(F.relu(self.conv5(x, self.edge_index, edge_type=self.edge_types)), p=0.2)
+        x = F.dropout(F.relu(self.conv5(x, self.edge_index, edge_type=self.edge_types)), p=0.25)
 
         if self.use_res:
             x = x + res4
+            res5 = self.res_proj_5(x)
+        x = F.dropout(F.relu(self.conv6(x, self.edge_index, edge_type=self.edge_types)), p=0.25)
+
+        if self.use_res:
+            x = x + res5
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
@@ -151,7 +169,12 @@ class GraphRGCN(BaseModule):
             th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="leaky_relu")
             th.nn.init.zeros_(layer.bias)
 
+        th.nn.init.kaiming_uniform_(self.legality_layer.weight, mode="fan_in", nonlinearity="leaky_relu")
+        th.nn.init.zeros_(self.legality_layer.bias)
+
     def make_decision(self, x: th.Tensor):
+        legality = self.legality_layer(x)
+
         for layer in self.mlp[:-1]:
             x = F.leaky_relu(layer(x))
-        return self.mlp[-1](x)
+        return self.mlp[-1](x), legality

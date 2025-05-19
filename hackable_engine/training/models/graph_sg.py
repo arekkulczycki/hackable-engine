@@ -20,7 +20,6 @@ class GraphSG(BaseModule):
         gnn_shape,
         mlp_shape,
         edge_index,
-        is_seq=False,
     ):
         super().__init__()
         self.node_count = node_count
@@ -29,30 +28,35 @@ class GraphSG(BaseModule):
         self.batch_size = batch_size
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
-        self.is_seq = is_seq
 
         self.edge_index = edge_index.to(Device.XPU)
 
         self.setup_graph_feature_extractor(gnn_shape)
-        self.setup_mlp(gnn_shape, mlp_shape, output_size, is_seq)
+        self.setup_mlp(gnn_shape, mlp_shape, output_size)
 
         self.initialize_gnn_weights()
         self.initialize_mlp_weights()
 
     def setup_graph_feature_extractor(self, shape):
         self.res_conv_0 = nn.Linear(self.node_features, shape[0], device=Device.XPU)
+        # self.res_conv_0b = nn.Linear(self.node_features, shape[1], device=Device.XPU)
+        # self.res_conv_0c = nn.Linear(self.node_features, shape[2], device=Device.XPU)
         self.res_conv_1 = nn.Linear(shape[0], shape[1], device=Device.XPU)
         self.res_conv_2 = nn.Linear(shape[1], shape[2], device=Device.XPU)
         self.res_conv_3 = nn.Linear(shape[2], shape[3], device=Device.XPU)
         self.res_conv_4 = nn.Linear(shape[3], shape[4], device=Device.XPU)
+        self.res_conv_5 = nn.Linear(shape[4], shape[5], device=Device.XPU)
         self.conv_1 = SGConv(self.node_features, shape[0], K=1)
         self.conv_2 = SGConv(shape[0], shape[1], K=1)
         self.conv_3 = SGConv(shape[1], shape[2], K=1)
         self.conv_4 = SGConv(shape[2], shape[3], K=1)
         self.conv_5 = SGConv(shape[3], shape[4], K=1)
+        self.conv_6 = SGConv(shape[4], shape[5], K=1)
 
         self.gnn = (
             self.res_conv_0,
+            # self.res_conv_0b,
+            # self.res_conv_0c,
             self.conv_1,
             self.res_conv_1,
             self.conv_2,
@@ -62,47 +66,68 @@ class GraphSG(BaseModule):
             self.conv_4,
             self.res_conv_4,
             self.conv_5,
+            self.res_conv_5,
+            self.conv_6,
         )
 
-    def setup_mlp(self, gnn_shape, mlp_shape, output_size, is_seq=False):
+    def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
-        prev_size = gnn_shape[-1] * self.node_count if is_seq else gnn_shape[-1]
+        control_mlp = []
+
+        prev_size = gnn_shape[-1]
         for size in [*mlp_shape, output_size]:
             mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
             prev_size = size
 
+        prev_size = gnn_shape[-1]
+        for size in [*mlp_shape, 3]:
+            control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            prev_size = size
+
+        self.legality_layer = nn.Linear(gnn_shape[-1], 1, device=Device.XPU)
+
         self.mlp = tuple(mlp)
+        self.control_mlp = tuple(control_mlp)
 
     def forward(self, x, *args):
         x = self.extract_features(x)
-        if self.is_seq:
-            x = x.flatten(-2, -1)
-        x = self.make_decision(x)
-        return x.flatten(1, -1)
+
+        if self.training:
+            x, control, legality = self.make_decision(x)
+            return x.flatten(1, -1), control.flatten(0, 1), legality.flatten(1, -1)
+        else:
+            # return self.make_decision(x).flatten()
+            return self.make_decision(x).flatten(1, -1)
 
     def extract_features(self, x):
         res0 = self.res_conv_0(x)
-        x = F.dropout(F.relu(self.conv_1(x, self.edge_index)), p=0.33)
+        # res0b = self.res_conv_0b(x)
+        # res0c = self.res_conv_0c(x)
+        x = F.dropout(F.relu(self.conv_1(x, self.edge_index)), p=0.25, training=self.training)
         # x = self.norm1(x, batch, batch_size)
         x = x + res0
 
         res1 = self.res_conv_1(x)
-        x = F.dropout(F.relu(self.conv_2(x, self.edge_index)), p=0.33)
+        x = F.dropout(F.relu(self.conv_2(x, self.edge_index)), p=0.25, training=self.training)
         # x = self.norm2(x, batch, batch_size)
-        x = x + res1
+        x = x + res1# + res0b
 
         res2 = self.res_conv_2(x)
-        x = F.dropout(F.relu(self.conv_3(x, self.edge_index)), p=0.33)
+        x = F.dropout(F.relu(self.conv_3(x, self.edge_index)), p=0.25, training=self.training)
         # x = self.norm3(x, batch, batch_size)
-        x = x + res2
+        x = x + res2# + res0c
 
         res3 = self.res_conv_3(x)
-        x = F.dropout(F.relu(self.conv_4(x, self.edge_index)), p=0.33)
-        x = x + res3
+        x = F.dropout(F.relu(self.conv_4(x, self.edge_index)), p=0.25, training=self.training)
+        x = x + res3# + res0c
 
         res4 = self.res_conv_4(x)
-        x = F.dropout(F.relu(self.conv_5(x, self.edge_index)), p=0.33)
-        x = x + res4
+        x = F.dropout(F.relu(self.conv_5(x, self.edge_index)), p=0.25, training=self.training)
+        x = x + res4# + res0c
+
+        res5 = self.res_conv_5(x)
+        x = F.dropout(F.relu(self.conv_6(x, self.edge_index)), p=0.25, training=self.training)
+        x = x + res5
 
         return x
 
@@ -116,15 +141,29 @@ class GraphSG(BaseModule):
                     th.nn.init.zeros_(layer.lin.bias)
 
     def initialize_mlp_weights(self):
-        for layer in self.mlp:
+        for layer in self.mlp + self.control_mlp:
             th.nn.init.kaiming_normal_(
                 layer.weight, mode="fan_in", nonlinearity="leaky_relu"
             )
             # th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="tanh")
             th.nn.init.zeros_(layer.bias)
 
+        th.nn.init.kaiming_uniform_(self.legality_layer.weight, mode="fan_in", nonlinearity="leaky_relu")
+        th.nn.init.zeros_(self.legality_layer.bias)
+
     def make_decision(self, x: th.Tensor):
+        mlp_x = x
+        control_x = x
         for layer in self.mlp[:-1]:
-            x = F.leaky_relu(layer(x), negative_slope=0.05)
-            # x = F.dropout(F.leaky_relu(layer(x)), p=0.5)
-        return self.mlp[-1](x)
+            mlp_x = F.leaky_relu(layer(mlp_x), negative_slope=0.05)
+            # x = F.dropout(F.leaky_relu(layer(x)), p=0.5, training=self.training)
+
+        if self.training:
+            legality = self.legality_layer(x)
+
+            for layer in self.control_mlp[:-1]:
+                control_x = F.leaky_relu(layer(control_x), negative_slope=0.05)
+
+            return self.mlp[-1](mlp_x), self.control_mlp[-1](control_x), legality
+        else:
+            return self.mlp[-1](mlp_x)

@@ -1611,6 +1611,17 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             (start_corner, finish) for finish in connection_points_finish
         ] + [(start, finish_corner) for start in connection_points_start]
 
+        if self.unoccupied.bit_count() >= self.size_square - 2*self.size:
+            oc_co = self.occupied_co[color]
+            return min(
+                (
+                    distance
+                    for distance, path in (
+                        self.distance_missing_cached(*pair, color, self.unoccupied, oc_co)
+                        for pair in connection_points_pairs
+                    )
+                )
+            )
         return min(
             (
                 distance

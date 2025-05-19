@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import sys
 from asyncio import timeout
 from collections import deque
 from multiprocessing import Lock, Process
 from queue import Empty, Full
+from signal import signal, SIGTERM
 from time import sleep
 from typing import Callable, Any
 
@@ -43,7 +45,9 @@ class MultiprocessEnv:
         self.shm = SharedMemoryAdapter()
         self.shm_data_key = "remote_env_{i}_{t}"
 
-        self.queues = {i: Queue(max_size_bytes=10 * 1024 * 1024) for i in range(num_workers)}
+        self.queues = {
+            i: Queue(max_size_bytes=10 * 1024 * 1024) for i in range(num_workers)
+        }
         # self.queues: dict[int, Queue[dict[str, str]]] = {i: Queue() for i in range(num_workers)}
         self.read_locks = {i: Lock() for i in range(num_workers)}
         self.write_locks = {i: Lock() for i in range(num_workers)}
@@ -70,24 +74,45 @@ class MultiprocessEnv:
             (self.num_envs, *self.single_observation_space.shape), dtype=FLOAT_TYPE
         )
         self.buf_dones = np.zeros((self.num_envs,), dtype=bool)
-        self.buf_blank = np.zeros((self.num_envs,), dtype=bool)
+        # self.buf_blank = np.zeros((self.num_envs,), dtype=bool)
         self.buf_rews = np.zeros((self.num_envs,), dtype=FLOAT_TYPE)
-        self.buf_infos = [{} for _ in range(self.num_envs)]
+        # self.buf_infos = [{} for _ in range(self.num_envs)]
+        self.buf_occupied_black_masks = np.zeros(
+            (self.num_envs, 22), dtype="uint8"  # TODO: S22 is just for 13x13
+        )
+        self.buf_occupied_white_masks = np.zeros(
+            (self.num_envs, 22), dtype="uint8"  # TODO: S22 is just for 13x13
+        )
 
         self.time_queue = deque(maxlen=self.num_envs)
         self.return_queue = deque(maxlen=self.num_envs)
         self.reward_queue = deque(maxlen=self.num_envs)
         self.winner_queue = deque(maxlen=self.num_envs)  # of np.float16 type
+        self.legal_queue = deque(maxlen=self.num_envs)  # of np.float16 type
         self.length_queue = deque(maxlen=self.num_envs)
         self.action_queue = deque(maxlen=self.num_envs * 4)
 
     def get_progress_data(self) -> EnvProgressData:
+        total_count = 0
+        length_sum = 0
+        win_count = 0
+        win_lengths_sum = 0
+        for is_win, length in zip(self.winner_queue, self.length_queue):
+            total_count += 1
+            length_sum += length
+            if is_win:
+                win_count += 1
+                win_lengths_sum += length
+
         return EnvProgressData(
-            time_mean=np.mean(self.time_queue),
-            length_mean=np.mean(self.length_queue),
-            return_mean=np.mean(self.return_queue),
-            reward_mean=np.mean(self.reward_queue),
-            winner_mean=np.mean(self.winner_queue),
+            time_mean=np.sum(self.time_queue) / total_count,
+            length_mean=length_sum / total_count,
+            win_length_mean=win_lengths_sum / win_count if win_count else 0,
+            loss_length_mean=(length_sum - win_lengths_sum) / (total_count - win_count),
+            return_mean=np.sum(self.return_queue) / total_count,
+            reward_mean=np.sum(self.reward_queue) / total_count,
+            winner_mean=win_count / total_count,
+            legal_mean=np.sum(self.legal_queue) / total_count,
         )
 
     @property
@@ -104,11 +129,13 @@ class MultiprocessEnv:
         seed: int | None = None,
         options: dict[str, Any] | None = None,
         env_ids: list[int] | None = None,  # TODO: implement an option to reset a subset
-    ) -> list[ndarray]:  # type: ignore
+    ) -> tuple[list[ndarray], tuple[int, ...], tuple[int, ...]]:  # type: ignore
         for process_id in range(self.num_workers):
             self.queues[process_id].put({"command": "reset"})
 
         pending = [True for _ in range(self.num_workers)]
+        buf_occupied_black_masks = np.zeros((self.num_envs,), dtype=object)
+        buf_occupied_white_masks = np.zeros((self.num_envs,), dtype=object)
         while any(pending):
             try:
                 responses = self.parent_queue.get_many(block=True, timeout=1.0)
@@ -116,32 +143,59 @@ class MultiprocessEnv:
             except Empty:
                 continue
             for response in responses:
-                obs, _ = response.get("reset", (None, None))
+                obs, info = response.get("reset", (None, None))
                 if obs is None:
                     continue
 
                 process_id = response["process_id"]
                 # print(f"process {process_id} ready")
-                self.buf_obs[
-                    process_id
-                    * self.env_per_worker : (process_id + 1)
-                    * self.env_per_worker
-                ] = obs
+                start = process_id * self.env_per_worker
+                stop = start + self.env_per_worker
+                self.buf_obs[start:stop] = obs
+
+                ocb_masks = np.ndarray(
+                    shape=(self.env_per_worker,), dtype=object, buffer=info["ocb"]
+                )
+                ocw_masks = np.ndarray(
+                    shape=(self.env_per_worker,), dtype=object, buffer=info["ocw"]
+                )
+                buf_occupied_black_masks[start:stop] = ocb_masks
+                buf_occupied_white_masks[start:stop] = ocw_masks
 
                 pending[process_id] = False
 
         # return np.split(self.buf_obs, self.num_envs, axis=0)
-        return [element.copy() for element in np.split(self.buf_obs, self.num_envs, axis=0)]
+        return (
+            [
+                element.copy()
+                for element in np.split(self.buf_obs, self.num_envs, axis=0)
+            ],
+            tuple(
+                int.from_bytes(b) for b in buf_occupied_black_masks
+            ),  # sending occupied masks in place of info
+            tuple(
+                int.from_bytes(b) for b in buf_occupied_white_masks
+            ),  # sending occupied masks in place of info
+        )
 
     def step(
         self, actions: ActType
-    ) -> tuple[list[ndarray], list[np.float32], list[bool], list[bool], list[None]]:
+    ) -> tuple[
+        list[ndarray], list[np.float32], list[bool], list[bool], tuple[int, ...], tuple[int, ...]
+    ]:
         self.send_actions(actions)
         return self.step_wait()
 
-    def step_wait(self) -> tuple[list[ndarray], list[np.float32], list[bool], list[bool], list[None]]:
-        # Wait for at least 1 env to be ready here
-        # self.tr.diff()
+    def step_wait(
+        self,
+    ) -> tuple[
+        list[ndarray],
+        list[np.float32],
+        list[bool],
+        list[bool],
+        tuple[int, ...],
+        tuple[int, ...],
+    ]:
         responses = []
         while len(responses) < self.num_workers:
             try:
@@ -161,12 +215,20 @@ class MultiprocessEnv:
         # for t in threads:
         #     t.join()
         return (
-            # np.split(self.buf_obs, self.num_envs, axis=0),#.copy(),
-            [element.copy() for element in np.split(self.buf_obs, self.num_envs, axis=0)],
-            self.buf_rews.tolist(),#.copy(),
-            self.buf_dones.tolist(),#.copy(),
+            [
+                element.copy()
+                for element in np.split(self.buf_obs, self.num_envs, axis=0)
+            ],
+            self.buf_rews.tolist(),  # .copy(),
+            self.buf_dones.tolist(),  # .copy(),
             [False for _ in range(self.num_envs)],  # self.buf_blank.copy(),
-            [None for _ in range(self.num_envs)],  # deepcopy(self.buf_infos),
+            # [None for _ in range(self.num_envs)],  # deepcopy(self.buf_infos),
+            tuple(
+                int.from_bytes(b) for b in self.buf_occupied_black_masks
+            ),  # sending occupied masks in place of info
+            tuple(
+                int.from_bytes(b) for b in self.buf_occupied_white_masks
+            ),  # sending occupied masks in place of info
         )
 
     def _get_data_from_process(self, process_id: int, has_episode: bool):
@@ -185,6 +247,16 @@ class MultiprocessEnv:
                 self.shm_data_key.format(i=process_id, t="rews"),
                 (self.env_per_worker,),
                 dtype=FLOAT_TYPE,
+            )
+            ocb_masks = self._get_data(
+                self.shm_data_key.format(i=process_id, t="ocb"),
+                (self.env_per_worker, 22),  # TODO: S22 is just for 13x13
+                dtype="uint8",
+            )
+            ocw_masks = self._get_data(
+                self.shm_data_key.format(i=process_id, t="ocw"),
+                (self.env_per_worker, 22),  # TODO: S22 is just for 13x13
+                dtype="uint8",
             )
 
             time_info = (
@@ -219,6 +291,11 @@ class MultiprocessEnv:
                 (self.env_per_worker,),
                 dtype=np.float16,
             )
+            legal_info = self._get_data(
+                self.shm_data_key.format(i=process_id, t="legal"),
+                (self.env_per_worker,),
+                dtype=np.float16,
+            )
             reww_info = self._get_data(
                 self.shm_data_key.format(i=process_id, t="reww"),
                 (self.env_per_worker,),
@@ -238,6 +315,7 @@ class MultiprocessEnv:
                 self.length_queue.extend(len_info[i])
                 self.return_queue.extend(rew_info[i])
             self.winner_queue.extend(win_info[i])
+            self.legal_queue.extend(legal_info[i])
             self.reward_queue.extend(reww_info[i])
 
         start = process_id * self.env_per_worker
@@ -245,6 +323,8 @@ class MultiprocessEnv:
         self.buf_obs[start:stop] = obs
         self.buf_rews[start:stop] = rews
         self.buf_dones[start:stop] = dones
+        self.buf_occupied_black_masks[start:stop] = ocb_masks
+        self.buf_occupied_white_masks[start:stop] = ocw_masks
         # self.buf_infos[start:stop] = info
 
     def send_actions(self, action_list: ndarray) -> None:
@@ -324,8 +404,21 @@ class ProcessEnv(Process):
         self.shm_obs_key = "remote_env_{i}_obs".format(i=process_id)
         self.shm_dones_key = "remote_env_{i}_dones".format(i=process_id)
         self.shm_rews_key = "remote_env_{i}_rews".format(i=process_id)
+        self.shm_ocb_key = "remote_env_{i}_ocb".format(i=process_id)
+        self.shm_ocw_key = "remote_env_{i}_ocw".format(i=process_id)
 
     def run(self):
+        # from pyinstrument import Profiler  # pylint: disable=import-outside-toplevel
+        # profiler = Profiler()
+        # profiler.start()
+        #
+        # def before_exit(*_) -> None:
+        #     profiler.stop()
+        #     profiler.print(show_all=True)
+        #
+        #     sys.exit(0)
+        # signal(SIGTERM, before_exit)
+
         should_get = True
         while True:
             if should_get:
@@ -368,6 +461,13 @@ class ProcessEnv(Process):
             self._set_data(self.shm_obs_key, obs)
             self._set_data(self.shm_rews_key, rews)
             self._set_data(self.shm_dones_key, dones)
+            ocb_arr = np.zeros((self.env_per_worker, 22), dtype="uint8")
+            ocw_arr = np.zeros((self.env_per_worker, 22), dtype="uint8")
+            for i in range(self.env_per_worker):
+                ocb_arr[i] = np.frombuffer(infos["ocb"][i], dtype="uint8")
+                ocw_arr[i] = np.frombuffer(infos["ocw"][i], dtype="uint8")
+            self._set_data(self.shm_ocb_key, ocb_arr)
+            self._set_data(self.shm_ocw_key, ocw_arr)
             if has_episode:
                 self._set_data(
                     self.shm_data_key.format(t="time"),
@@ -378,7 +478,12 @@ class ProcessEnv(Process):
                     self.shm_data_key.format(t="rew"),
                     infos["episode"]["r"].astype(FLOAT_TYPE),
                 )
-            self._set_data(self.shm_data_key.format(t="win"), infos["winner"].astype(np.float16))
+            self._set_data(
+                self.shm_data_key.format(t="win"), infos["winner"].astype(np.float16)
+            )
+            self._set_data(
+                self.shm_data_key.format(t="legal"), infos["legal"].astype(np.float16)
+            )
             self._set_data(self.shm_data_key.format(t="reww"), infos["reward"])
             self._set_data(self.shm_data_key.format(t="act"), infos["action"])
 

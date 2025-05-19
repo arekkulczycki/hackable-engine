@@ -47,12 +47,12 @@ class MultiprocessAsyncEnv:
         seed: int | None = None,
         options: dict[str, Any] | None = None,
         env_ids: list[int] | None = None,  # TODO: implement an option to reset a subset
-    ) -> list[np.ndarray]:  # type: ignore
+    ) -> tuple[list[np.ndarray], tuple[int, ...], tuple[int, ...]]:  # type: ignore
         return self.env.reset(seed=seed, options=options, env_ids=env_ids)
 
     async def step(
         self, actions
-    ) -> tuple[np.ndarray, list[FLOAT_TYPE], list[bool], list[bool], list[None]]:
+    ) -> tuple[np.ndarray, list[FLOAT_TYPE], list[bool], list[bool], tuple[int, ...], tuple[int, ...]]:
         await self.out_queue.async_q.put(actions)
         return await self.in_queue.async_q.get()
 

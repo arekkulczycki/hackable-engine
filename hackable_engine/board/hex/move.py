@@ -21,6 +21,10 @@ class Move:
     mask: BitBoard
     size: int
 
+    def __post_init__(self):
+        if self.mask.bit_count() != 1:
+            raise ValueError("Mask must be a single bit")
+
     def __repr__(self) -> str:
         """"""
 
@@ -35,6 +39,9 @@ class Move:
         """"""
 
         return (self.mask << self.size) + (1 << (self.size - 1))
+
+    def __eq__(self, other: Move):
+        return self.mask == other.mask and self.size == other.size
 
     def uci(self) -> str:
         """"""
@@ -117,3 +124,16 @@ class Move:
         """"""
 
         return (mask.bit_length() - 1) // size
+
+    @property
+    def c(self) -> int:
+        """"""
+
+        return self.mask.bit_length() - 1
+
+    @classmethod
+    def from_c(cls, c: int, size: int) -> Move:
+        """"""
+
+        mask = 1 << c
+        return cls(mask, size)
