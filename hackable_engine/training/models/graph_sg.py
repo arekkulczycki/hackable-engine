@@ -30,12 +30,19 @@ class GraphSG(BaseModule):
         self.mlp_shape = mlp_shape
 
         self.edge_index = edge_index.to(Device.XPU)
+        self.batch_edge_index = self.get_batch_edge_index(node_count, batch_size)
 
         self.setup_graph_feature_extractor(gnn_shape)
         self.setup_mlp(gnn_shape, mlp_shape, output_size)
 
         self.initialize_gnn_weights()
         self.initialize_mlp_weights()
+
+    def get_batch_edge_index(self, node_count, batch_size):
+        batch_edge_index = []
+        for i in range(batch_size):
+            batch_edge_index.append(self.edge_index + i * node_count)
+        return th.cat(batch_edge_index, dim=1).to(Device.XPU)
 
     def setup_graph_feature_extractor(self, shape):
         self.res_conv_0 = nn.Linear(self.node_features, shape[0], device=Device.XPU)
@@ -46,12 +53,12 @@ class GraphSG(BaseModule):
         self.res_conv_3 = nn.Linear(shape[2], shape[3], device=Device.XPU)
         self.res_conv_4 = nn.Linear(shape[3], shape[4], device=Device.XPU)
         self.res_conv_5 = nn.Linear(shape[4], shape[5], device=Device.XPU)
-        self.conv_1 = SGConv(self.node_features, shape[0], K=1)
-        self.conv_2 = SGConv(shape[0], shape[1], K=1)
-        self.conv_3 = SGConv(shape[1], shape[2], K=1)
-        self.conv_4 = SGConv(shape[2], shape[3], K=1)
-        self.conv_5 = SGConv(shape[3], shape[4], K=1)
-        self.conv_6 = SGConv(shape[4], shape[5], K=1)
+        self.conv_1 = SGConv(self.node_features, shape[0], K=1).to(Device.XPU)
+        self.conv_2 = SGConv(shape[0], shape[1], K=1).to(Device.XPU)
+        self.conv_3 = SGConv(shape[1], shape[2], K=1).to(Device.XPU)
+        self.conv_4 = SGConv(shape[2], shape[3], K=1).to(Device.XPU)
+        self.conv_5 = SGConv(shape[3], shape[4], K=1).to(Device.XPU)
+        self.conv_6 = SGConv(shape[4], shape[5], K=1).to(Device.XPU)
 
         self.gnn = (
             self.res_conv_0,
@@ -84,8 +91,6 @@ class GraphSG(BaseModule):
             control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
             prev_size = size
 
-        self.legality_layer = nn.Linear(gnn_shape[-1], 1, device=Device.XPU)
-
         self.mlp = tuple(mlp)
         self.control_mlp = tuple(control_mlp)
 
@@ -93,43 +98,51 @@ class GraphSG(BaseModule):
         x = self.extract_features(x)
 
         if self.training:
-            x, control, legality = self.make_decision(x)
-            return x.flatten(1, -1), control.flatten(0, 1), legality.flatten(1, -1)
+            x, control = self.make_decision(x)
+            return x.flatten(1, -1), control
         else:
             # return self.make_decision(x).flatten()
             return self.make_decision(x).flatten(1, -1)
 
     def extract_features(self, x):
+        if x.shape[0] == self.batch_size:
+            batch_size = self.batch_size
+            edge_index = self.batch_edge_index
+        else:
+            batch_size = x.shape[0]
+            edge_index = self.get_batch_edge_index(self.node_count, batch_size)
+
+        x = x.view(-1, self.node_features)
         res0 = self.res_conv_0(x)
         # res0b = self.res_conv_0b(x)
         # res0c = self.res_conv_0c(x)
-        x = F.dropout(F.relu(self.conv_1(x, self.edge_index)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv_1(x, edge_index)), p=0.25, training=self.training)
         # x = self.norm1(x, batch, batch_size)
         x = x + res0
 
         res1 = self.res_conv_1(x)
-        x = F.dropout(F.relu(self.conv_2(x, self.edge_index)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv_2(x, edge_index)), p=0.25, training=self.training)
         # x = self.norm2(x, batch, batch_size)
         x = x + res1# + res0b
 
         res2 = self.res_conv_2(x)
-        x = F.dropout(F.relu(self.conv_3(x, self.edge_index)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv_3(x, edge_index)), p=0.25, training=self.training)
         # x = self.norm3(x, batch, batch_size)
         x = x + res2# + res0c
 
         res3 = self.res_conv_3(x)
-        x = F.dropout(F.relu(self.conv_4(x, self.edge_index)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv_4(x, edge_index)), p=0.25, training=self.training)
         x = x + res3# + res0c
 
         res4 = self.res_conv_4(x)
-        x = F.dropout(F.relu(self.conv_5(x, self.edge_index)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv_5(x, edge_index)), p=0.25, training=self.training)
         x = x + res4# + res0c
 
         res5 = self.res_conv_5(x)
-        x = F.dropout(F.relu(self.conv_6(x, self.edge_index)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv_6(x, edge_index)), p=0.25, training=self.training)
         x = x + res5
 
-        return x
+        return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
     def initialize_gnn_weights(self):
         for layer in self.gnn:
@@ -148,9 +161,6 @@ class GraphSG(BaseModule):
             # th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="tanh")
             th.nn.init.zeros_(layer.bias)
 
-        th.nn.init.kaiming_uniform_(self.legality_layer.weight, mode="fan_in", nonlinearity="leaky_relu")
-        th.nn.init.zeros_(self.legality_layer.bias)
-
     def make_decision(self, x: th.Tensor):
         mlp_x = x
         control_x = x
@@ -159,11 +169,9 @@ class GraphSG(BaseModule):
             # x = F.dropout(F.leaky_relu(layer(x)), p=0.5, training=self.training)
 
         if self.training:
-            legality = self.legality_layer(x)
-
             for layer in self.control_mlp[:-1]:
                 control_x = F.leaky_relu(layer(control_x), negative_slope=0.05)
 
-            return self.mlp[-1](mlp_x), self.control_mlp[-1](control_x), legality
+            return self.mlp[-1](mlp_x), self.control_mlp[-1](control_x)
         else:
             return self.mlp[-1](mlp_x)

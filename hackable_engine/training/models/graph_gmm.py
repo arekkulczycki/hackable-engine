@@ -2,14 +2,13 @@
 import torch as th
 from torch import nn
 from torch.nn import functional as F
-from torch_geometric.nn import GATv2Conv
+from torch_geometric.nn import GMMConv
 
-from hackable_engine.common.constants import TH_FLOAT_TYPE
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
 
 
-class GraphGAT(BaseModule):
+class GraphGMM(BaseModule):
 
     def __init__(
         self,
@@ -19,10 +18,9 @@ class GraphGAT(BaseModule):
         batch_size,
         num_envs,
         gnn_shape,
-        gnn_heads,
         mlp_shape,
         edge_index,
-        edge_types,
+        pseudo_coordinates,
         use_res: bool = True,
     ):
         super().__init__()
@@ -31,14 +29,13 @@ class GraphGAT(BaseModule):
         self.num_envs = num_envs
         self.batch_size = batch_size
         self.gnn_shape = gnn_shape
-        self.gnn_heads = gnn_heads
         self.mlp_shape = mlp_shape
         self.use_res = use_res
 
         self.edge_index = edge_index.to(Device.XPU)
-        self.batch_edge_index = self.get_batch_edge_index(node_count, batch_size)
-        self.edge_types = edge_types.to(Device.XPU).to(TH_FLOAT_TYPE)
-        self.batch_edge_types = self.get_batch_edge_types(node_count, batch_size)
+        self.batch_edge_index = self.get_batch_edge_index(batch_size)
+        self.pseudo_coordinates = pseudo_coordinates.to(Device.XPU)
+        self.batch_pseudo_coordinates = self.get_batch_pseudo_coord(batch_size)
 
         self.setup_graph_feature_extractor()
         self.setup_mlp(gnn_shape, mlp_shape, output_size)
@@ -46,102 +43,75 @@ class GraphGAT(BaseModule):
         # self.initialize_gnn_weights()
         self.initialize_mlp_weights()
 
-    def get_batch_edge_index(self, node_count, batch_size):
+    def get_batch_edge_index(self, batch_size):
         batch_edge_index = []
         for i in range(batch_size):
-            batch_edge_index.append(self.edge_index + i * node_count)
+            batch_edge_index.append(self.edge_index + i * self.node_count)
         return th.cat(batch_edge_index, dim=1).to(Device.XPU)
 
-    def get_batch_edge_types(self, node_count, batch_size):
-        batch_edge_types = []
+    def get_batch_pseudo_coord(self, batch_size):
+        batch_pseudo_coordinates = []
         for i in range(batch_size):
-            batch_edge_types.append(self.edge_types)
-        return th.cat(batch_edge_types, dim=0).to(Device.XPU)
+            batch_pseudo_coordinates.append(self.pseudo_coordinates)
+        return th.cat(batch_pseudo_coordinates, dim=0).to(Device.XPU)
 
     def setup_graph_feature_extractor(self):
         if self.use_res:
             self.res_proj_0 = nn.Linear(
-                self.node_features,
-                self.gnn_shape[0] * self.gnn_heads,
-                device=Device.XPU,
+                self.node_features, self.gnn_shape[0], device=Device.XPU
             )
             self.res_proj_1 = nn.Linear(
-                self.gnn_shape[0] * self.gnn_heads,
-                self.gnn_shape[1] * self.gnn_heads,
-                device=Device.XPU,
+                self.gnn_shape[0], self.gnn_shape[1], device=Device.XPU
             )
-            # self.res_proj_01 = nn.Linear(
-            #     self.node_features,
-            #     self.gnn_shape[1] * self.gnn_heads,
-            #     device=Device.XPU,
-            # )
             self.res_proj_2 = nn.Linear(
-                self.gnn_shape[1] * self.gnn_heads,
-                self.gnn_shape[2] * self.gnn_heads,
-                device=Device.XPU,
+                self.gnn_shape[1], self.gnn_shape[2], device=Device.XPU
             )
-            # self.res_proj_02 = nn.Linear(
-            #     self.node_features,
-            #     self.gnn_shape[2] * self.gnn_heads,
-            #     device=Device.XPU,
-            # )
             self.res_proj_3 = nn.Linear(
-                self.gnn_shape[2] * self.gnn_heads,
-                self.gnn_shape[3] * self.gnn_heads,
-                device=Device.XPU,
+                self.gnn_shape[2], self.gnn_shape[3], device=Device.XPU
             )
-            # self.res_proj_03 = nn.Linear(
-            #     self.node_features,
-            #     self.gnn_shape[3] * self.gnn_heads,
-            #     device=Device.XPU,
-            # )
             self.res_proj_4 = nn.Linear(
-                self.gnn_shape[3] * self.gnn_heads, self.gnn_shape[4], device=Device.XPU
+                self.gnn_shape[3], self.gnn_shape[4], device=Device.XPU
             )
-            # self.res_proj_04 = nn.Linear(
-            #     self.node_features, self.gnn_shape[4], device=Device.XPU
-            # )
-        self.conv1 = GATv2Conv(
+            self.res_proj_5 = nn.Linear(
+                self.gnn_shape[4], self.gnn_shape[5], device=Device.XPU
+            )
+        self.conv1 = GMMConv(
             self.node_features,
             self.gnn_shape[0],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
-            # residual=self.use_res,
+            dim=2,
+            kernel_size=6,
         )
-        self.conv2 = GATv2Conv(
-            self.gnn_shape[0] * self.gnn_heads,
+        self.conv2 = GMMConv(
+            self.gnn_shape[0],
             self.gnn_shape[1],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
-            # residual=self.use_res,
+            dim=2,
+            kernel_size=6,
         )
-        self.conv3 = GATv2Conv(
-            self.gnn_shape[1] * self.gnn_heads,
+        self.conv3 = GMMConv(
+            self.gnn_shape[1],
             self.gnn_shape[2],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
-            # residual=self.use_res,
+            dim=2,
+            kernel_size=6,
         )
-        self.conv4 = GATv2Conv(
-            self.gnn_shape[2] * self.gnn_heads,
+        self.conv4 = GMMConv(
+            self.gnn_shape[2],
             self.gnn_shape[3],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
-            # residual=self.use_res,
+            dim=2,
+            kernel_size=6,
         )
-        self.conv5 = GATv2Conv(
-            self.gnn_shape[3] * self.gnn_heads,
+        self.conv5 = GMMConv(
+            self.gnn_shape[3],
             self.gnn_shape[4],
-            heads=1,
-            concat=True,
-            edge_dim=3,
-            # residual=self.use_res,
+            dim=2,
+            kernel_size=6,
         )
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
+        self.conv6 = GMMConv(
+            self.gnn_shape[4],
+            self.gnn_shape[5],
+            dim=2,
+            kernel_size=6,
+        )
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6)
 
     def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
@@ -165,7 +135,7 @@ class GraphGAT(BaseModule):
 
         if self.training:
             x, control = self.make_decision(x)
-            return x.flatten(1, -1), control.flatten(0, 1)
+            return x.flatten(1, -1), control
         else:
             # return self.make_decision(x).flatten()
             return self.make_decision(x).flatten(1, -1)
@@ -174,47 +144,49 @@ class GraphGAT(BaseModule):
         if x.shape[0] == self.batch_size:
             batch_size = self.batch_size
             edge_index = self.batch_edge_index
-            edge_types = self.batch_edge_types
+            pseudo_coordinates = self.batch_pseudo_coordinates
         else:
             batch_size = x.shape[0]
-            edge_index = self.get_batch_edge_index(self.node_count, batch_size)
-            edge_types = self.get_batch_edge_types(self.node_count, batch_size)
+            edge_index = self.get_batch_edge_index(batch_size)
+            pseudo_coordinates = self.get_batch_pseudo_coord(batch_size)
 
         x = x.view(-1, self.node_features)
 
         if self.use_res:
             res0 = self.res_proj_0(x)
-            # res01 = self.res_proj_0(x)
-            # res02 = self.res_proj_0(x)
-            # res03 = self.res_proj_0(x)
-            # res04 = self.res_proj_0(x)
-        x = F.dropout(F.relu(self.conv1(x, edge_index, edge_attr=edge_types)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv1(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
         # x = self.norm1(x, batch, batch_size)
 
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        x = F.dropout(F.relu(self.conv2(x, edge_index, edge_attr=edge_types)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv2(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
         # x = self.norm2(x, batch, batch_size)
 
         if self.use_res:
-            x = x + res1 #+ res01
+            x = x + res1
             res2 = self.res_proj_2(x)
-        x = F.dropout(F.relu(self.conv3(x, edge_index, edge_attr=edge_types)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv3(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
         # x = self.norm3(x, batch, batch_size)
 
         if self.use_res:
-            x = x + res2 #+ res02
+            x = x + res2
             res3 = self.res_proj_3(x)
-        x = F.dropout(F.relu(self.conv4(x, edge_index, edge_attr=edge_types)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv4(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
+        # x = self.norm4(x, batch, batch_size)
 
         if self.use_res:
-            x = x + res3 #+ res03
+            x = x + res3
             res4 = self.res_proj_4(x)
-        x = F.dropout(F.relu(self.conv5(x, edge_index, edge_attr=edge_types)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv5(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
 
         if self.use_res:
-            x = x + res4 #+ res04
+            x = x + res4
+            res5 = self.res_proj_5(x)
+        x = F.dropout(F.relu(self.conv6(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
+
+        if self.use_res:
+            x = x + res5
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 

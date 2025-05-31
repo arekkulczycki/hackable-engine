@@ -1,6 +1,7 @@
 .idea
 .pyre
 hackable_engine/board/cpp_board/
+hackable_engine/training/logs
 simple_dqn
 **/node_modules
 

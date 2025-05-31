@@ -33,7 +33,7 @@ from hackable_engine.board.hex.serializers.hex_board_serializer_mixin import (
     HexBoardSerializerMixin,
 )
 from hackable_engine.board.hex.types import EdgeType
-from hackable_engine.common.constants import DEFAULT_HEX_BOARD_SIZE, FLOAT_TYPE
+from hackable_engine.common.constants import DEFAULT_HEX_BOARD_SIZE, FLOAT_TYPE, TH_FLOAT_TYPE
 
 Cell = int
 
@@ -101,13 +101,24 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         if use_graph:
             # self.edge_index = th.tensor(list(self._get_all_graph_links()), dtype=th.long).t().contiguous()
             self.edge_index = self._get_all_graph_links_coo()
-            self.edge_types = self._get_graph_link_types()
+            self.edge_types = self._get_graph_link_types_one_hot()
+            self.coordinates = self._get_coordinates()
+            pseudo_row, pseudo_col = self.edge_index
+            self.pseudo_coordinates = self.coordinates[pseudo_col] - self.coordinates[pseudo_row]
         else:
             self.edge_index = th.tensor([])
             self.edge_types = th.tensor([])
+            self.coordinates = th.tensor([])
+            self.pseudo_coordinates = th.tensor([])
 
         # self.short_diagonal_mask = self._get_short_diagonal_mask()
         # self.long_diagonal_mask = self._get_long_diagonal_mask()
+
+    def __hash__(self):
+        return hash((self.occupied_co[False], self.occupied_co[True], self.turn))
+
+    def __eq__(self, other: HexBoard):
+        return self.occupied_co[False] == other.occupied_co[False] and self.occupied_co[True] == other.occupied_co[True] and self.turn == other.turn
 
     def initialize_notation(self, notation: str, init_move_stack: bool = False) -> None:
         """"""
@@ -1398,7 +1409,6 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         masks = [mask for mask in path if mask & self.unoccupied]
         return len(masks), masks
 
-    @lru_cache(maxsize=4_000_000)
     def distance_missing_cached(
         self,
         mask_from: BitBoard,
@@ -1450,6 +1460,22 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             )
         )
 
+    @lru_cache(maxsize=4_000_000)
+    def get_shortest_missing_distance_cached(self, color: bool) -> int:
+        return self.get_shortest_missing_distance(color)
+
+    def get_shortest_missing_distance_maybe_cached(self, color: bool):
+        if self.unoccupied.bit_count() >= self.size_square - 4 * self.size:
+            return self.get_shortest_missing_distance_cached(color)
+        else:
+            return self.get_shortest_missing_distance(color)
+
+    def get_shortest_missing_distance_perf_cached(self, color: bool) -> int:
+        if self.unoccupied.bit_count() >= self.size_square - 8 * self.size:
+            return self.get_shortest_missing_distance_cached(color)
+        else:
+            return self.get_shortest_missing_distance_perf(color)
+
     def get_short_missing_distances(
         self, color: bool, *, should_subtract: bool = False
     ) -> tuple[int, dict[float, int]]:
@@ -1475,15 +1501,9 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         unique_paths: set[tuple[BitBoard, ...]] = set()
         shortest_path: set[BitBoard] = set()
 
-        un_oc = self.unoccupied
         for pair in connection_points_pairs:
             path: list[BitBoard]
-
-            if un_oc.bit_count() >= self.size_square - self.size:
-                oc_co = self.occupied_co[color]
-                length, path = self.distance_missing_cached(*pair, color, un_oc, oc_co)
-            else:
-                length, path = self.distance_missing(*pair, color)
+            length, path = self.distance_missing(*pair, color)
             if not path:
                 continue
 
@@ -1522,12 +1542,16 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         """
 
         opp = self.occupied_co[not color]
-        if color:
-            start_corner = list(generate_masks(self.bb_cols[0] & ~opp))[-1]
-            finish_corner = next(generate_masks(self.bb_cols[-1] & ~opp))
-        else:
-            start_corner = list(generate_masks(self.bb_rows[0] & ~opp))[-1]
-            finish_corner = next(generate_masks(self.bb_rows[-1] & ~opp))
+
+        try:
+            if color:
+                start_corner = list(generate_masks(self.bb_cols[0] & ~opp))[-1]
+                finish_corner = next(generate_masks(self.bb_cols[-1] & ~opp))
+            else:
+                start_corner = list(generate_masks(self.bb_rows[0] & ~opp))[-1]
+                finish_corner = next(generate_masks(self.bb_rows[-1] & ~opp))
+        except (IndexError, StopIteration) as e:
+            raise ValueError("searching shortest missing distance on game over") from e
 
         connection_points_start: list[BitBoard] = self._get_start_points_perf(color)
         connection_points_finish: list[BitBoard] = self._get_finish_points_perf(color)
@@ -1544,15 +1568,9 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         unique_paths: set[tuple[BitBoard, ...]] = set()
         shortest_path: set[BitBoard] = set()
 
-        un_oc = self.unoccupied
-
         for pair in connection_points_pairs:
             path: list[BitBoard]
-            if un_oc.bit_count() >= self.size_square - self.size:
-                oc_co = self.occupied_co[color]
-                length, path = self.distance_missing_cached(*pair, color, un_oc, oc_co)
-            else:
-                length, path = self.distance_missing(*pair, color)
+            length, path = self.distance_missing(*pair, color)
             if not path:
                 continue
 
@@ -1579,6 +1597,22 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         return shortest_distance, variants
 
+    @lru_cache(maxsize=4_000_000)
+    def get_short_missing_distances_cached(self, color: bool, should_subtract: bool) -> tuple[int, dict[float, int]]:
+        return self.get_short_missing_distances(color, should_subtract=should_subtract)
+
+    def get_short_missing_distances_maybe_cached(self, color: bool, *, should_subtract: bool = False):
+        if self.unoccupied.bit_count() >= self.size_square - 4 * self.size:
+            return self.get_short_missing_distances_cached(color, should_subtract)
+        else:
+            return self.get_short_missing_distances(color, should_subtract=should_subtract)
+
+    def get_short_missing_distances_perf_cached(self, color: bool, *, should_subtract: bool = False):
+        if self.unoccupied.bit_count() >= self.size_square - 4 * self.size:
+            return self.get_short_missing_distances_cached(color, should_subtract)
+        else:
+            return self.get_short_missing_distances_perf(color, should_subtract=should_subtract)
+
     def pair_name(self, pair):
         """"""
 
@@ -1594,12 +1628,15 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         """
 
         opp = self.occupied_co[not color]
-        if color:
-            start_corner = list(generate_masks(self.bb_cols[0] & ~opp))[-1]
-            finish_corner = next(generate_masks(self.bb_cols[-1] & ~opp))
-        else:
-            start_corner = list(generate_masks(self.bb_rows[0] & ~opp))[-1]
-            finish_corner = next(generate_masks(self.bb_rows[-1] & ~opp))
+        try:
+            if color:
+                start_corner = list(generate_masks(self.bb_cols[0] & ~opp))[-1]
+                finish_corner = next(generate_masks(self.bb_cols[-1] & ~opp))
+            else:
+                start_corner = list(generate_masks(self.bb_rows[0] & ~opp))[-1]
+                finish_corner = next(generate_masks(self.bb_rows[-1] & ~opp))
+        except (IndexError, StopIteration) as e:
+            raise ValueError("searching shortest missing distance on game over") from e
 
         connection_points_start: list[BitBoard] = self._get_start_points_perf(color)
         connection_points_finish: list[BitBoard] = self._get_finish_points_perf(color)
@@ -1611,17 +1648,6 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             (start_corner, finish) for finish in connection_points_finish
         ] + [(start, finish_corner) for start in connection_points_start]
 
-        if self.unoccupied.bit_count() >= self.size_square - 2*self.size:
-            oc_co = self.occupied_co[color]
-            return min(
-                (
-                    distance
-                    for distance, path in (
-                        self.distance_missing_cached(*pair, color, self.unoccupied, oc_co)
-                        for pair in connection_points_pairs
-                    )
-                )
-            )
         return min(
             (
                 distance
@@ -1754,7 +1780,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         return links
 
     def _get_graph_link_types(self) -> th.Tensor:
-        """Returns one-hot encoded edge types as tensor with shape (num_edges, 3)"""
+        """Returns edge types as tensor with shape (num_edges,)"""
         link_types: list[EdgeType] = []
         link: tuple[BitBoard, BitBoard]
         for from_, to_ in self.edge_index.t():
@@ -1782,6 +1808,13 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             else:
                 link_types.append([0, 0, 1])  # EdgeType.DIAGONAL)
         return th.tensor(link_types)
+
+    def _get_coordinates(self):
+        return th.tensor([
+            [row, col]
+            for row in range(self.size)
+            for col in range(self.size)
+        ], dtype=TH_FLOAT_TYPE)
 
     def to_homo_graph_data(self) -> GraphData:
         """"""

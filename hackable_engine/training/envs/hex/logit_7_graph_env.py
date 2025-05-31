@@ -63,11 +63,11 @@ class Logit7GraphEnv(BaseEnv):
         try:
             # if self.winner is not None:
             #     return self.obs, MINUS_ONE, True, True, {}
-            self.controller.board.push(move)
+            self.board.push(move)
         except ValueError:
             # print(f"attempting to push {move_position}", move.get_coord())
             self.winner = not self.color
-            n_moves = self.MAX_MOVES - self.controller.board.unoccupied.bit_count()
+            n_moves = self.MAX_MOVES - self.board.unoccupied.bit_count()
             # self.reward = FLOAT_TYPE(max((MINUS_TWO + n_moves/(self.MAX_MOVES - 2 * self.BOARD_SIZE), MINUS_ONEHALF)))
             self.reward = FLOAT_TYPE(MINUS_TWO + n_moves/(self.MAX_MOVES - 2 * self.BOARD_SIZE))
             return (
@@ -85,7 +85,7 @@ class Logit7GraphEnv(BaseEnv):
             )
 
         winner, reward = self._get_winner_and_reward(
-            self.MAX_MOVES - self.controller.board.unoccupied.bit_count(), with_iterations=False
+            self.MAX_MOVES - self.board.unoccupied.bit_count(), with_iterations=False
         )
 
         self.winner = winner
@@ -113,19 +113,15 @@ class Logit7GraphEnv(BaseEnv):
         # square = (1 - win_percentage) ** 2
         # if choices([True, False], weights=((1 - win_percentage) / 4, 0.75 + win_percentage/4)):
         if choices([True, False], weights=((1 - win_percentage) * 99/100, 0.01 + win_percentage)):
-            self._make_random_move(self.controller.board)
+            self._make_random_move()
         else:
-            self._make_logical_move(self.controller.board)
+            self._make_logical_move()
 
     def _prepare_child_moves(self) -> None:
         return None
 
     def observation_from_board(self) -> np.ndarray:
-        return self.controller.board.get_homo_graph_node_features()
-
-    def render(self, mode="human", close=False):
-        # return super().render()
-        return ""
+        return self.board.get_homo_graph_node_features()
 
     def _get_intermediate_reward(self, n_moves):
         # return FLOAT_TYPE(self._get_intermediate_reward_relative(n_moves))
@@ -138,13 +134,13 @@ class Logit7GraphEnv(BaseEnv):
 
     def observation_from_board(self) -> np.ndarray:
         # for GraphGAT / GraphGINE
-        return self.controller.board.get_hetero_graph_node_features_one_hot()
+        return self.board.get_hetero_graph_node_features_one_hot()
 
         # for GraphSG / GraphGIN
-        # return self.controller.board.get_homo_graph_node_features_one_hot()
+        # return self.board.get_homo_graph_node_features_one_hot()
 
         # for CNN
-        # return self.controller.board.as_matrix()
+        # return self.board.as_matrix()
 
 
 register(

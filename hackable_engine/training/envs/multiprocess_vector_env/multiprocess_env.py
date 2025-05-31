@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import sys
-from asyncio import timeout
 from collections import deque
 from multiprocessing import Lock, Process
 from queue import Empty, Full
-from signal import signal, SIGTERM
 from time import sleep
 from typing import Callable, Any
 
@@ -34,7 +31,7 @@ class MultiprocessEnv:
         action_shape: tuple[int, ...] | None = None,
     ):
         self.make_local_env = make_env
-        self.local_env = make_env(num_workers, env_per_worker, color)
+        self.local_env = make_env(-1, env_per_worker, color)
         self.local_env.unwrapped._rewards.astype(FLOAT_TYPE, copy=False)
         self.num_workers = num_workers
         self.env_per_worker = env_per_worker
@@ -481,9 +478,12 @@ class ProcessEnv(Process):
             self._set_data(
                 self.shm_data_key.format(t="win"), infos["winner"].astype(np.float16)
             )
-            self._set_data(
-                self.shm_data_key.format(t="legal"), infos["legal"].astype(np.float16)
-            )
+            try:
+                self._set_data(
+                    self.shm_data_key.format(t="legal"), infos["legal"].astype(np.float16)
+                )
+            except KeyError:
+                print(infos)
             self._set_data(self.shm_data_key.format(t="reww"), infos["reward"])
             self._set_data(self.shm_data_key.format(t="act"), infos["action"])
 

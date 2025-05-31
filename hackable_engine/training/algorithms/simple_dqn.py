@@ -16,10 +16,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 import intel_extension_for_pytorch
 
-from hackable_engine.board.hex.bitboard_utils import (
-    int_to_binary_float_array,
-    generate_cells,
-)
+from hackable_engine.board.hex.bitboard_utils import generate_cells
 from hackable_engine.board.hex.hex_board import HexBoard
 from hackable_engine.common.constants import FLOAT_TYPE, TH_FLOAT_TYPE
 from hackable_engine.common.custom_threads import ReturningTargetThread
@@ -44,6 +41,7 @@ from hackable_engine.training.envs.wrappers.episode_stats import EpisodeStats
 from hackable_engine.training.models.graph_gat import GraphGAT
 from hackable_engine.training.models.graph_gin import GraphGIN
 from hackable_engine.training.models.graph_gine import GraphGINE
+from hackable_engine.training.models.graph_gmm import GraphGMM
 from hackable_engine.training.models.graph_rgcn import GraphRGCN
 from hackable_engine.training.models.graph_sg import GraphSG
 from hackable_engine.training.run import LOG_PATH
@@ -61,10 +59,12 @@ GNN_SHAPES = {
     GraphSG: (54, 108, 216, 324, 432, 486),
     # GraphSG: (54, 162, 486, 486, 486, 486),
     # GraphSG: (54, 162, 486, 648, 648, 648),
-    # GraphGIN: (54, 108, 216, 432, 432, 432),
-    GraphGIN: (54, 162, 486, 486, 486, 486),
-    GraphGINE: (54, 108, 216, 432, 432, 432),
-    GraphRGCN: (54, 108, 216, 324, 324, 324),
+    # GraphGIN: (54, 108, 216, 432, 540, 648),
+    # GraphGIN: (54, 162, 486, 648, 648, 648),
+    GraphGIN: (54, 108, 216, 432, 540, 540, 540),
+    GraphGINE: (54, 108, 216, 432, 432, 486),
+    GraphRGCN: (54, 108, 216, 324, 432, 486),
+    GraphGMM: (54, 108, 216, 324, 432, 486),
     GraphGAT: (54, 72, 90, 108, 216),
 }
 # fmt: on
@@ -74,21 +74,23 @@ board_size_squared = board_size**2
 binary_one = 2**board_size_squared - 1
 env_class = Logit13GraphEnv
 model_class = GraphSG
-allow_illegal = True
 gnn_shape = GNN_SHAPES[model_class]
 mlp_shape = (256,)  # board_size**2)
-num_episodes = 1024
+num_episodes = 512
 episode_env_steps = board_size  # **2
 base_num_envs = 128
 """relative for tensorboard graphs, such that training sessions are comparable"""
 num_envs = 128
 num_workers = 8
-lr_gnn = 1.4e-4
-lr_mlp = 2.1e-4  # if shape ONE, larger than the final lr_gnn
+lr_gnn = 10e-4
+lr_mlp = 12e-4  # if shape ONE, larger than the final lr_gnn
 lr_gamma = 1e-4
 lr_shape_gnn = LRShape.ONE
 lr_shape_mlp = LRShape.ONE
 lr_warm_up_len = 0.12
+assert 0 < lr_warm_up_len < 1
+lr_minimum_p = 0.01
+assert 0 < lr_minimum_p < 1
 target_update_frequency = 1
 target_update_mode = TargetUpdateMode.SOFT
 tau = 0.005  # recommended 0.005 – 0.01 for a learning rate of 1e-3, lower for smaller learning rates
@@ -104,24 +106,30 @@ gamma_delay = 0
 assert (
     gamma_delay <= 0.66
 )  # there is a custom formula for which larger delay will cause gamma to never reach maximum
-epsilon_max = 0.6
-epsilon_min = 0.02
+epsilon_max = 0.8
+epsilon_min = 0
 control_weight_param = 0.5
-legality_weight_param = 0.25 if allow_illegal else 0.05
-entropy_weight_param = 0.01
-entropy_temperature = 1.0
+entropy_weight_param = 0.05
+entropy_temperature = 2.0  # default is 1.0
+action_temperature_max = 0.5
+action_temperature_min = 0.001
 """
-If Q-values are sharply peaked (e.g., one action always dominates), increase it (e.g., 2.0 or 5.0) to "soften" the distribution and get a smoother entropy measure.
-If Q-values are very flat, you can reduce it to make entropy more sensitive to small preference differences.
+controls how much the softmax function spreads out the probabilities over all possible actions.
+A higher temp results in a wider spread of probabilities, making the agent explore more diverse actions.
+Increase for exploration, decrease for exploitation.
 """
+allow_illegal = True
+softmax_action_selection = True
+### BUFFER ###
 should_load_init_buffer = True
 should_dump_init_buffer = False
-buffer_priority_rate_max = 1.0
-buffer_priority_rate_min = 1.0
-buffer_size_low = 100_000
+should_dump_final_buffer = False
+buffer_priority_rate_max = 1  # TODO: prioritize with TD-error priority instead
+buffer_priority_rate_min = 0.6
+buffer_size_low = 55_000
 buffer_size_high = 2_000_000
 buffer_mode = BufferMode.RAM
-disk_buffer = 4 * buffer_size_high
+disk_buffer = 1 * buffer_size_high
 start_training = buffer_size_low * 0.95
 buffer_ratio = 16
 """Defines the proportion between fresh experience training and buffer training"""
@@ -134,7 +142,7 @@ assert episode_step >= 1
 # policy_loss_queue = deque(maxlen=2 * num_envs)
 value_loss_queue = deque(maxlen=2 * num_envs)
 control_loss_queue = deque(maxlen=2 * num_envs)
-legality_loss_queue = deque(maxlen=2 * num_envs)
+# legality_loss_queue = deque(maxlen=2 * num_envs)
 entropy_queue = deque(maxlen=2 * num_envs)
 
 
@@ -159,6 +167,7 @@ class DQN:
         self.envs = envs
         self.color = color
         self.version = version
+        self.load_version = load_version
         self.model = (
             model_class(  # does best with high learning rates like 6e-4
                 node_count=board.size_square,
@@ -172,6 +181,7 @@ class DQN:
                 mlp_shape=mlp_shape,
                 edge_index=board.edge_index,
                 # edge_types=board.edge_types,
+                # pseudo_coordinates=board.pseudo_coordinates,
                 # use_res=True,
             )
             .to(Device.XPU)
@@ -190,6 +200,7 @@ class DQN:
                 mlp_shape=mlp_shape,
                 edge_index=board.edge_index,
                 # edge_types=board.edge_types,
+                # pseudo_coordinates=board.pseudo_coordinates,
                 # use_res=True,
             )
             .to(Device.XPU)
@@ -199,7 +210,7 @@ class DQN:
 
         self.tmp_value_loss = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
         self.tmp_control_loss = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
-        self.tmp_legality_loss = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
+        # self.tmp_legality_loss = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
         self.tmp_entropy = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
 
         weight_decay = 0  # 2e-5 if model_class is GraphSG else 0
@@ -219,8 +230,12 @@ class DQN:
             },
         ]
         scheduler_params = [
-            get_learning_rate_decay(lr_shape_gnn, num_episodes, lr_warm_up_len),
-            get_learning_rate_decay(lr_shape_mlp, num_episodes, lr_warm_up_len),
+            get_learning_rate_decay(
+                lr_shape_gnn, num_episodes, lr_warm_up_len, lr_minimum_p
+            ),
+            get_learning_rate_decay(
+                lr_shape_mlp, num_episodes, lr_warm_up_len, lr_minimum_p
+            ),
         ]
         if gamma_mode is GammaMode.TRAINED:
             self.model.gamma = nn.Parameter(
@@ -231,7 +246,9 @@ class DQN:
             )
             optimizer_params.append({"params": self.model.gamma, "lr": lr_gamma})
             scheduler_params.append(
-                get_learning_rate_decay(LRShape.ONE, num_episodes, lr_warm_up_len)
+                get_learning_rate_decay(
+                    LRShape.ONE, num_episodes, lr_warm_up_len, lr_minimum_p
+                )
             )
 
         # optimizer = optim.SGD(
@@ -278,9 +295,9 @@ class DQN:
         else:
             self.target_model.load_state_dict(self.model.state_dict())
 
-        # th._dynamo.reset()
-        # self.model = th.compile(self.model)
-        # self.target_model = th.compile(self.target_model)
+        th._dynamo.reset()
+        self.model = th.compile(self.model)
+        self.target_model = th.compile(self.target_model)
 
         self.obs: list[np.ndarray] = []
         self.black_masks: list[int] = []
@@ -300,13 +317,14 @@ class DQN:
 
     async def train(self):
         eps = epsilon_max
+        e_temperature = entropy_temperature
+        a_temperature = action_temperature_max
         gamma = gamma_low
         target_update_f = (
             target_update_frequency // 2
             if target_update_frequency >= 8
             else target_update_frequency
         )
-        target_update_m = TargetUpdateMode.HARD
 
         if not allow_illegal:
             self.replay_buffer.capacity = buffer_size_high
@@ -329,14 +347,11 @@ class DQN:
             steps = 0
             while True:
                 steps += 1
-                q_values, _, legality_prediction = self.model(
+                q_values, _ = self.model(
                     th.from_numpy(np.stack(self.obs, 0)).to(Device.XPU)
                 )
 
-                if is_logit_env:
-                    actions = self.get_logit_actions(eps, q_values, legality_prediction)
-                else:
-                    actions = self.get_seq_actions(eps, q_values)
+                actions = self.get_logit_actions(eps, a_temperature, q_values)
                 # action_queue.extend(actions.flatten().tolist())
 
                 # t0 = perf_counter()
@@ -349,34 +364,36 @@ class DQN:
                 (self.obs, self.black_masks, self.white_masks, new_experiences), (
                     value_loss,
                     control_loss,
-                    legality_loss,
+                    # legality_loss,
                     entropy,
                     gamma,
                     old_experiences,
                 ) = await asyncio.gather(
                     self.run_env(self.obs, actions),
-                    self.train_on_buffer(gamma, new_experiences, old_experiences),
+                    self.train_on_buffer(
+                        gamma, new_experiences, old_experiences, e_temperature
+                    ),
                 )
 
                 if value_loss and steps > episode_env_steps:
                     value_loss_queue.append(value_loss)
                     control_loss_queue.append(control_loss)
-                    legality_loss_queue.append(legality_loss)
+                    # legality_loss_queue.append(legality_loss)
                     entropy_queue.append(entropy)
-
-                    # if is_logit_env:
-                    #     entropy = self.get_logit_entropy(q_values)
-                    # else:
-                    #     entropy = self.get_seq_entropy(q_values)
-                    # entropy_queue.append(entropy.item())
 
                     break
 
             if self.replay_buffer.size() < start_training:
                 continue
 
-            eps = (epsilon_max - epsilon_min) * epsilon_decay(episode) + epsilon_min
-            decay = (buffer_priority_rate_max - buffer_priority_rate_min) * buffer_priority_rate_decay(episode)
+            decay = epsilon_decay(episode)
+            eps = (epsilon_max - epsilon_min) * decay + epsilon_min
+            a_temperature = (
+                action_temperature_max - action_temperature_min
+            ) * decay + action_temperature_min
+            decay = (
+                buffer_priority_rate_max - buffer_priority_rate_min
+            ) * buffer_priority_rate_decay(episode)
             self.replay_buffer.priority_rate = decay + buffer_priority_rate_min
             for i in range(episode_step):
                 self.optimizer_scheduler.step()
@@ -384,10 +401,9 @@ class DQN:
             remainder = 1 if target_update_frequency == 2 else 2
             if episode % target_update_f == remainder or target_update_frequency == 1:
                 print("updating target")
-                self.update_target(target_update_m)
+                self.update_target()
                 if episode > target_update_f:
                     target_update_f = target_update_frequency
-                    target_update_m = target_update_mode
                     if gamma > 2 * gamma_low:
                         self.replay_buffer.capacity = buffer_size_high
                         if buffer_mode is BufferMode.RAM_AND_DISK:
@@ -425,6 +441,7 @@ class DQN:
                     gnn_gradient,
                     mlp_gradient,
                     eps,
+                    a_temperature,
                     gamma,
                     lr_gnn_,
                     lr_mlp_,
@@ -478,10 +495,11 @@ class DQN:
         last_gamma,
         new_experiences: tuple[Experience, ...],
         old_experiences: tuple[Experience, ...],
-    ) -> tuple[float, float, float, float, float, tuple[Experience, ...]]:
+        temperature: float,
+    ) -> tuple[float, float, float, float, tuple[Experience, ...]]:
         prev_value_loss: float = 0
         prev_control_loss: float = 0
-        prev_legality_loss: float = 0
+        # prev_legality_loss: float = 0
         prev_entropy: float = 0
         gamma = last_gamma
         size = self.replay_buffer.size()
@@ -516,14 +534,14 @@ class DQN:
             )
             thread.start()
 
-            illegality_masks = []
+            # illegality_masks = []
             control_stats_list = []
             for black_mask, white_mask in zip(black_masks, white_masks):
-                illegality_masks.append(
-                    int_to_binary_float_array(
-                        black_mask | white_mask, board_size_squared
-                    )
-                )
+                # illegality_masks.append(
+                #     int_to_binary_float_array(
+                #         black_mask | white_mask, board_size_squared
+                #     )
+                # )
                 control_stats_list.append(
                     self.replay_buffer.find_closest_prob_oc_stats(
                         black_mask, white_mask
@@ -534,7 +552,7 @@ class DQN:
             #     int_to_binary_float_array(black_mask | white_mask, board_size_squared)
             #     for black_mask, white_mask in zip(black_masks, white_masks)
             # ]
-            illegality_masks_stacked = th.from_numpy(np.stack(illegality_masks))
+            # illegality_masks_stacked = th.from_numpy(np.stack(illegality_masks))
             control_stats_stacked = th.from_numpy(np.stack(control_stats_list))
 
             next_experiences = tuple(
@@ -542,7 +560,6 @@ class DQN:
             )
 
             states = th.from_numpy(np.array(states, dtype=FLOAT_TYPE))
-            # if not is_logit_env: then float32 not int64
             actions = th.from_numpy(np.array(actions, dtype=np.int64))
             rewards = th.from_numpy(np.array(rewards, dtype=FLOAT_TYPE))
             dones = th.from_numpy(np.array(dones, dtype=FLOAT_TYPE))
@@ -553,9 +570,9 @@ class DQN:
             actions = actions.pin_memory().to(device=Device.XPU, non_blocking=True)
             rewards = rewards.pin_memory().to(device=Device.XPU, non_blocking=True)
             dones = dones.pin_memory().to(device=Device.XPU, non_blocking=True)
-            illegality_masks_stacked = illegality_masks_stacked.pin_memory().to(
-                device=Device.XPU, non_blocking=True
-            )
+            # illegality_masks_stacked = illegality_masks_stacked.pin_memory().to(
+            #     device=Device.XPU, non_blocking=True
+            # )
             control_stats_stacked = control_stats_stacked.pin_memory().to(
                 device=Device.XPU, non_blocking=True
             )
@@ -564,26 +581,26 @@ class DQN:
             actions_chunks = actions.chunk(epochs, dim=0)
             rewards_chunks = rewards.chunk(epochs, dim=0)
             dones_chunks = dones.chunk(epochs, dim=0)
-            illegality_masks_chunks = illegality_masks_stacked.chunk(epochs, dim=0)
+            # illegality_masks_chunks = illegality_masks_stacked.chunk(epochs, dim=0)
             control_stats_chunks = control_stats_stacked.chunk(epochs, dim=0)
 
             # copying loss value from gpu takes significant time so let's do it while target thread is running
             prev_value_loss = self.tmp_value_loss.item() / epochs
             prev_control_loss = self.tmp_control_loss.item() / epochs
-            prev_legality_loss = self.tmp_legality_loss.item() / epochs
+            # prev_legality_loss = self.tmp_legality_loss.item() / epochs
             prev_entropy = self.tmp_entropy.item() / epochs
             control_loss_weight = (
                 abs(prev_value_loss / prev_control_loss) if prev_control_loss else 1.0
             )
-            legality_loss_weight = (
-                abs(prev_value_loss / prev_legality_loss) if prev_legality_loss else 1.0
-            )
+            # legality_loss_weight = (
+            #     abs(prev_value_loss / prev_legality_loss) if prev_legality_loss else 1.0
+            # )
             entropy_weight = (
                 -abs(prev_value_loss / prev_entropy) if prev_entropy else -1.0
             )
             self.tmp_value_loss.zero_()
             self.tmp_control_loss.zero_()
-            self.tmp_legality_loss.zero_()
+            # self.tmp_legality_loss.zero_()
             self.tmp_entropy.zero_()
 
             target_q_values = thread.join()
@@ -598,42 +615,34 @@ class DQN:
                 rewards_ = rewards_chunks[i]
                 target_q_values_ = target_q_values_chunks[i]
                 dones_ = dones_chunks[i]
-                illegality_masks = illegality_masks_chunks[i]
+                # illegality_masks = illegality_masks_chunks[i]
                 control_stats = control_stats_chunks[i]
 
-                if is_logit_env:
-                    value_loss, legality_loss, control_loss, entropy = (
-                        self.get_logit_loss(
-                            states_,
-                            target_q_values_,
-                            rewards_,
-                            dones_,
-                            actions_,
-                            gamma,
-                            illegality_masks,
-                            control_stats,
-                        )
-                    )
-                else:
-                    value_loss, legality_loss, control_loss, entropy = (
-                        self.get_seq_loss(
-                            states_, target_q_values_, rewards_, dones_, gamma
-                        )
-                    )
+                # value_loss, legality_loss, control_loss, entropy = (
+                value_loss, control_loss, entropy = self.get_logit_loss(
+                    states_,
+                    target_q_values_,
+                    rewards_,
+                    dones_,
+                    actions_,
+                    gamma,
+                    control_stats,
+                    temperature,
+                )
                 del states_, actions_, rewards_, target_q_values_, dones_
 
                 self.optimizer.zero_grad()
                 (
                     value_loss
                     + control_loss * control_loss_weight * control_weight_param
-                    + legality_loss * legality_loss_weight * legality_weight_param
+                    # + legality_loss * legality_loss_weight * legality_weight_param
                     + entropy * entropy_weight * entropy_weight_param
                 ).backward()
                 # clip_grad_norm_(self.model.parameters(), 1000)
                 self.optimizer.step()
                 self.tmp_value_loss += value_loss.detach()
                 self.tmp_control_loss += control_loss.detach()
-                self.tmp_legality_loss += legality_loss.detach()
+                # self.tmp_legality_loss += legality_loss.detach()
                 self.tmp_entropy += entropy.detach()
             del (
                 old_experiences,
@@ -664,7 +673,7 @@ class DQN:
         return (
             prev_value_loss,
             prev_control_loss,
-            prev_legality_loss,
+            # prev_legality_loss,
             prev_entropy,
             gamma,
             next_experiences,
@@ -673,7 +682,7 @@ class DQN:
     @staticmethod
     def run_target_model(target_model, states):
         try:
-            chunks = states.chunk(2)
+            chunks = states.chunk(4)
             # print("calculating target model...")
             # t0 = perf_counter()
             with th.no_grad():
@@ -683,51 +692,46 @@ class DQN:
         except Exception as e:
             print("*************\n", e)
 
-    def get_logit_actions(self, eps, q_values, legality_prediction):
+    def get_logit_actions(self, eps: float, temperature: float, q_values):
         if allow_illegal:
-            predicted_legality_mask = legality_prediction > 0.1
-            legal_squares = th.nonzero(predicted_legality_mask)
-            # TODO: still mask logits, but using legality prediction from the model, hard or soft
-            # actions = []
-            # for i in range(num_envs):
-            #     predicted_legality_mask = legality_prediction[i] > 0.1
-            #     legal_squares = th.nonzero(predicted_legality_mask, as_tuple=True)
-            #     if np.random.rand() > eps:
-            #         actions.append(choice(legal_squares))
-            #     else:
-            #         q_value = q_values[i]
-            #         min_val = q_value.argmin().item()
-            #         q_value[legal_squares] = q_value[min_val].item() - 1e-8
-            #         actions.append(q_value.argmax().item())
-            #
-            # return np.array(actions, dtype=FLOAT_TYPE)
-
-            # soft masking by multiplication times probability
-            # softmasked_q_values = th.softmax(q_values, dim=-1) * legality_prediction
-            # return np.array(
-            #     [
-            #         (
-            #             np.random.choice(th.nonzero(predicted_legality_mask[i]).flatten())
-            #             if np.random.rand() < eps
-            #             else softmasked_q_values[i].argmax().item()
-            #         )
-            #         for i in range(num_envs)
-            #     ],
-            #     dtype=FLOAT_TYPE,
-            # )
-
             return np.array(
                 [
                     (
-                        np.random.randint(0, board.size_square)
+                        choice(
+                            list(
+                                generate_cells(
+                                    binary_one
+                                    ^ (self.black_masks[i] | self.white_masks[i])
+                                )
+                            )
+                        )
                         if np.random.rand() < eps
-                        else q_values[i].argmax().item()
+                        else (
+                            q_values[i].argmax().item()
+                            if softmax_action_selection
+                            else self.get_softmax_action(q_values[i], temperature)
+                        )
                     )
                     for i in range(num_envs)
                 ],
                 dtype=FLOAT_TYPE,
             )
         else:
+            # FIXME: the following produces illegal actions
+            # return np.array(
+            #     [
+            #         (
+            #             choice(list(generate_cells(binary_one ^ (self.black_masks[i] | self.white_masks[i]))))
+            #             if np.random.rand() < eps
+            #             else q_values[i][
+            #                 list(generate_cells(binary_one ^ (self.black_masks[i] | self.white_masks[i])))
+            #             ].argmax().item()
+            #         )
+            #         for i in range(num_envs)
+            #     ],
+            #     dtype=FLOAT_TYPE,
+            # )
+            # fmt: on
             actions = []
             for i, (black_mask, white_mask) in enumerate(
                 zip(self.black_masks, self.white_masks)
@@ -742,24 +746,18 @@ class DQN:
                     min_val = q_value.argmin().item()
                     q_value[illegal_squares] = q_value[min_val].item() - 1e-8
                     actions.append(q_value.argmax().item())
-
+            # fmt: on
             return np.array(actions, dtype=FLOAT_TYPE)
 
     @staticmethod
-    def get_seq_actions(eps, q_values):
-        actions = to_probs(q_values.to(Device.XPU).detach())
-        for _ in range(int(num_envs * eps)):
-            actions[np.random.randint(0, num_envs - 1)] = np.random.rand()
-        return actions
+    def get_softmax_action(q_values, temperature: float) -> int:
+        probabilities = F.softmax(q_values / temperature, dim=-1)
+        return th.multinomial(probabilities, num_samples=1).item()
 
     @staticmethod
     def get_logit_entropy(q_values):
         probs = F.softmax(q_values.clone().detach(), dim=-1)
         return -th.sum(probs * (probs + 1e-8).log(), dim=-1).mean()
-
-    @staticmethod
-    def get_seq_entropy(q_values):
-        return th.std(q_values)
 
     def get_logit_loss(
         self,
@@ -769,15 +767,16 @@ class DQN:
         dones,
         actions,
         gamma: th.Tensor | float,
-        illegality_masks: th.Tensor,
         control_stats: th.Tensor,
+        temperature: float,
     ):
         target = rewards + gamma * target_q_values.max(dim=1)[0] * (1 - dones)
-        q_values, control, legality = self.model(states)
+        q_values, control = self.model(states)
         q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
 
         # TODO: monitor the following values, periodically if heavy
         # td_error = th.abs(q_value - target).mean().item()
+        # TODO: highest td_error experiences should be prioritized in replay buffer
         # q_drift = F.mse_loss(q_values, target_q_values, reduction='mean').item()
 
         # control_log_probs = (F.softmax(control, dim=-1) + 1e-8).log()
@@ -785,36 +784,29 @@ class DQN:
         # control_loss = -(control_log_probs * control_stats).mean()
         control_loss = F.kl_div(control_log_probs, control_stats, reduction="batchmean")
 
-        q_probs = F.softmax(q_values / entropy_temperature, dim=-1)
+        q_probs = F.softmax(q_values / temperature, dim=-1)
         entropy = -(q_probs * (q_probs + 1e-8).log()).sum(dim=-1).mean()
 
         return (
             F.mse_loss(q_value, target),
-            F.binary_cross_entropy(F.sigmoid(legality), illegality_masks),
             control_loss,
             entropy,
         )
 
-    def get_seq_loss(self, states, next_states, rewards, dones, gamma):
-        actions = self.model(states).squeeze(1)
-        target_actions = self.target_model(next_states).squeeze(1).detach()
-        target = rewards + gamma * target_actions * (1 - dones)
-
-        return F.mse_loss(actions, target)
-
-    def get_seq_advantage_loss(self, states, next_states, rewards, dones, gamma):
-        actions = self.model(states).squeeze(1)
-        target_actions = self.target_model(next_states).squeeze(1).detach()
-        target = rewards + gamma * target_actions * (1 - dones)
-        advantage = target - actions
-
-        loss = -(to_probs(actions) + 1e-8).log() * advantage
+    @staticmethod
+    def huber_loss(q_value: th.Tensor, target: th.Tensor, delta: int = 1.0):
+        """Alternative to F.mse_loss above, custom version of F.smooth_l1_loss."""
+        error = q_value - target
+        abs_error = th.abs(error)
+        quadratic = th.minimum(abs_error, th.tensor(delta))
+        linear = abs_error - quadratic
+        loss = 0.5 * quadratic**2 + delta * linear
         return loss.mean()
 
-    def update_target(self, target_update_m):
-        if target_update_m is TargetUpdateMode.HARD:
+    def update_target(self):
+        if target_update_mode is TargetUpdateMode.HARD:
             self.target_model.load_state_dict(self.model.state_dict())
-        elif target_update_m is TargetUpdateMode.SOFT:
+        elif target_update_mode is TargetUpdateMode.SOFT:
             for target_param, model_param in zip(
                 self.target_model.parameters(), self.model.parameters()
             ):  # TODO: is this copy a source of memory leak?
@@ -873,7 +865,17 @@ def to_probs(actions):
 
 
 def log_progress(
-    episode, q_mean, q_std, gnn_gradient, mlp_gradient, eps, gamma, lr_gnn_, lr_mlp_, priority_rate
+    episode,
+    q_mean,
+    q_std,
+    gnn_gradient,
+    mlp_gradient,
+    eps,
+    temperature,
+    gamma,
+    lr_gnn_,
+    lr_mlp_,
+    priority_rate,
 ):
     # actions = np.array(action_queue)
     # writer.add_histogram(
@@ -893,15 +895,16 @@ def log_progress(
         "episode/loss_length", env_progress_data.loss_length_mean, episode
     )
     writer.add_scalar("episode/fps", env_progress_data.time_mean * num_envs, episode)
-    # writer.add_scalar("rewards/mean_total", env_progress_data.return_mean, episode)
+    writer.add_scalar("rewards/mean_total", env_progress_data.return_mean, episode)
     writer.add_scalar("rewards/mean_winner", env_progress_data.winner_mean, episode)
     writer.add_scalar("rewards/mean_final", env_progress_data.reward_mean, episode)
     if allow_illegal:
-        writer.add_scalar("rewards/mean_legal", env_progress_data.legal_mean, episode)
+        # % of games that finished without any illegal moves
+        writer.add_scalar("rewards/%_legal", env_progress_data.legal_mean, episode)
     # writer.add_scalar("losses/policy_loss", np.mean(policy_loss_queue), episode)
     writer.add_scalar("losses/value_loss", np.mean(value_loss_queue), episode)
     writer.add_scalar("losses/control_loss", np.mean(control_loss_queue), episode)
-    writer.add_scalar("losses/legality_loss", np.mean(legality_loss_queue), episode)
+    # writer.add_scalar("losses/legality_loss", np.mean(legality_loss_queue), episode)
     writer.add_scalar("losses/entropy", np.mean(entropy_queue), episode)
     writer.add_scalar("gradients/gnn", gnn_gradient, episode)
     writer.add_scalar("gradients/mlp", mlp_gradient, episode)
@@ -909,6 +912,7 @@ def log_progress(
     writer.add_scalar("misc/q_std", q_std, episode)
     writer.add_scalar("misc/gamma", gamma, episode)
     writer.add_scalar("misc/epsilon", eps, episode)
+    writer.add_scalar("misc/temperature", temperature, episode)
     writer.add_scalar("misc/buffer_priority_rate", priority_rate, episode)
     writer.add_scalar("misc/lr_gnn", lr_gnn_, episode)
     writer.add_scalar("misc/lr_mlp", lr_mlp_, episode)
@@ -978,13 +982,19 @@ if __name__ == "__main__":
         % ("\n".join([f"|{key}|{value}|" for key, value in params.items()])),
     )
 
-    is_logit_env = True
     envs = MultiprocessAsyncEnv(
-        lambda seed, num_envs, color_, models=[]: EpisodeStats(
+        lambda process_id, num_envs, color_, models=[]: EpisodeStats(
             SyncVectorEnv(
                 [
-                    lambda: env_class(color=False, models=[None])
-                    for _ in range(num_envs)
+                    lambda: env_class(
+                        color=False,
+                        models=[None],
+                        process_id=process_id,
+                        env_id=env_id,
+                        num_processes=num_workers,
+                        num_envs=num_envs,
+                    )
+                    for env_id in range(num_envs)
                 ],
                 copy=False,
             ),
@@ -1003,3 +1013,12 @@ if __name__ == "__main__":
         writer.close()
 
         dqn.save_checkpoint()
+        if should_dump_final_buffer:
+            print("dumping final buffer...")
+            asyncio.run(
+                dqn.replay_buffer.dump_to_disk(
+                    dqn.envs.single_observation_space.shape,
+                    "/var/tmp/hackable_engine/final_buffer",
+                )
+            )
+            print("dumped final buffer")
