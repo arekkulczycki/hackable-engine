@@ -3,7 +3,6 @@ import torch as th
 from torch import nn
 from torch.nn import functional as F
 
-from hackable_engine.common.constants import TH_FLOAT_TYPE
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
 
@@ -50,22 +49,22 @@ class CNN(BaseModule):
                     self.node_features, shape[0], kernel_size=1, device=self.device
                 ),
                 nn.MaxPool2d(kernel_size=3, stride=1),
-                nn.BatchNorm2d(shape[0], dtype=TH_FLOAT_TYPE, device=self.device),
+                nn.BatchNorm2d(shape[0], dtype=th.float32, device=self.device),
             )
             self.res_proj_1 = nn.Sequential(
                 nn.Conv2d(shape[0], shape[1], kernel_size=1, device=self.device),
                 nn.MaxPool2d(kernel_size=3, stride=1),
-                nn.BatchNorm2d(shape[1], dtype=TH_FLOAT_TYPE, device=self.device),
+                nn.BatchNorm2d(shape[1], dtype=th.float32, device=self.device),
             )
             self.res_proj_2 = nn.Sequential(
                 nn.Conv2d(shape[1], shape[2], kernel_size=1, device=self.device),
                 nn.MaxPool2d(kernel_size=3, stride=1),
-                nn.BatchNorm2d(shape[2], dtype=TH_FLOAT_TYPE, device=self.device),
+                nn.BatchNorm2d(shape[2], dtype=th.float32, device=self.device),
             )
             self.res_proj_3 = nn.Sequential(
                 nn.Conv2d(shape[2], shape[3], kernel_size=1, device=self.device),
                 nn.MaxPool2d(kernel_size=3, stride=1),
-                nn.BatchNorm2d(shape[3], dtype=TH_FLOAT_TYPE, device=self.device),
+                nn.BatchNorm2d(shape[3], dtype=th.float32, device=self.device),
             )
         self.conv1 = nn.Conv2d(
             self.node_features,
@@ -73,7 +72,7 @@ class CNN(BaseModule):
             kernel_size=kernels[0],
             stride=strides[0],
             padding=paddings[0],
-            dtype=TH_FLOAT_TYPE,
+            dtype=th.float32,
             device=self.device,
         )
         self.conv2 = nn.Conv2d(
@@ -82,7 +81,7 @@ class CNN(BaseModule):
             kernel_size=kernels[1],
             stride=strides[1],
             padding=paddings[1],
-            dtype=TH_FLOAT_TYPE,
+            dtype=th.float32,
             device=self.device,
         )
         self.conv3 = nn.Conv2d(
@@ -91,7 +90,7 @@ class CNN(BaseModule):
             kernel_size=kernels[2],
             stride=strides[2],
             padding=paddings[2],
-            dtype=TH_FLOAT_TYPE,
+            dtype=th.float32,
             device=self.device,
         )
         # self.conv4 = nn.Conv2d(
@@ -100,14 +99,14 @@ class CNN(BaseModule):
         #     kernel_size=kernels[3],
         #     stride=strides[3],
         #     padding=paddings[3],
-        #     dtype=TH_FLOAT_TYPE,
+        #     dtype=th.float32,
         #     device=self.device,
         # )
         if self.use_norm:
-            self.norm1 = nn.BatchNorm2d(shape[0], dtype=TH_FLOAT_TYPE, device=self.device)
-            self.norm2 = nn.BatchNorm2d(shape[1], dtype=TH_FLOAT_TYPE, device=self.device)
-            self.norm3 = nn.BatchNorm2d(shape[2], dtype=TH_FLOAT_TYPE, device=self.device)
-            # self.norm4 = nn.BatchNorm2d(shape[3], dtype=TH_FLOAT_TYPE, device=self.device)
+            self.norm1 = nn.BatchNorm2d(shape[0], dtype=th.float32, device=self.device)
+            self.norm2 = nn.BatchNorm2d(shape[1], dtype=th.float32, device=self.device)
+            self.norm3 = nn.BatchNorm2d(shape[2], dtype=th.float32, device=self.device)
+            # self.norm4 = nn.BatchNorm2d(shape[3], dtype=th.float32, device=self.device)
         # self.cnn = (self.conv1, self.conv2, self.conv3, self.conv4)
         self.cnn = (self.conv1, self.conv2, self.conv3)
 

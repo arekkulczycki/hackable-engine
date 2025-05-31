@@ -14,10 +14,10 @@ class BaseWorker(Process, ProfilerMixin):
     Base for the worker process.
     """
 
-    def __init__(self):
+    def __init__(self, memory=None):
         super().__init__()
 
-        self.memory_manager: MemoryManager = MemoryManager()
+        self.memory_manager: MemoryManager = MemoryManager(memory)
 
     def run(self) -> None:
         """"""

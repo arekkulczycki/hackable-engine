@@ -7,9 +7,10 @@ from typing import ClassVar
 
 from numpy import float32
 
-from hackable_engine.board.chess.serializers.chess_board_serializer_mixin import (
-    CHESS_BOARD_BYTES_NUMBER,
-)
+# from hackable_engine.board.chess.serializers.chess_board_serializer_mixin import (
+#     CHESS_BOARD_BYTES_NUMBER,
+# )
+from hackable_engine.board.hex.serializers.hex_board_serializer_mixin import HexBoardSerializerMixin
 from hackable_engine.common.queue.items.base_item import BaseItem
 
 
@@ -19,7 +20,7 @@ class SelectorItem(BaseItem):
     Item passed through SelectorQueue.
     """
 
-    board_bytes_number: ClassVar[int] = CHESS_BOARD_BYTES_NUMBER
+    board_bytes_number: ClassVar[int] = HexBoardSerializerMixin.board_bytes_number
     run_id: str
     parent_node_name: str
     move_str: str

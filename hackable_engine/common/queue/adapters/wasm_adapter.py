@@ -4,7 +4,7 @@ from collections import deque
 from random import choice
 from typing import Callable, List, Optional
 
-from js import postMessage
+from js import postMessage, Object
 from pyodide.ffi import to_js
 
 from hackable_engine.common.queue.base_queue import BaseQueue
@@ -42,14 +42,16 @@ class WasmAdapter(BaseQueue):
         # to_js converts objects to JS objects (bytes to Uint8Array)
         if self.destinations:
             destination = self.destinations[0] if len(self.destinations) == 1 else choice(self.destinations)
-            destination.postMessage(to_js({"type": self.name, "item": self.dumps(item)}))
+            dumped_item = self.dumps(item)
+            # print("dumped item", dumped_item)
+            destination.postMessage(to_js({"type": self.name, "item": dumped_item}, dict_converter=Object.fromEntries))
         else:
-            postMessage(to_js({"type": self.name, "item": self.dumps(item)}))
+            postMessage(to_js({"type": self.name, "item": self.dumps(item)}, dict_converter=Object.fromEntries))
 
     def bulk_put(self, items, destination) -> None:
         """"""
 
-        destination.postMessage(to_js({"type": f"{self.name}_bulk", "items": items}))
+        destination.postMessage(to_js({"type": f"{self.name}_bulk", "items": items}, dict_converter=Object.fromEntries))
 
     def inject(self, raw_item: bytes) -> None:
         """"""
@@ -96,7 +98,6 @@ class WasmAdapter(BaseQueue):
 
     def get_many(self, max_messages_to_get: int, timeout: float = 0) -> List[BaseItem]:
         """"""
-
         return [item for item in (self.get() for _ in range(max_messages_to_get)) if item is not None]
         # try:
         #     return [self.loads(item) for item in (self.queue.popleft() for i in range(max_messages_to_get)) if item is not None]

@@ -1,10 +1,11 @@
-importScripts("https://cdn.jsdelivr.net/pyodide/v0.23.2/full/pyodide.js");
+importScripts("https://cdn.jsdelivr.net/pyodide/v0.28.0/full/pyodide.js");
 
 async function setupPyodide() {
     self.pyodide = await loadPyodide();
+    await self.pyodide.loadPackage("numpy");
     await self.pyodide.loadPackage("micropip");
     self.micropip = pyodide.pyimport("micropip");
-    await self.micropip.install("../hackable_bot-0.0.4-py3-none-any.whl")
+    await self.micropip.install("../hackable_engine-0.1.0-py3-none-any.whl")
 }
 
 async function setupWorker(memoryArray, boardInitKwargs) {
@@ -42,15 +43,16 @@ async function setupWorker(memoryArray, boardInitKwargs) {
         eval_item_pkg.EvalItem.dumps
     );
 
+    let worker_locks_pkg = pyodide.pyimport("hackable_engine.workers.configs.worker_locks");
+    let worker_locks = worker_locks_pkg.WorkerLocks()
+
+    let worker_queues_pkg = pyodide.pyimport("hackable_engine.workers.configs.worker_queues");
+    let worker_queues = worker_queues_pkg.WorkerQueues(self.distributor_queue, self.eval_queue, self.selector_queue, self.control_queue)
+
     let worker_pkg = pyodide.pyimport("hackable_engine.workers.distributor_worker");
     self.worker = worker_pkg.DistributorWorker(
-        null,
-        null,
-        null,
-        self.distributor_queue,
-        self.eval_queue,
-        self.selector_queue,
-        self.control_queue,
+        worker_locks,
+        worker_queues,
         board_pkg.HexBoard,
         boardInitKwargs.size,
         memoryArray  // TODO: not clear if this gets referenced or copied, make sure
@@ -61,17 +63,13 @@ async function setupWorker(memoryArray, boardInitKwargs) {
 
 self.eval_ports = [];
 async function handle_event(event) {
-    if (!event.data.type) {
-        if (event.data.get("type") === "distributor_queue") {
-            self.distributor_queue.inject_js(event.data.get("item"));
-        } else if (event.data.get("type") === "distributor_queue_bulk") {
-            let items = event.data.get("items");
-            items.forEach((item) => {
-                self.distributor_queue.inject_js(item);
-            });
-        } else {
-            console.log("received else in distrib: ", event.data)
-        }
+    if (event.data.type === "distributor_queue") {
+        self.distributor_queue.inject_js(event.data.item);
+    } else if (event.data.type === "distributor_queue_bulk") {
+        let items = event.data.items;
+        items.forEach((item) => {
+            self.distributor_queue.inject_js(item);
+        });
     } else if (event.data.type === "distributor_port") {
         self.port = event.data.port;
         self.port.onmessage = async (eval_event) => {

@@ -17,7 +17,7 @@ from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_env impo
 class MultiprocessAsyncEnv:
     def __init__(
         self,
-        make_env: Callable[[int, int, bool], Env],
+        make_env: Callable[[int, int, bool, list], Env],
         num_workers: int,
         env_per_worker: int,
         color: bool = True,

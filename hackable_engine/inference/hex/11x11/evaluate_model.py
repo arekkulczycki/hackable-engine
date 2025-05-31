@@ -8,7 +8,9 @@ import torch as th
 from hackable_engine.board.hex.bitboard_utils import generate_cells
 from hackable_engine.board.hex.hex_board import HexBoard
 from hackable_engine.board.hex.move import Move
+from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard
 from hackable_engine.common.constants import FLOAT_TYPE
+from hackable_engine.training.algorithms.simple_dqn import board_size
 from hackable_engine.training.device import Device
 from hackable_engine.training.models.graph_gin import GraphGIN
 from hackable_engine.training.models.graph_sg import GraphSG
@@ -16,13 +18,13 @@ from hackable_engine.training.models.graph_rgcn import GraphRGCN
 from hackable_engine.training.models.graph_gmm import GraphGMM
 from hackable_engine.training.models.graph_gat import GraphGAT
 
-BOARD_SIZE = 13
+BOARD_SIZE = 11
 MAX_MOVES = BOARD_SIZE**2
 
 
 parser = ArgumentParser()
 parser.add_argument(
-    "-v", "--version", type=int, help="version of the model to save", required=True
+    "-v", "--version", type=int, help="version of the model to evaluate", required=True
 )
 parser.add_argument(
     "-c",
@@ -33,7 +35,7 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-board = HexBoard("", size=BOARD_SIZE, use_graph=True)
+board = TrainingHexBoard("", size=BOARD_SIZE, use_graph=True)
 model = (
     GraphGMM(
         node_count=board.size_square,
@@ -48,14 +50,14 @@ model = (
         edge_index=board.edge_index,
         # edge_types=board.edge_types,
         pseudo_coordinates=board.pseudo_coordinates,
-        use_res=True,
+        # use_res=True,
     )
     .to(Device.XPU)
     .to(th.float32)
 )
 model.eval()
 model_weights = th.load(
-    f"dqn/dqn-model-{'white' if args.color else 'black'}.v{args.version}", weights_only=True
+    f"dqn/{board_size}/dqn-model-{'white' if args.color else 'black'}.v{args.version}", weights_only=True
 )
 model.load_state_dict(
     {k.replace("_orig_mod.", ""): v for k, v in model_weights.items()}
@@ -63,8 +65,8 @@ model.load_state_dict(
 
 
 def select_model_move(board: HexBoard) -> Move:
-    logits = model(th.from_numpy(board.get_hetero_graph_node_features_one_hot().reshape((1, 169, 9)).astype(FLOAT_TYPE)))#.to(Device.XPU))
-    logits = logits.reshape((169,))
+    logits = model(th.from_numpy(board.get_hetero_graph_node_features_one_hot().reshape((1, 121, 9)).astype(FLOAT_TYPE)).to(Device.XPU))
+    logits = logits.reshape((121,))
 
     illegal_squares = list(generate_cells(board.occupied))
     min_val = logits.argmin().item()
@@ -136,6 +138,8 @@ def evaluate():
     losses = 0
     for i in range(10):
         board.reset()
+        # TODO: if running more than 10 iterations maybe use random opening move
+        board.push(Move.from_coord("a3", 11))
         total = wins + losses
         win_percentage = wins / total if total else 0.5
         random_moves_played = 0

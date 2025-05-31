@@ -13,7 +13,10 @@ import aiofiles
 import numpy as np
 from faster_fifo import Queue, Full
 
-from hackable_engine.board.hex.bitboard_utils import generate_masks, split_mask_to_uint64_array
+from hackable_engine.board.hex.bitboard_utils import (
+    generate_masks,
+    split_mask_to_uint64_array,
+)
 from hackable_engine.common.constants import FLOAT_TYPE
 
 Experience = tuple[np.array, float, float, np.array, bool, int, int]
@@ -30,6 +33,7 @@ class ReplayBuffer:
         capacity: int,
         storage_type=StorageType.DEQUE,
         priority_rate: float = 0.0,
+        control_stats: bool = True,
     ):
         self.count: int = 0
         self.board_size: int = board_size
@@ -43,7 +47,9 @@ class ReplayBuffer:
         else:
             self.buffer = []
 
-        self.priority_indices: set[int] = set()
+        self.win_indices: set[int] = set()
+        self.loss_indices: set[int] = set()
+        self.illegal_indices: set[int] = set()
         self.priority_rate: float = priority_rate
         """Between 0 and 1, the % of sampled items took from the priority pool."""
 
@@ -54,6 +60,8 @@ class ReplayBuffer:
         """Keep track of what keys are already present for the data and facilitate quick subset lookups."""
 
         self.backup: DiskBackupProcess | None = None
+        self.control_stats: bool = control_stats
+        self.should_sample_illegal: bool = True
 
     def setup_disk_backup(
         self, capacity: int, batch_size: int, obs_shape: tuple[int, ...], version: int
@@ -84,28 +92,47 @@ class ReplayBuffer:
                             pass
                 self.buffer[position] = experience
 
-            is_terminal = experience[2] != 0
-            is_legal = experience[2] >= -1
-            ocb = experience[-2]
-            ocw = experience[-1]
-            if (
-                is_legal and
-                ocb not in self.control_stats_dict
-                or ocw not in self.control_stats_dict[ocb]
-            ):
-                self.control_stats_dict[ocb][ocw] = self.initialize_oc_stats(ocb, ocw)
-                # self.control_stats_keys_arr[position][0] = split_mask_to_uint64_array(ocb)
-                # self.control_stats_keys_arr[position][1] = split_mask_to_uint64_array(ocw)
-                if not is_terminal:
-                    self.control_stats_keys[ocb.bit_count()].add((ocb, ocw))
+            if self.control_stats:
+                self.collect_control_stats(experience, position)
 
-            if is_terminal:  # prioritize non-zero rewards
-                self.priority_indices.add(position)
-                if is_legal:
-                    self.propagate_oc_to_children(ocb, ocw)
-                    self.control_stats_terminal_keys.add((ocb, ocw))
-            else:
-                self.priority_indices.discard(position)
+    def collect_control_stats(self, experience: Experience, position: int):
+        reward = experience[2]
+        is_terminal = reward != 0
+        is_win = reward > 0
+        is_legal = reward >= -1
+        ocb = experience[-2]
+        ocw = experience[-1]
+        if (
+            is_legal
+            and ocb not in self.control_stats_dict
+            or ocw not in self.control_stats_dict[ocb]
+        ):
+            self.control_stats_dict[ocb][ocw] = self.initialize_oc_stats(ocb, ocw)
+            # self.control_stats_keys_arr[position][0] = split_mask_to_uint64_array(ocb)
+            # self.control_stats_keys_arr[position][1] = split_mask_to_uint64_array(ocw)
+            if not is_terminal:
+                self.control_stats_keys[ocb.bit_count()].add((ocb, ocw))
+
+        if is_terminal and is_legal:  # prioritize non-zero rewards
+            if is_win:
+                self.win_indices.add(position)
+                self.loss_indices.discard(position)
+                self.illegal_indices.discard(position)
+            elif is_legal:
+                self.loss_indices.add(position)
+                self.win_indices.discard(position)
+                self.illegal_indices.discard(position)
+            elif self.should_sample_illegal:
+                self.illegal_indices.add(position)
+                self.loss_indices.discard(position)
+                self.win_indices.discard(position)
+
+            if is_legal:
+                self.propagate_oc_to_children(ocb, ocw)
+                self.control_stats_terminal_keys.add((ocb, ocw))
+        else:
+            for set_ in [self.win_indices, self.loss_indices, self.illegal_indices]:
+                set_.discard(position)
 
     def propagate_oc_to_children(self, ocb: int, ocw: int):
         """Find all keys that have a subset of white stones AND a subset of black stones."""
@@ -170,10 +197,16 @@ class ReplayBuffer:
             return self.get_prob_oc_stats(self.control_stats_dict[ocb_child][ocw_child])
         return self.get_avg_prob_oc_stats()
 
+    @staticmethod
+    def get_prob_oc_stats(oc_stats: np.array) -> np.array:
+        return oc_stats / np.sum(oc_stats, axis=-1, keepdims=True)
+
     def get_avg_prob_oc_stats(self) -> np.array:
         return np.zeros(dtype=FLOAT_TYPE, shape=(self.board_size_squared, 3)) + 1 / 3
 
-    def find_mask_subsets_vectorized(self, ocb: int, ocw: int) -> Generator[tuple[int, int], None, None]:
+    def find_mask_subsets_vectorized(
+        self, ocb: int, ocw: int
+    ) -> Generator[tuple[int, int], None, None]:
         # Convert target into 3-part chunks
         ocb_chunks = split_mask_to_uint64_array(ocb)
         ocw_chunks = split_mask_to_uint64_array(ocw)
@@ -185,7 +218,9 @@ class ReplayBuffer:
         condition_ocb = np.all((child_ocb_arr & ocb_chunks) == child_ocb_arr, axis=1)
         condition_ocw = np.all((child_ocw_arr & ocw_chunks) == child_ocw_arr, axis=1)
 
-        subset_arr = self.control_stats_keys_arr[condition_ocb & condition_ocw]  # shape (N, 2, 3)
+        subset_arr = self.control_stats_keys_arr[
+            condition_ocb & condition_ocw
+        ]  # shape (N, 2, 3)
         return self.subset_arr_to_pairs(subset_arr)
         # Combine masks
         # mask = mask_A & mask_B
@@ -195,7 +230,7 @@ class ReplayBuffer:
         yield from (
             (
                 self.combine_chunks_to_int(pair[0]),  # first bitmask
-                self.combine_chunks_to_int(pair[1])  # second bitmask
+                self.combine_chunks_to_int(pair[1]),  # second bitmask
             )
             for pair in subset_arr
         )
@@ -204,31 +239,24 @@ class ReplayBuffer:
     def combine_chunks_to_int(chunks):
         return int(chunks[0]) + (int(chunks[1]) << 64) + (int(chunks[2]) << 128)
 
-    @staticmethod
-    def get_prob_oc_stats(oc_stats: np.array) -> np.array:
-        return oc_stats / np.sum(oc_stats, axis=-1, keepdims=True)
-
-    def get_prob_oc_stats_from_experience(self, experience: Experience) -> np.array:
-        oc_stats = self.control_stats_dict[experience[-2]][experience[-1]]
-        try:
-            return oc_stats / np.sum(oc_stats, axis=-1, keepdims=True)
-        except ZeroDivisionError:
-            return (
-                np.zeros(dtype=FLOAT_TYPE, shape=(self.board_size_squared, 3)) + 1 / 3
-            )
-
     def sample(self, size: int) -> Generator[Experience, None, None]:
         priority_size = int(size * self.priority_rate)
-        try:
-            priority_batch_ids = sample(sorted(self.priority_indices), k=priority_size)
-        except ValueError:
-            population = len(self.priority_indices)
-            if population < size:
-                priority_batch_ids = list(self.priority_indices)
-                priority_size = population
-            else:
-                priority_batch_ids = sample(sorted(self.priority_indices), k=size)
-                priority_size = size
+        if self.should_sample_illegal:
+            win_size = min(len(self.win_indices), priority_size // 3)
+            loss_size = min(len(self.loss_indices), (priority_size - win_size) // 2)
+            illegal_size = min(
+                len(self.illegal_indices), priority_size - win_size - loss_size
+            )
+        else:
+            win_size = min(len(self.win_indices), priority_size // 2)
+            loss_size = min(len(self.loss_indices), priority_size - win_size)
+            illegal_size = 0
+        priority_size = win_size + loss_size
+        priority_batch_ids = (
+            sample(sorted(self.win_indices), k=win_size)
+            + sample(sorted(self.loss_indices), k=loss_size)
+            + sample(sorted(self.illegal_indices), k=illegal_size)
+        )
 
         batch_ids = sample(range(self.size()), k=(size - priority_size))
         batch = (self.buffer[i] for i in batch_ids + priority_batch_ids)
@@ -254,15 +282,24 @@ class ReplayBuffer:
         else:
             return self.count
 
-    async def dump_to_disk(self, obs_shape: tuple[int, ...]):
+    async def dump_to_disk(self, obs_shape: tuple[int, ...], path: str | None = None):
         # disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer")
-        disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer_nonrandom")
+        # disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer_legal")
+        disk = DiskBackup(
+            obs_shape, path or "/var/tmp/hackable_engine/init_buffer_heuristic"
+        )
         for position, experience in enumerate(self.buffer):
             await disk.store(position, experience)
 
-    async def load_init_buffer(self, obs_shape: tuple[int, ...], size: int):
+    async def load_init_buffer(
+        self, obs_shape: tuple[int, ...], size: int, path: str | None = None
+    ):
         # disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer")
-        disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer_nonrandom")
+        # disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer_legal")
+        disk = DiskBackup(
+            obs_shape, path or "/var/tmp/hackable_engine/init_buffer_heuristic"
+        )
+        # disk = DiskBackup(obs_shape, path or "/var/tmp/hackable_engine/final_buffer")
 
         for position in range(size):
             experience = await disk.get(position)

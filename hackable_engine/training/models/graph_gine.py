@@ -5,7 +5,6 @@ from torch.nn import functional as F
 from torch_geometric.nn import GINEConv
 from torch_geometric.nn.norm import GraphNorm
 
-from hackable_engine.common.constants import TH_FLOAT_TYPE
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
 
@@ -39,17 +38,27 @@ class GraphGINE(BaseModule):
         self.use_res = use_res
 
         self.edge_index = edge_index.to(Device.XPU)
-        self.edge_types = (
-            nn.functional.one_hot(edge_types, num_classes=3)
-            .to(Device.XPU)
-            .to(TH_FLOAT_TYPE)
-        )
+        self.batch_edge_index = self.get_batch_edge_index(node_count, batch_size)
+        self.edge_types = edge_types.to(Device.XPU)
+        self.batch_edge_types = self.get_batch_edge_types(node_count, batch_size)
 
         self.setup_graph_feature_extractor(gnn_shape)
-        self.setup_mlp(gnn_shape, mlp_shape, output_size, is_seq)
+        self.setup_mlp(gnn_shape, mlp_shape, output_size)
 
         self.initialize_gnn_weights()
         self.initialize_mlp_weights()
+
+    def get_batch_edge_index(self, node_count, batch_size):
+        batch_edge_index = []
+        for i in range(batch_size):
+            batch_edge_index.append(self.edge_index + i * node_count)
+        return th.cat(batch_edge_index, dim=1).to(Device.XPU)
+
+    def get_batch_edge_types(self, node_count, batch_size):
+        batch_edge_types = []
+        for i in range(batch_size):
+            batch_edge_types.append(self.edge_types)
+        return th.cat(batch_edge_types, dim=0).to(Device.XPU)
 
     def setup_graph_feature_extractor(self, shape):
         if self.use_res:
@@ -139,32 +148,44 @@ class GraphGINE(BaseModule):
         ).to(Device.XPU)
         # self.batch_expanded = batch.unsqueeze(-1).expand(-1, shape[-1])
 
-    def setup_mlp(self, gnn_shape, mlp_shape, output_size, is_seq=False):
+    def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
-        prev_size = gnn_shape[-1] * self.node_count if is_seq else gnn_shape[-1]
+        control_mlp = []
+
+        prev_size = gnn_shape[-1]
         for size in [*mlp_shape, output_size]:
             mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
             prev_size = size
 
-        self.mlp = tuple(mlp)
+        prev_size = gnn_shape[-1]
+        for size in [*mlp_shape, 3]:
+            control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            prev_size = size
 
-        self.legality_layer = nn.Linear(
-            self.gnn_shape[-1], output_size, device=Device.XPU
-        )
+        self.mlp = tuple(mlp)
+        self.control_mlp = tuple(control_mlp)
 
     def forward(self, x, *args):
         x = x.flatten(0, 1)
         x = self.extract_features(x)
-        if self.is_seq:
-            x = x.flatten(-2, -1)
-        x, legality = self.make_decision(x)
+
         if self.training:
-            return x.flatten(1, -1), legality.flatten(1, -1)
+            x, control = self.make_decision(x)
+            return x.flatten(1, -1), control.flatten(0, 1)
         else:
-            return x.flatten(), legality.flatten()
+            # return self.make_decision(x).flatten()
+            return self.make_decision(x).flatten(1, -1)
 
     def extract_features(self, x):
-        batch_size = x.shape[0] if self.training else 1
+        if x.shape[0] == self.batch_size:
+            batch_size = self.batch_size
+            edge_index = self.batch_edge_index
+            edge_types = self.batch_edge_types
+        else:
+            batch_size = x.shape[0]
+            edge_index = self.get_batch_edge_index(self.node_count, batch_size)
+            edge_types = self.get_batch_edge_types(self.node_count, batch_size)
+
         batch = (
             self.batch
             if batch_size == self.batch_size
@@ -177,7 +198,7 @@ class GraphGINE(BaseModule):
         if self.use_res:
             res0 = self.res_proj_0(x)
         x = F.dropout(
-            F.relu(self.conv1(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+            F.relu(self.conv1(x, edge_index, edge_attr=edge_types)), p=0.25
         )
         x = self.norm1(x, batch, batch_size)
 
@@ -185,7 +206,7 @@ class GraphGINE(BaseModule):
             x = x + res0
             res1 = self.res_proj_1(x)
         x = F.dropout(
-            F.relu(self.conv2(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+            F.relu(self.conv2(x, edge_index, edge_attr=edge_types)), p=0.25
         )
         x = self.norm2(x, batch, batch_size)
 
@@ -193,7 +214,7 @@ class GraphGINE(BaseModule):
             x = x + res1
             res2 = self.res_proj_2(x)
         x = F.dropout(
-            F.relu(self.conv3(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+            F.relu(self.conv3(x, edge_index, edge_attr=edge_types)), p=0.25
         )
         x = self.norm3(x, batch, batch_size)
 
@@ -201,7 +222,7 @@ class GraphGINE(BaseModule):
             x = x + res2
             res3 = self.res_proj_3(x)
         x = F.dropout(
-            F.relu(self.conv4(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+            F.relu(self.conv4(x, edge_index, edge_attr=edge_types)), p=0.25
         )
         x = self.norm4(x, batch, batch_size)
 
@@ -209,7 +230,7 @@ class GraphGINE(BaseModule):
             x = x + res3
             res4 = self.res_proj_4(x)
         x = F.dropout(
-            F.relu(self.conv5(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+            F.relu(self.conv5(x, edge_index, edge_attr=edge_types)), p=0.25
         )
         x = self.norm5(x, batch, batch_size)
 
@@ -217,7 +238,7 @@ class GraphGINE(BaseModule):
             x = x + res4
             res5 = self.res_proj_5(x)
         x = F.dropout(
-            F.relu(self.conv6(x, self.edge_index, edge_attr=self.edge_types)), p=0.25
+            F.relu(self.conv6(x, edge_index, edge_attr=edge_types)), p=0.25
         )
 
         if self.use_res:
@@ -237,20 +258,23 @@ class GraphGINE(BaseModule):
                         th.nn.init.zeros_(layer.bias)
 
     def initialize_mlp_weights(self):
-        for layer in self.mlp:
+        for layer in self.mlp + self.control_mlp:
             th.nn.init.kaiming_normal_(
                 layer.weight, mode="fan_in", nonlinearity="leaky_relu"
             )
             th.nn.init.zeros_(layer.bias)
 
-        th.nn.init.kaiming_uniform_(
-            self.legality_layer.weight, mode="fan_in", nonlinearity="leaky_relu"
-        )
-        th.nn.init.zeros_(self.legality_layer.bias)
-
     def make_decision(self, x: th.Tensor):
-        legality = self.legality_layer(x)
-
+        mlp_x = x
+        control_x = x
         for layer in self.mlp[:-1]:
-            x = F.leaky_relu(layer(x))
-        return self.mlp[-1](x), legality
+            mlp_x = F.leaky_relu(layer(mlp_x), negative_slope=0.05)
+            # x = F.dropout(F.leaky_relu(layer(x)), p=0.5, training=self.training)
+
+        if self.training:
+            for layer in self.control_mlp[:-1]:
+                control_x = F.leaky_relu(layer(control_x), negative_slope=0.05)
+
+            return self.mlp[-1](mlp_x), self.control_mlp[-1](control_x)
+        else:
+            return self.mlp[-1](mlp_x)

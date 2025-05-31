@@ -7,7 +7,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from torch_geometric.nn import GCNConv, ResGatedGraphConv, SAGEConv, FastRGCNConv, GATv2Conv, GCN2Conv, GraphConv, \
     GeneralConv
 
-from hackable_engine.board.hex.hex_board import HexBoard
+from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard as HexBoard
 from hackable_engine.training.hyperparams import N_ENVS
 
 GAT_HEADS = 6

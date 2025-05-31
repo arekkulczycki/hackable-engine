@@ -1,10 +1,11 @@
-importScripts("https://cdn.jsdelivr.net/pyodide/v0.23.2/full/pyodide.js");
+importScripts("https://cdn.jsdelivr.net/pyodide/v0.28.0/full/pyodide.js");
 
 async function setupPyodide() {
     self.pyodide = await loadPyodide();
+    await self.pyodide.loadPackage("numpy");
     await self.pyodide.loadPackage("micropip");
     self.micropip = pyodide.pyimport("micropip");
-    await self.micropip.install("../hackable_bot-0.0.4-py3-none-any.whl")
+    await self.micropip.install("../hackable_engine-0.1.0-py3-none-any.whl")
 }
 
 async function setupWorker(memoryArray, boardInitKwargs) {
@@ -37,31 +38,30 @@ async function setupWorker(memoryArray, boardInitKwargs) {
         control_item_pkg.ControlItem.dumps
     );
 
+    let worker_locks_pkg = pyodide.pyimport("hackable_engine.workers.configs.worker_locks");
+    let worker_locks = worker_locks_pkg.WorkerLocks()
+
+    let worker_queues_pkg = pyodide.pyimport("hackable_engine.workers.configs.worker_queues");
+    let worker_queues = worker_queues_pkg.WorkerQueues(self.distributor_queue, self.eval_queue, self.selector_queue, self.control_queue)
+
     let worker_pkg = pyodide.pyimport("hackable_engine.workers.search_worker");
-    self.worker = worker_pkg.SearchWorker(null, null, null, self.selector_queue, self.distributor_queue, self.control_queue, memoryArray);
-    self.worker.reset(board)
+    self.worker = worker_pkg.SearchWorker(board, worker_locks, worker_queues, memoryArray);
 
     console.log("... search worker ready");
 }
 
 self.ports = [];
 async function handle_event(event) {
-    if (!event.data.type) {
-        if (event.data.get("type") === "selector_queue") {
-            self.selector_queue.inject_js(event.data.get("item"));
-        } else if (event.data.get("type") === "control_queue") {
-            self.control_queue.inject_js(event.data.get("item"));
-        } else if (event.data.get("type") === "selector_queue_bulk") {
-            let items = event.data.get("items");
-            items.forEach((item) => {
-                self.selector_queue.inject_js(item);
-            });
-            // for (let i=0;i<items.count;i++) {
-            //     self.selector_queue.inject_js(items[i]);
-            // }
-        } else {
-            console.log("received else in search: ", event.data)
-        }
+    if (event.data.type === "selector_queue") {
+        self.selector_queue.inject_js(event.data.item);
+    } else if (event.data.type === "control_queue") {
+        console.log(event.data.item);
+        self.control_queue.inject_js(event.data.item);
+    } else if (event.data.type === "selector_queue_bulk") {
+        let items = event.data.items;
+        items.forEach((item) => {
+            self.selector_queue.inject_js(item);
+        });
     } else if (event.data.type === "distributor_port") {
         self.distributor_worker_port = event.data.port;
     } else if (event.data.type === "control_port" || event.data.type === "search_port") {
@@ -78,7 +78,7 @@ async function handle_event(event) {
 
         // self.worker._set_wasm_ports(self.ports);
         self.worker._set_distributor_wasm_port(self.distributor_worker_port);
-    } else if (event.data.type === "reset") {
+    } else if (event.data.type === "setup") {
         let board_pkg = pyodide.pyimport("hackable_engine.board.hex.hex_board");
         let board = board_pkg.HexBoard.callKwargs(event.data.boardInitKwargs);
         await self.worker.reset(board);

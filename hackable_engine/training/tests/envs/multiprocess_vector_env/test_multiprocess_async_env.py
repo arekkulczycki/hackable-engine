@@ -44,7 +44,7 @@ async def benchmark():
     total += perf_counter() - t00
 
     steps = 0
-    while steps < 10_000:
+    while steps < 2_000:
         arr = np.empty((num_envs,), dtype=np.int32)
         for i in range(num_envs):
             ocb = ocbs[i]
@@ -56,6 +56,7 @@ async def benchmark():
         _, _, _, _, ocbs, ocws = await env.step(arr)
         total += perf_counter() - t0
         steps += num_envs
+        print(steps)
 
     print(f"finished perf test in {perf_counter() - t00}", f"{steps / total} steps per second")
 

@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import sys
-from asyncio import timeout
 from collections import deque
+from math import sqrt
 from multiprocessing import Lock, Process
 from queue import Empty, Full
-from signal import signal, SIGTERM
 from time import sleep
 from typing import Callable, Any
 
@@ -16,6 +14,7 @@ from gymnasium import Env
 from gymnasium.core import ActType
 from gymnasium.vector.vector_env import VectorEnv
 from numpy import ndarray
+from onnxruntime import InferenceSession
 
 from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.common.memory.adapters.shared_memory_adapter import (
@@ -27,14 +26,14 @@ from hackable_engine.training.envs.multiprocess_vector_env.util import EnvProgre
 class MultiprocessEnv:
     def __init__(
         self,
-        make_env: Callable[[int, int, bool], Env],
+        make_env: Callable[[int, int, bool, list], Env],
         num_workers: int,
         env_per_worker: int,
         color: bool = True,
         action_shape: tuple[int, ...] | None = None,
     ):
         self.make_local_env = make_env
-        self.local_env = make_env(num_workers, env_per_worker, color)
+        self.local_env = make_env(-1, env_per_worker, color, [])
         self.local_env.unwrapped._rewards.astype(FLOAT_TYPE, copy=False)
         self.num_workers = num_workers
         self.env_per_worker = env_per_worker
@@ -97,18 +96,31 @@ class MultiprocessEnv:
         length_sum = 0
         win_count = 0
         win_lengths_sum = 0
+        win_squares_sum = 0
+        loss_squares_sum = 0
         for is_win, length in zip(self.winner_queue, self.length_queue):
             total_count += 1
             length_sum += length
             if is_win:
                 win_count += 1
                 win_lengths_sum += length
+                win_squares_sum += length**2
+            else:
+                loss_squares_sum += length**2
+
+        loss_count = (total_count - win_count)
+        win_length_mean = win_lengths_sum / win_count if win_count else 0
+        loss_length_mean = (length_sum - win_lengths_sum) / loss_count
+        win_variance = (win_squares_sum - win_count * win_length_mean ** 2) / (win_count - 1)
+        loss_variance = (loss_squares_sum - loss_count * loss_length_mean ** 2) / (loss_count - 1)
 
         return EnvProgressData(
             time_mean=np.sum(self.time_queue) / total_count,
             length_mean=length_sum / total_count,
-            win_length_mean=win_lengths_sum / win_count if win_count else 0,
-            loss_length_mean=(length_sum - win_lengths_sum) / (total_count - win_count),
+            win_length_mean=win_length_mean,
+            win_length_std=sqrt(win_variance),
+            loss_length_mean=loss_length_mean,
+            loss_length_std=sqrt(loss_variance),
             return_mean=np.sum(self.return_queue) / total_count,
             reward_mean=np.sum(self.reward_queue) / total_count,
             winner_mean=win_count / total_count,
@@ -381,13 +393,14 @@ class ProcessEnv(Process):
         color,
     ):
         super().__init__(daemon=True)
-        # models = []
-        # color_ext = "Black" if color else "White"
-        # for model_version in ["A", "B", "C", "D", "E", "F"]:
-        #     path = f"Hex9{color_ext}{model_version}.onnx"
-        #     models.append(
-        #         ort.InferenceSession(path, providers=["OpenVINOExecutionProvider"])
-        #     )
+        models = []
+        color_ext = "black" if color else "white"
+        for model_version in ["a", "b"]:
+            path = f"11_{color_ext}_{model_version}.onnx"
+            models.append(
+                InferenceSession(path, providers=["CPUExecutionProvider"])
+                # InferenceSession(path, providers=["OpenVINOExecutionProvider"])
+            )
         self.process_id = process_id
         self.env_per_worker = env_per_worker
         self.action_shape = action_shape
@@ -395,7 +408,7 @@ class ProcessEnv(Process):
         self.out_queue = out_queue
         self.in_lock = in_lock
         self.out_lock = out_lock
-        self.env: VectorEnv = make_env(process_id, env_per_worker, color, [None])
+        self.env: VectorEnv = make_env(process_id, env_per_worker, color, models)
         self.env.unwrapped._rewards = self.env.unwrapped._rewards.astype(FLOAT_TYPE)
 
         self.shm = SharedMemoryAdapter()
@@ -481,9 +494,12 @@ class ProcessEnv(Process):
             self._set_data(
                 self.shm_data_key.format(t="win"), infos["winner"].astype(np.float16)
             )
-            self._set_data(
-                self.shm_data_key.format(t="legal"), infos["legal"].astype(np.float16)
-            )
+            try:
+                self._set_data(
+                    self.shm_data_key.format(t="legal"), infos["legal"].astype(np.float16)
+                )
+            except KeyError:
+                print(infos)
             self._set_data(self.shm_data_key.format(t="reww"), infos["reward"])
             self._set_data(self.shm_data_key.format(t="act"), infos["action"])
 

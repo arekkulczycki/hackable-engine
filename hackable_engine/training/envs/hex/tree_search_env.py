@@ -7,7 +7,7 @@ from gymnasium.core import ActType, ObsType, RenderFrame
 from nptyping import Int8, NDArray, Shape
 from numpy import asarray, float32, int8
 
-from hackable_engine.board.hex.hex_board import HexBoard
+from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard as HexBoard
 from hackable_engine.common.constants import INF
 from hackable_engine.controller import Controller
 

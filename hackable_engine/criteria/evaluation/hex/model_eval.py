@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 from typing import Optional
 
-from nptyping import Int8, NDArray, Shape
-from numpy import eye, float32, int8, reshape
+from numpy import expand_dims, eye, float32, int8, mean, ndarray, partition, reshape
 from onnxruntime import InferenceSession
+# TODO: use openvino, native openvino is faster than onnx on openvino backend
 
 from hackable_engine.board.hex.hex_board import HexBoard
 from hackable_engine.criteria.evaluation.base_eval import WeightsType, BaseEval
@@ -14,28 +14,36 @@ class ModelEval(BaseEval[HexBoard]):
 
     PARAMS_NUMBER: int = 8
 
-    def __init__(self, size: int, model_path: str):
+    def __init__(self, size: int):
         """"""
 
         self.size = size
-        self.model_path = model_path
-        self.ort_session = InferenceSession(model_path, providers=['OpenVINOExecutionProvider', 'CPUExecutionProvider'])
+        self.ort_session_black = InferenceSession("11black.onnx", providers=["OpenVINOExecutionProvider"])
+        self.ort_session_white = InferenceSession("11white.onnx", providers=["OpenVINOExecutionProvider"])
 
     def get_score(
         self, board: HexBoard, is_check: bool, weights: Optional[WeightsType] = None
     ) -> float32:
         """"""
 
-        weights, value = self.ort_session.run(None, {"input": self.observation_from_board(board)})
-        return weights
+        if board.turn:
+            logits = self.ort_session_black.run(None, {"inputs": self.observation_from_board(board)})
+            # take 3 largest values from the output (logits)
+            top3 = partition(logits, -3)[-3:]
+        else:
+            logits = self.ort_session_white.run(None, {"inputs": self.observation_from_board(board)})
+            # take 3 lowest values from the output (logits)
+            top3 = partition(logits, 2)[:3]
+        return mean(top3)
 
-    def observation_from_board(self, board: HexBoard) -> NDArray:
+    @staticmethod
+    def observation_from_board(board: HexBoard) -> ndarray:
         """"""
 
-        local: NDArray[Shape, Int8] = board.get_neighbourhood(
-            self.size, should_suppress=True
-        )
-        # fmt: off
-        obs = eye(3, dtype=int8)[local][:, 1:].flatten()  # dummy encoding - 2 columns of 0/1 values, 1 column dropped
-        return reshape(obs.astype(float32), (1, self.size**2))
-        # fmt: on
+        return expand_dims(board.get_hetero_graph_node_features_one_hot(), axis=0)
+
+    def get_scores(
+            self, boards: list[HexBoard], is_check: bool, weights: Optional[WeightsType] = None
+    ) -> float32:
+        pass
+        # TODO: run inference on multiple boards at once

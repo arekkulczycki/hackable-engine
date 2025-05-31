@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
 import random
-from contextlib import nullcontext
 
 import gymnasium as gym
 import numpy as np
@@ -23,8 +22,7 @@ from torch_geometric.nn import (
     EGConv,
 )
 
-from hackable_engine.board.hex.hex_board import HexBoard
-from hackable_engine.common.constants import TH_FLOAT_TYPE
+from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard as HexBoard
 from hackable_engine.training.hyperparams import *
 
 LOG_PATH = "./hackable_engine/training/logs/"
@@ -121,14 +119,14 @@ class Actor(nn.Module):
             "action_scale",
             th.tensor(
                 (env.single_action_space.high - env.single_action_space.low) / 2.0,
-                dtype=TH_FLOAT_TYPE,
+                dtype=th.float32,
             ),
         )
         self.register_buffer(
             "action_bias",
             th.tensor(
                 (env.single_action_space.high + env.single_action_space.low) / 2.0,
-                dtype=TH_FLOAT_TYPE,
+                dtype=th.float32,
             ),
         )
 
@@ -216,7 +214,7 @@ def run(version, policy_kwargs, env, env_name, device, loops, color):
     load_model_if_available(
         base_path,env_name,version,actor,target_actor,qf1,qf2,qf1_target,qf2_target,actor_optimizer,q_optimizer
     )  # fmt: on
-    dtype = th.bfloat16  # TH_FLOAT_TYPE  # th.bfloat16
+    dtype = th.bfloat16  # th.float32  # th.bfloat16
 
     # optim_actor, optim_actor_optimizer = ipex.optimize(
     #     actor, optimizer=actor_optimizer, dtype=dtype

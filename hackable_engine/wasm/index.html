@@ -3,13 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <title>hackable-bot-wasm</title>
-  <script src="https://cdn.jsdelivr.net/pyodide/v0.23.2/full/pyodide.js"></script>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.28.0/full/pyodide.js"></script>
 <!--  <script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.14.1/ort.js"></script>-->
-  <script src="onnxruntime/ort.js"></script>
-  <script src="js/main.js"></script>>
+<!--  <script src="onnxruntime/ort.js"></script>-->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.22.0/ort.min.js"></script>
+  <script src="js/main.js"></script>
+  <script src="js/ui.js"></script>
 </head>
 <body>
-    <button onclick="reset();">Reset</button>
-    <button onclick="search();">Search</button>
+    <input id="notation" type="text" placeholder="notation like a4d5f11">
+    <select id="size">
+      <option value="11" selected>11</option>
+    </select>
+    <button id="setup" onclick="ui_setup();" disabled="disabled">Setup board</button>
+    <button id="search" onclick="search();" disabled="disabled">Analyze</button>
+    <button id="kill" onclick="ui_kill();" disabled="disabled">Kill engine</button>
+    <button id="boot" onclick="ui_boot();">Boot engine</button>
 </body>
 </html>

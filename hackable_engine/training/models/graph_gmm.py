@@ -2,14 +2,14 @@
 import torch as th
 from torch import nn
 from torch.nn import functional as F
-from torch_geometric.nn import SGConv
+from torch_geometric.nn import GMMConv
 from torch_geometric.nn.norm import LayerNorm
 
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
 
 
-class GraphSG(BaseModule):
+class GraphGMM(BaseModule):
 
     def __init__(
         self,
@@ -22,6 +22,8 @@ class GraphSG(BaseModule):
         gnn_shape,
         mlp_shape,
         edge_index,
+        pseudo_coordinates,
+        device=Device.XPU,
     ):
         super().__init__()
         self.node_count = node_count
@@ -31,43 +33,45 @@ class GraphSG(BaseModule):
         self.dropouts = dropouts
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
+        self.device = device
 
-        self.edge_index = edge_index.to(Device.XPU)
-        self.batch_edge_index = self.get_batch_edge_index( batch_size)
-        self.batch = self.get_batch_ids(batch_size)
+        self.edge_index = edge_index.to(device)
+        self.batch_edge_index = self.get_batch_edge_index(batch_size)
+        self.pseudo_coordinates = pseudo_coordinates.to(device)
+        self.batch_pseudo_coordinates = self.get_batch_pseudo_coord(batch_size)
 
-        self.setup_graph_feature_extractor(gnn_shape)
+        self.setup_graph_feature_extractor()
         self.setup_mlp(gnn_shape, mlp_shape, output_size)
 
-        self.initialize_gnn_weights()
+        # self.initialize_gnn_weights()
         self.initialize_mlp_weights()
 
     def get_batch_edge_index(self, batch_size):
         batch_edge_index = []
         for i in range(batch_size):
             batch_edge_index.append(self.edge_index + i * self.node_count)
-        return th.cat(batch_edge_index, dim=1).to(Device.XPU)
+        return th.cat(batch_edge_index, dim=1).to(self.device)
 
-    def get_batch_ids(self, batch_size):
-        return th.repeat_interleave(
-            th.arange(batch_size), self.node_count
-        ).to(Device.XPU)
+    def get_batch_pseudo_coord(self, batch_size):
+        batch_pseudo_coordinates = []
+        for i in range(batch_size):
+            batch_pseudo_coordinates.append(self.pseudo_coordinates)
+        return th.cat(batch_pseudo_coordinates, dim=0).to(self.device)
 
-    def setup_graph_feature_extractor(self, shape):
-        norms = []
+    def setup_graph_feature_extractor(self):
+        gnn = []
         residuals = []
-        convs = []
+        # norms = []
         prev = self.node_features
         for channels in self.gnn_shape:
-            norms.append(LayerNorm(channels))
-            residuals.append(nn.Linear(prev, channels, device=Device.XPU))
-            convs.append(SGConv(prev, channels, K=1).to(Device.XPU))
-
+            gnn.append(GMMConv(prev, channels, dim=2, kernel_size=6))
+            residuals.append(nn.Linear(prev, channels, device=self.device))
+            # norms.append(LayerNorm(channels))
             prev = channels
 
-        self.norms = nn.ModuleList(norms)
+        self.gnn = nn.ModuleList(gnn)
         self.residuals = nn.ModuleList(residuals)
-        self.gnn = nn.ModuleList(convs)
+        # self.norms = nn.ModuleList(norms)
 
     def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
@@ -75,12 +79,12 @@ class GraphSG(BaseModule):
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, output_size]:
-            mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, 3]:
-            control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            control_mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
         self.mlp = nn.ModuleList(mlp)
@@ -100,37 +104,36 @@ class GraphSG(BaseModule):
         if x.shape[0] == self.batch_size:
             batch_size = self.batch_size
             edge_index = self.batch_edge_index
-            batch = self.batch
+            pseudo_coordinates = self.batch_pseudo_coordinates
         else:
             batch_size = x.shape[0]
             edge_index = self.get_batch_edge_index(batch_size)
-            batch = self.get_batch_ids(batch_size)
+            pseudo_coordinates = self.get_batch_pseudo_coord(batch_size)
 
         x = x.view(-1, self.node_features)
 
-        for gnn, residual, norm in zip(self.gnn, self.residuals, self.norms):
-            res = residual(x)
-            x = F.dropout(F.relu(norm(gnn(x, edge_index), batch, batch_size)), p=self.dropouts, training=self.training)
-            # x = self.norm1(x, batch, batch_size)
-            x = x + res
+        # for conv, residual, norm in zip(self.gnn, self.residuals, self.norms):
+        for conv, residual in zip(self.gnn, self.residuals):
+            h = conv(x, edge_index, pseudo_coordinates)
+            # h = norm(h)
+            # x = F.dropout(F.relu(h + residual(x)), p=0.1, training=self.training)
+            x = F.dropout(F.relu(h), p=self.dropouts, training=self.training) + residual(x)
 
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
     def initialize_gnn_weights(self):
         for layer in self.gnn:
-            if isinstance(layer, SGConv):
-                th.nn.init.kaiming_uniform_(
-                    layer.lin.weight, mode="fan_in", nonlinearity="relu"
-                )
-                if layer.lin.bias is not None:
-                    th.nn.init.zeros_(layer.lin.bias)
+            th.nn.init.kaiming_uniform_(
+                layer.lin.weight, mode="fan_in", nonlinearity="relu"
+            )
+            if layer.lin.bias is not None:
+                th.nn.init.zeros_(layer.lin.bias)
 
     def initialize_mlp_weights(self):
-        for layer in list(self.mlp) + list(self.control_mlp):
+        for layer in self.mlp + self.control_mlp:
             th.nn.init.kaiming_normal_(
                 layer.weight, mode="fan_in", nonlinearity="leaky_relu"
             )
-            # th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="tanh")
             th.nn.init.zeros_(layer.bias)
 
     def make_decision(self, x: th.Tensor):

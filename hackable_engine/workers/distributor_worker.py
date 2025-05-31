@@ -36,10 +36,11 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
         self,
         locks: WorkerLocks,
         queues: WorkerQueues,
-        board_class: Type[GameBoardT],
+        board_class: Type[GameBoardT],  # TODO: just pass in an initialized board
         board_size: Optional[int],
+        memory = None,
     ):
-        super().__init__()
+        super().__init__(memory)
 
         self.locks: WorkerLocks = locks
         self.queues: WorkerQueues = queues
@@ -87,8 +88,8 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
                 if items:
                     if run_id is None:
                         with self.locks.status_lock:
-                            run_id = self.memory_manager.get_str(RUN_ID)
-                    self.distribute_items(items, cast(str, run_id))
+                            run_id = self.memory_manager.get_str(RUN_ID).replace("\x00", "")
+                    self.distribute_items(items, run_id)
 
                 if finished is True and items:
                     # could switch without items too, but this is for debug purposes
@@ -123,6 +124,7 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
     def get_items(self, queue_throttle: int) -> List[DistributorItem]:
         """"""
 
+        queue_throttle = 4
         return self.queues.distributor_queue.get_many(queue_throttle, SLEEP)
 
     def distribute_items(self, items: List[DistributorItem], run_id: str) -> None:
@@ -167,16 +169,14 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
 
         # TODO: if it could be done efficiently, would be beneficial to check game over here
 
-        parent_board_repr = self.board.as_matrix().reshape(
-            self.board.size, self.board.size
-        )
+        parent_board_repr = self.board.as_matrix()#.reshape(self.board.size, self.board.size)
 
         only_forcing_moves = []
         eval_items = []
         board_reprs = []
         for move in self.board.legal_moves:
             eval_item = self._get_eval_item(item, move)
-            board_repr = self._board_repr_from_parent(parent_board_repr, move)
+            board_repr = self._board_repr_from_parent(parent_board_repr, move, self.board.turn)
 
             # forcing_level == -1 means that forcing moves were already taken care of before
             # forcing_level > 0 means that only forcing moves should be returned
@@ -245,10 +245,11 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
 
     @staticmethod
     def _board_repr_from_parent(
-        parent_board_repr: np.ndarray, move: GameMoveT
+        parent_board_repr: np.ndarray, move: GameMoveT, color: bool
     ) -> np.ndarray:
-        """"""
+        """board_repr array is (3, size, size), first dim is (empty, white, black)"""
 
+        idx = 1 if color else 2
         board_repr = parent_board_repr.copy()
-        board_repr[move.x][move.y] = 1
+        board_repr[idx][move.x][move.y] = 1
         return board_repr
