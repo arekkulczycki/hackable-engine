@@ -20,7 +20,6 @@ class GraphGIN(BaseModule):
         gnn_shape,
         mlp_shape,
         edge_index,
-        is_seq = False,
         use_res = True,
     ):
         super().__init__()
@@ -30,14 +29,13 @@ class GraphGIN(BaseModule):
         self.batch_size = batch_size
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
-        self.is_seq = is_seq
         self.use_res = use_res
 
         self.edge_index = edge_index.to(Device.XPU)
         self.batch_edge_index = self.get_batch_edge_index(node_count, batch_size)
 
         self.setup_graph_feature_extractor(gnn_shape)
-        self.setup_mlp(gnn_shape, mlp_shape, output_size, is_seq)
+        self.setup_mlp(gnn_shape, mlp_shape, output_size)
 
         self.initialize_gnn_weights()
         self.initialize_mlp_weights()
@@ -58,6 +56,7 @@ class GraphGIN(BaseModule):
             self.res_proj_3 = nn.Linear(shape[2], shape[3], device=Device.XPU)
             self.res_proj_4 = nn.Linear(shape[3], shape[4], device=Device.XPU)
             self.res_proj_5 = nn.Linear(shape[4], shape[5], device=Device.XPU)
+            self.res_proj_6 = nn.Linear(shape[5], shape[6], device=Device.XPU)
 
         # self.embedding = nn.Linear(self.node_features, shape[0])
         # nn.init.kaiming_uniform_(self.embedding.weight)
@@ -93,10 +92,15 @@ class GraphGIN(BaseModule):
             nn.ReLU(),
             nn.Linear(shape[5], shape[5])
         ), train_eps=True)
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6)
+        self.conv7 = GINConv(nn.Sequential(
+            nn.Linear(shape[5], shape[6]),
+            nn.ReLU(),
+            nn.Linear(shape[6], shape[6])
+        ), train_eps=True)
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6, self.conv7)
 
 
-    def setup_mlp(self, gnn_shape, mlp_shape, output_size, is_seq = False):
+    def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
         control_mlp = []
 
@@ -171,6 +175,11 @@ class GraphGIN(BaseModule):
 
         if self.use_res:
             x = x + res5# + res02
+            res6 = self.res_proj_6(x)
+        x = F.dropout(F.relu(self.conv7(x, edge_index)), p=0.25, training=self.training)
+
+        if self.use_res:
+            x = x + res6# + res02
             # x = x + res4 + res02
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])

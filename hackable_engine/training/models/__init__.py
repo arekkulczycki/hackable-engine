@@ -11,8 +11,11 @@ class BaseModule(nn.Module, ABC):
     env: gym.vector.vector_env.VectorEnv
     gnn_shape: tuple[int, ...]
     mlp_shape: tuple[int, ...]
-    gnn: tuple[nn.Module, ...]
-    mlp: tuple[nn.Module, ...]
+    residuals: nn.ModuleList
+    norms: nn.ModuleList
+    gnn: nn.ModuleList
+    mlp: nn.ModuleList
+    control_mlp: nn.ModuleList
 
     def forward(self, x: th.Tensor, *args: Any):
         x = self.extract_features(x)

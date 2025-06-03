@@ -36,9 +36,9 @@ class GraphGAT(BaseModule):
         self.use_res = use_res
 
         self.edge_index = edge_index.to(Device.XPU)
-        self.batch_edge_index = self.get_batch_edge_index(node_count, batch_size)
+        self.batch_edge_index = self.get_batch_edge_index(batch_size)
         self.edge_types = edge_types.to(Device.XPU).to(TH_FLOAT_TYPE)
-        self.batch_edge_types = self.get_batch_edge_types(node_count, batch_size)
+        self.batch_edge_types = self.get_batch_edge_types(batch_size)
 
         self.setup_graph_feature_extractor()
         self.setup_mlp(gnn_shape, mlp_shape, output_size)
@@ -46,13 +46,13 @@ class GraphGAT(BaseModule):
         # self.initialize_gnn_weights()
         self.initialize_mlp_weights()
 
-    def get_batch_edge_index(self, node_count, batch_size):
+    def get_batch_edge_index(self, batch_size):
         batch_edge_index = []
         for i in range(batch_size):
-            batch_edge_index.append(self.edge_index + i * node_count)
+            batch_edge_index.append(self.edge_index + i * self.node_count)
         return th.cat(batch_edge_index, dim=1).to(Device.XPU)
 
-    def get_batch_edge_types(self, node_count, batch_size):
+    def get_batch_edge_types(self, batch_size):
         batch_edge_types = []
         for i in range(batch_size):
             batch_edge_types.append(self.edge_types)
@@ -165,7 +165,7 @@ class GraphGAT(BaseModule):
 
         if self.training:
             x, control = self.make_decision(x)
-            return x.flatten(1, -1), control.flatten(0, 1)
+            return x.flatten(1, -1), control
         else:
             # return self.make_decision(x).flatten()
             return self.make_decision(x).flatten(1, -1)
@@ -177,8 +177,8 @@ class GraphGAT(BaseModule):
             edge_types = self.batch_edge_types
         else:
             batch_size = x.shape[0]
-            edge_index = self.get_batch_edge_index(self.node_count, batch_size)
-            edge_types = self.get_batch_edge_types(self.node_count, batch_size)
+            edge_index = self.get_batch_edge_index(batch_size)
+            edge_types = self.get_batch_edge_types(batch_size)
 
         x = x.view(-1, self.node_features)
 

@@ -10,11 +10,7 @@ from gymnasium.envs.registration import register
 from hackable_engine.board.hex.move import Move
 from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.training.envs.hex.base_env import BaseEnv
-from hackable_engine.training.envs.hex.logit_7_graph_env import Logit7GraphEnv
-from hackable_engine.training.envs.util import (
-    BoundedRealTimeMedian,
-    RealTimeMeanVariance,
-)
+from hackable_engine.training.envs.util import RealTimeMeanVariance
 
 ZERO: FLOAT_TYPE = FLOAT_TYPE(0)
 ONE: FLOAT_TYPE = FLOAT_TYPE(1)
@@ -74,14 +70,14 @@ class Logit13GraphEnv(BaseEnv):
 
     def render(self, mode="human", close=False):
         self.counter += 1
-        if self.counter % 10 == 0:
+        if self.counter % 15 == 0:
             ci = self.board.get_short_missing_distances_cached.cache_info()
             print(
                 self.process_id,
                 "cache info",
                 ci.hits,
                 ci.misses,
-                round(ci.hits / ci.misses, 2),
+                round(ci.hits / ci.misses, 2) if ci.misses else 0,
             )
 
         return super().render()
@@ -110,7 +106,7 @@ class Logit13GraphEnv(BaseEnv):
         # return self.board.as_matrix()
 
     def _make_opponent_move(self, n_moves):
-        minimum_logical_moves = 0.1
+        minimum_logical_moves = 0.0
         win_percentage = (
             np.mean(self.results) if len(self.results) >= 5 else minimum_logical_moves
         )
@@ -172,7 +168,10 @@ class Logit13GraphEnv(BaseEnv):
 
     def step(self, action):
         # return self.step_from_logits(action)
-        return self.step_from_preselected(action, prepare_buffer=False)
+        step_return = self.step_from_preselected(action, prepare_buffer=False)
+        if self.winner is not None:
+            self.results.append(float(self.winner == self.color))
+        return step_return
 
     def step_from_preselected(self, move_position, *, prepare_buffer: bool = False):
         n_moves = self.MAX_MOVES - self.board.unoccupied.bit_count()

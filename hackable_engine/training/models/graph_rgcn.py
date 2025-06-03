@@ -2,7 +2,7 @@
 import torch as th
 from torch import nn
 from torch.nn import functional as F
-from torch_geometric.nn import FastRGCNConv
+from torch_geometric.nn import FastRGCNConv, RGCNConv
 
 from hackable_engine.common.constants import TH_FLOAT_TYPE
 from hackable_engine.training.device import Device
@@ -34,9 +34,9 @@ class GraphRGCN(BaseModule):
         self.use_res = use_res
 
         self.edge_index = edge_index.to(Device.XPU)
-        self.batch_edge_index = self.get_batch_edge_index(node_count, batch_size)
+        self.batch_edge_index = self.get_batch_edge_index(batch_size)
         self.edge_types = edge_types.to(Device.XPU).to(TH_FLOAT_TYPE)
-        self.batch_edge_types = self.get_batch_edge_types(node_count, batch_size)
+        self.batch_edge_types = self.get_batch_edge_types(batch_size)
 
         self.setup_graph_feature_extractor()
         self.setup_mlp(gnn_shape, mlp_shape, output_size)
@@ -44,17 +44,17 @@ class GraphRGCN(BaseModule):
         # self.initialize_gnn_weights()
         self.initialize_mlp_weights()
 
-    def get_batch_edge_index(self, node_count, batch_size):
+    def get_batch_edge_index(self, batch_size):
         batch_edge_index = []
         for i in range(batch_size):
-            batch_edge_index.append(self.edge_index + i * node_count)
+            batch_edge_index.append(self.edge_index + i * self.node_count)
         return th.cat(batch_edge_index, dim=1).to(Device.XPU)
 
-    def get_batch_edge_types(self, node_count, batch_size):
+    def get_batch_edge_types(self, batch_size):
         batch_edge_types = []
         for i in range(batch_size):
             batch_edge_types.append(self.edge_types)
-        return th.cat(batch_edge_types, dim=0).to(Device.XPU)
+        return th.cat(batch_edge_types, dim=0).to(Device.XPU).to(th.long)
 
     def setup_graph_feature_extractor(self):
         if self.use_res:
@@ -76,32 +76,32 @@ class GraphRGCN(BaseModule):
             self.res_proj_5 = nn.Linear(
                 self.gnn_shape[4], self.gnn_shape[5], device=Device.XPU
             )
-        self.conv1 = FastRGCNConv(
+        self.conv1 = RGCNConv(
             self.node_features,
             self.gnn_shape[0],
             num_relations=3,
         )
-        self.conv2 = FastRGCNConv(
+        self.conv2 = RGCNConv(
             self.gnn_shape[0],
             self.gnn_shape[1],
             num_relations=3,
         )
-        self.conv3 = FastRGCNConv(
+        self.conv3 = RGCNConv(
             self.gnn_shape[1],
             self.gnn_shape[2],
             num_relations=3,
         )
-        self.conv4 = FastRGCNConv(
+        self.conv4 = RGCNConv(
             self.gnn_shape[2],
             self.gnn_shape[3],
             num_relations=3,
         )
-        self.conv5 = FastRGCNConv(
+        self.conv5 = RGCNConv(
             self.gnn_shape[3],
             self.gnn_shape[4],
             num_relations=3,
         )
-        self.conv6 = FastRGCNConv(
+        self.conv6 = RGCNConv(
             self.gnn_shape[4],
             self.gnn_shape[5],
             num_relations=3,
@@ -130,7 +130,7 @@ class GraphRGCN(BaseModule):
 
         if self.training:
             x, control = self.make_decision(x)
-            return x.flatten(1, -1), control.flatten(0, 1)
+            return x.flatten(1, -1), control
         else:
             # return self.make_decision(x).flatten()
             return self.make_decision(x).flatten(1, -1)
@@ -142,10 +142,11 @@ class GraphRGCN(BaseModule):
             edge_types = self.batch_edge_types
         else:
             batch_size = x.shape[0]
-            edge_index = self.get_batch_edge_index(self.node_count, batch_size)
-            edge_types = self.get_batch_edge_types(self.node_count, batch_size)
+            edge_index = self.get_batch_edge_index(batch_size)
+            edge_types = self.get_batch_edge_types(batch_size)
 
         x = x.view(-1, self.node_features)
+        # x = x.flatten(0, 1)
 
         if self.use_res:
             res0 = self.res_proj_0(x)

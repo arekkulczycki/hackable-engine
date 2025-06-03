@@ -102,12 +102,14 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             # self.edge_index = th.tensor(list(self._get_all_graph_links()), dtype=th.long).t().contiguous()
             self.edge_index = self._get_all_graph_links_coo()
             self.edge_types = self._get_graph_link_types_one_hot()
+            self.edge_types_rgcn = self._get_graph_link_types()
             self.coordinates = self._get_coordinates()
             pseudo_row, pseudo_col = self.edge_index
             self.pseudo_coordinates = self.coordinates[pseudo_col] - self.coordinates[pseudo_row]
         else:
             self.edge_index = th.tensor([])
             self.edge_types = th.tensor([])
+            self.edge_types_rgcn = th.tensor([])
             self.coordinates = th.tensor([])
             self.pseudo_coordinates = th.tensor([])
 
@@ -1807,7 +1809,7 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
                 link_types.append([0, 1, 0])  # EdgeType.HORIZONTAL)
             else:
                 link_types.append([0, 0, 1])  # EdgeType.DIAGONAL)
-        return th.tensor(link_types)
+        return th.tensor(link_types).to(th.int)
 
     def _get_coordinates(self):
         return th.tensor([

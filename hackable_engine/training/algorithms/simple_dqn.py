@@ -39,8 +39,9 @@ from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_async_en
 from hackable_engine.training.envs.multiprocess_vector_env.util import EnvProgressData
 from hackable_engine.training.envs.wrappers.episode_stats import EpisodeStats
 from hackable_engine.training.models.graph_gat import GraphGAT
-from hackable_engine.training.models.graph_gin import GraphGIN
+from hackable_engine.training.models.graph_gin2 import GraphGIN2
 from hackable_engine.training.models.graph_gine import GraphGINE
+from hackable_engine.training.models.graph_gine2 import GraphGINE2
 from hackable_engine.training.models.graph_gmm import GraphGMM
 from hackable_engine.training.models.graph_rgcn import GraphRGCN
 from hackable_engine.training.models.graph_sg import GraphSG
@@ -57,12 +58,13 @@ cnn_strides = (1, 1, 1, 1)
 cnn_paddings = (0, 0, 0, 0)
 GNN_SHAPES = {
     GraphSG: (54, 108, 216, 324, 432, 486),
-    # GraphSG: (54, 162, 486, 486, 486, 486),
     # GraphSG: (54, 162, 486, 648, 648, 648),
-    # GraphGIN: (54, 108, 216, 432, 540, 648),
     # GraphGIN: (54, 162, 486, 648, 648, 648),
-    GraphGIN: (54, 108, 216, 432, 540, 540, 540),
-    GraphGINE: (54, 108, 216, 432, 432, 486),
+    # GraphGIN: (54, 108, 216, 432, 540, 648, 756),
+    # GraphGIN2: (54, 108, 162, 162, 162, 162, 216, 216, 216, 216),
+    GraphGIN2: (54, 108, 216, 432, 432, 432, 432, 432),
+    # GraphGINE: (54, 108, 216, 324, 432, 486),
+    GraphGINE2: (54, 108, 216, 432, 432, 432, 432, 432),
     GraphRGCN: (54, 108, 216, 324, 432, 486),
     GraphGMM: (54, 108, 216, 324, 432, 486),
     GraphGAT: (54, 72, 90, 108, 216),
@@ -73,20 +75,20 @@ board_size = 13
 board_size_squared = board_size**2
 binary_one = 2**board_size_squared - 1
 env_class = Logit13GraphEnv
-model_class = GraphSG
+model_class = GraphGIN2
 gnn_shape = GNN_SHAPES[model_class]
 mlp_shape = (256,)  # board_size**2)
-num_episodes = 512
+num_episodes = 1024
 episode_env_steps = board_size  # **2
-base_num_envs = 128
 """relative for tensorboard graphs, such that training sessions are comparable"""
 num_envs = 128
 num_workers = 8
-lr_gnn = 10e-4
-lr_mlp = 12e-4  # if shape ONE, larger than the final lr_gnn
+lr_gnn = 1e-4
+lr_mlp = 0.3e-4  # if shape ONE, larger than the final lr_gnn
+assert lr_mlp <= lr_gnn
 lr_gamma = 1e-4
 lr_shape_gnn = LRShape.ONE
-lr_shape_mlp = LRShape.ONE
+lr_shape_mlp = LRShape.WARMUP_ONE
 lr_warm_up_len = 0.12
 assert 0 < lr_warm_up_len < 1
 lr_minimum_p = 0.01
@@ -95,7 +97,7 @@ target_update_frequency = 1
 target_update_mode = TargetUpdateMode.SOFT
 tau = 0.005  # recommended 0.005 – 0.01 for a learning rate of 1e-3, lower for smaller learning rates
 """soft target update proportion"""
-batch_size = 64
+batch_size = 128
 gamma_mode = GammaMode.RETRAINED
 """if set to TRAINED then below params are ignored"""
 expected_episode_steps = 64
@@ -106,9 +108,9 @@ gamma_delay = 0
 assert (
     gamma_delay <= 0.66
 )  # there is a custom formula for which larger delay will cause gamma to never reach maximum
-epsilon_max = 0.8
+epsilon_max = 0.1
 epsilon_min = 0
-control_weight_param = 0.5
+control_weight_param = 0.5 if model_class is not GraphGIN2 else 2.0
 entropy_weight_param = 0.05
 entropy_temperature = 2.0  # default is 1.0
 action_temperature_max = 0.5
@@ -124,18 +126,19 @@ softmax_action_selection = True
 should_load_init_buffer = True
 should_dump_init_buffer = False
 should_dump_final_buffer = False
-buffer_priority_rate_max = 1  # TODO: prioritize with TD-error priority instead
-buffer_priority_rate_min = 0.6
-buffer_size_low = 55_000
+# TODO: prioritize with TD-error priority instead
+buffer_priority_rate_max = 1.0 if model_class is not GraphGIN2 else 0.15
+buffer_priority_rate_min = 0.6 if model_class is not GraphGIN2 else 0.15
+buffer_size_low = 75_000
 buffer_size_high = 2_000_000
 buffer_mode = BufferMode.RAM
 disk_buffer = 1 * buffer_size_high
 start_training = buffer_size_low * 0.95
 buffer_ratio = 16
 """Defines the proportion between fresh experience training and buffer training"""
+target_model_inference_chunks = 1
 epochs = num_envs * buffer_ratio // batch_size
-episode_step = num_envs // base_num_envs
-assert episode_step >= 1
+episode_step = 1
 
 # action_queue = deque(maxlen=board_size**2 * num_envs)
 # max_action_queue = deque(maxlen=num_envs)
@@ -181,8 +184,9 @@ class DQN:
                 mlp_shape=mlp_shape,
                 edge_index=board.edge_index,
                 # edge_types=board.edge_types,
+                # edge_types=board.edge_types_rgcn,
                 # pseudo_coordinates=board.pseudo_coordinates,
-                # use_res=True,
+                use_res=True,
             )
             .to(Device.XPU)
             .to(th.float32)
@@ -200,8 +204,9 @@ class DQN:
                 mlp_shape=mlp_shape,
                 edge_index=board.edge_index,
                 # edge_types=board.edge_types,
+                # edge_types=board.edge_types_rgcn,
                 # pseudo_coordinates=board.pseudo_coordinates,
-                # use_res=True,
+                use_res=True,
             )
             .to(Device.XPU)
             .to(th.float32)
@@ -228,10 +233,19 @@ class DQN:
                 ],
                 "lr": lr_mlp,
             },
+            {
+                "params": [
+                    param for layer in self.model.control_mlp for param in layer.parameters()
+                ],
+                "lr": lr_mlp,
+            },
         ]
         scheduler_params = [
             get_learning_rate_decay(
                 lr_shape_gnn, num_episodes, lr_warm_up_len, lr_minimum_p
+            ),
+            get_learning_rate_decay(
+                lr_shape_mlp, num_episodes, lr_warm_up_len, lr_minimum_p
             ),
             get_learning_rate_decay(
                 lr_shape_mlp, num_episodes, lr_warm_up_len, lr_minimum_p
@@ -295,15 +309,21 @@ class DQN:
         else:
             self.target_model.load_state_dict(self.model.state_dict())
 
+        # an alternative backend is openvino, but no benefit was seen in speed, only some in memory usage
+        # th.set_float32_matmul_precision("medium")  # this currently only affects Nvidia GPUs
+        # print(th._inductor.list_mode_options())
         th._dynamo.reset()
-        self.model = th.compile(self.model)
-        self.target_model = th.compile(self.target_model)
+        self.model = th.compile(self.model, backend="inductor", mode="reduce-overhead")
+        self.target_model = th.compile(self.target_model, backend="inductor", mode="reduce-overhead")
 
         self.obs: list[np.ndarray] = []
         self.black_masks: list[int] = []
         self.white_masks: list[int] = []
         self.training_started: bool = False
         self.buffer_loaded: bool = False
+
+    def recompile_target_model(self):
+        self.target_model = th.compile(self.target_model, backend="openvino")
 
     def run(self, version: int):
         if buffer_mode in [BufferMode.DISK, BufferMode.RAM_AND_DISK]:
@@ -347,6 +367,10 @@ class DQN:
             steps = 0
             while True:
                 steps += 1
+
+                # th_obs = th.from_numpy(np.stack(self.obs, 0)).to(Device.XPU)
+                # q_values_chunks = (self.model(chunk) for chunk in th_obs.chunk(16))
+                # q_values = th.cat([chunk[0] for chunk in q_values_chunks])
                 q_values, _ = self.model(
                     th.from_numpy(np.stack(self.obs, 0)).to(Device.XPU)
                 )
@@ -638,7 +662,10 @@ class DQN:
                     # + legality_loss * legality_loss_weight * legality_weight_param
                     + entropy * entropy_weight * entropy_weight_param
                 ).backward()
-                # clip_grad_norm_(self.model.parameters(), 1000)
+                if model_class is GraphGIN2:
+                    nn.utils.clip_grad_norm_(self.model.gnn.parameters(), 5.0)
+                    nn.utils.clip_grad_norm_(self.model.mlp.parameters(), 2.0)
+                    nn.utils.clip_grad_norm_(self.model.control_mlp.parameters(), 2.0)
                 self.optimizer.step()
                 self.tmp_value_loss += value_loss.detach()
                 self.tmp_control_loss += control_loss.detach()
@@ -682,11 +709,13 @@ class DQN:
     @staticmethod
     def run_target_model(target_model, states):
         try:
-            chunks = states.chunk(4)
+            chunks = states.chunk(target_model_inference_chunks)
             # print("calculating target model...")
             # t0 = perf_counter()
+            # with th.profiler.profile(activities=[th.profiler.ProfilerActivity.XPU]) as prof:
             with th.no_grad():
                 q_values_chunks = [target_model(chunk).detach() for chunk in chunks]
+            # print(prof.key_averages().table(sort_by="xpu_time_total", row_limit=20))
             # print("target model calculated in", perf_counter() - t0)
             return th.cat(q_values_chunks)
         except Exception as e:
@@ -787,8 +816,9 @@ class DQN:
         q_probs = F.softmax(q_values / temperature, dim=-1)
         entropy = -(q_probs * (q_probs + 1e-8).log()).sum(dim=-1).mean()
 
+        loss_function = F.smooth_l1_loss if model_class is GraphGIN2 else F.mse_loss
         return (
-            F.mse_loss(q_value, target),
+            loss_function(q_value, target),
             control_loss,
             entropy,
         )
