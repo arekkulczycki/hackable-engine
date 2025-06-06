@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-from random import choices, shuffle, sample
-from time import perf_counter
+from random import choices, sample
 from typing import Any
 
 import gymnasium as gym
@@ -106,11 +105,10 @@ class Logit13GraphEnv(BaseEnv):
         # return self.board.as_matrix()
 
     def _make_opponent_move(self, n_moves):
-        minimum_logical_moves = 0.0
+        minimum_logical_moves = 0.2
         win_percentage = (
             np.mean(self.results) if len(self.results) >= 5 else minimum_logical_moves
         )
-        # wins==0 -> randoms=0.5, wins==1 -> randoms=0.01, wins=0.6 -> randoms=0.4*0.5+0.01=0.21
         random_move_weight = (1 - win_percentage) * (1 - minimum_logical_moves) + 0.01
         if choices((True, False), weights=(random_move_weight, 1 - random_move_weight))[
             0
@@ -131,10 +129,18 @@ class Logit13GraphEnv(BaseEnv):
         n_moves = len(self.board.move_stack) + 1  # after the new move
         legal_moves = list(self.board.legal_moves)
         # shuffle(legal_moves)
-        percentage = min(1.0, n_moves / self.MAX_MOVES)
-        subset_size = max(1, int((self.MAX_MOVES - n_moves) * percentage))
+        percentage = n_moves / self.MAX_MOVES
+        subset_size = max(2, int((self.MAX_MOVES - n_moves) * percentage))
+        # print("subset size", subset_size)
 
-        f = self._get_distance_score if n_moves < 4 * self.BOARD_SIZE else self._get_distance_score_perf
+        """searching shortest missing distance on game over 
+        748197682631517630355556302808619806679578304793115 
+        91155681904663678520187205653140934408286549444"""
+
+        """searching shortest missing distance on game over 
+        748245566684308669151461830467086930517087915618464 
+        42909242004064430076460384253916899258740756319"""
+        f = self._get_distance_score if n_moves < 3 * self.BOARD_SIZE else self._get_distance_score_perf
         for move in sample(legal_moves, subset_size):
             self.board.push(move)
             try:
@@ -167,7 +173,6 @@ class Logit13GraphEnv(BaseEnv):
         return best_move
 
     def step(self, action):
-        # return self.step_from_logits(action)
         step_return = self.step_from_preselected(action, prepare_buffer=False)
         if self.winner is not None:
             self.results.append(float(self.winner == self.color))
@@ -198,10 +203,10 @@ class Logit13GraphEnv(BaseEnv):
                 # raise
                 # print(f"attempting to push {move_position}", move.get_coord())
                 self.winner = not self.color
-                # self.reward = FLOAT_TYPE(max((MINUS_TWO + n_moves/(self.MAX_MOVES - 2 * self.BOARD_SIZE), MINUS_ONEHALF)))
-                self.reward = FLOAT_TYPE(
-                    MINUS_TWO + n_moves / (self.MAX_MOVES - 2 * self.BOARD_SIZE)
-                )
+                self.reward = MINUS_TWO
+                # self.reward = FLOAT_TYPE(
+                #     MINUS_TWO + n_moves / (self.MAX_MOVES - 2 * self.BOARD_SIZE)
+                # )
                 # TODO: verify if this idea works, penalty and returning back the same position (maybe stop after X attempts?)
                 # self.reward = self.PENALTY_PER_ILLEGAL_MOVE
                 return (

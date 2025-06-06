@@ -19,7 +19,6 @@ class GraphGINE2(BaseModule):
         output_size,
         batch_size,
         num_envs,
-        num_epochs,
         gnn_shape,
         mlp_shape,
         edge_index,
@@ -31,7 +30,6 @@ class GraphGINE2(BaseModule):
         self.node_count = node_count
         self.node_features = node_features
         self.num_envs = num_envs
-        self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
@@ -42,6 +40,7 @@ class GraphGINE2(BaseModule):
         self.batch_edge_index = self.get_batch_edge_index(batch_size)
         self.edge_types = edge_types.to(Device.XPU).to(TH_FLOAT_TYPE)
         self.batch_edge_types = self.get_batch_edge_types(batch_size)
+        self.batch = self.get_batch_ids(batch_size)
 
         self.setup_graph_feature_extractor()
         self.setup_mlp(gnn_shape, mlp_shape, output_size)
@@ -61,6 +60,11 @@ class GraphGINE2(BaseModule):
             batch_edge_types.append(self.edge_types)
         return th.cat(batch_edge_types, dim=0).to(Device.XPU)
 
+    def get_batch_ids(self, batch_size):
+        return th.repeat_interleave(
+            th.arange(batch_size), self.node_count
+        ).to(Device.XPU)
+
     def setup_graph_feature_extractor(self):
         self.input_proj = nn.Linear(
             self.node_features, self.gnn_shape[0], device=Device.XPU
@@ -77,11 +81,11 @@ class GraphGINE2(BaseModule):
                     nn.Linear(in_channels, out_channels, device=Device.XPU)
                 )
 
-            norms.append(GraphNorm(out_channels))
+            # norms.append(GraphNorm(out_channels))
 
             mlp = nn.Sequential(
                 nn.Linear(in_channels, out_channels, device=Device.XPU),
-                # LayerNorm(out_channels),
+                LayerNorm(out_channels),
                 nn.ReLU(),
                 nn.Dropout(0.1),
                 nn.Linear(out_channels, out_channels, device=Device.XPU),
@@ -90,7 +94,7 @@ class GraphGINE2(BaseModule):
 
         self.residuals = nn.ModuleList(residuals)
         self.gnn = nn.ModuleList(convs)
-        self.norms = nn.ModuleList(norms)
+        # self.norms = nn.ModuleList(norms)
 
     def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
@@ -125,22 +129,21 @@ class GraphGINE2(BaseModule):
             batch_size = self.batch_size
             edge_index = self.batch_edge_index
             edge_types = self.batch_edge_types
+            # batch = self.batch
         else:
             batch_size = x.shape[0]
             edge_index = self.get_batch_edge_index(batch_size)
             edge_types = self.get_batch_edge_types(batch_size)
-
-        batch = (
-            self.batch
-            if batch_size == self.batch_size
-            else self.batch_envs if batch_size == self.num_envs else self.batch_epochs
-        )
+            # batch = self.get_batch_ids(batch_size)
+            # TODO: pre-calculate?
 
         x = x.view(-1, self.node_features)
 
         x = self.input_proj(x)
-        for conv, residual, norm in zip(self.gnn, self.residuals, self.norms):
-            h = norm(conv(x, edge_index, edge_attr=edge_types), batch, batch_size)
+        # for conv, residual, norm in zip(self.gnn, self.residuals, self.norms):
+        for conv, residual in zip(self.gnn, self.residuals):
+            # h = norm(conv(x, edge_index, edge_attr=edge_types), batch, batch_size)
+            h = conv(x, edge_index, edge_attr=edge_types)
             # x = F.dropout(F.relu(h + residual(x)), p=0.1, training=self.training)
             x = F.dropout(F.relu(h), p=0.1, training=self.training) + residual(x)
 

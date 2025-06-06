@@ -3,6 +3,7 @@ import torch as th
 from torch import nn
 from torch.nn import functional as F
 from torch_geometric.nn import SGConv
+from torch_geometric.nn.norm import LayerNorm
 
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
@@ -30,7 +31,8 @@ class GraphSG(BaseModule):
         self.mlp_shape = mlp_shape
 
         self.edge_index = edge_index.to(Device.XPU)
-        self.batch_edge_index = self.get_batch_edge_index(node_count, batch_size)
+        self.batch_edge_index = self.get_batch_edge_index( batch_size)
+        self.batch = self.get_batch_ids(batch_size)
 
         self.setup_graph_feature_extractor(gnn_shape)
         self.setup_mlp(gnn_shape, mlp_shape, output_size)
@@ -38,44 +40,32 @@ class GraphSG(BaseModule):
         self.initialize_gnn_weights()
         self.initialize_mlp_weights()
 
-    def get_batch_edge_index(self, node_count, batch_size):
+    def get_batch_edge_index(self, batch_size):
         batch_edge_index = []
         for i in range(batch_size):
-            batch_edge_index.append(self.edge_index + i * node_count)
+            batch_edge_index.append(self.edge_index + i * self.node_count)
         return th.cat(batch_edge_index, dim=1).to(Device.XPU)
 
-    def setup_graph_feature_extractor(self, shape):
-        self.res_conv_0 = nn.Linear(self.node_features, shape[0], device=Device.XPU)
-        # self.res_conv_0b = nn.Linear(self.node_features, shape[1], device=Device.XPU)
-        # self.res_conv_0c = nn.Linear(self.node_features, shape[2], device=Device.XPU)
-        self.res_conv_1 = nn.Linear(shape[0], shape[1], device=Device.XPU)
-        self.res_conv_2 = nn.Linear(shape[1], shape[2], device=Device.XPU)
-        self.res_conv_3 = nn.Linear(shape[2], shape[3], device=Device.XPU)
-        self.res_conv_4 = nn.Linear(shape[3], shape[4], device=Device.XPU)
-        self.res_conv_5 = nn.Linear(shape[4], shape[5], device=Device.XPU)
-        self.conv_1 = SGConv(self.node_features, shape[0], K=1).to(Device.XPU)
-        self.conv_2 = SGConv(shape[0], shape[1], K=1).to(Device.XPU)
-        self.conv_3 = SGConv(shape[1], shape[2], K=1).to(Device.XPU)
-        self.conv_4 = SGConv(shape[2], shape[3], K=1).to(Device.XPU)
-        self.conv_5 = SGConv(shape[3], shape[4], K=1).to(Device.XPU)
-        self.conv_6 = SGConv(shape[4], shape[5], K=1).to(Device.XPU)
+    def get_batch_ids(self, batch_size):
+        return th.repeat_interleave(
+            th.arange(batch_size), self.node_count
+        ).to(Device.XPU)
 
-        self.gnn = (
-            self.res_conv_0,
-            # self.res_conv_0b,
-            # self.res_conv_0c,
-            self.conv_1,
-            self.res_conv_1,
-            self.conv_2,
-            self.res_conv_2,
-            self.conv_3,
-            self.res_conv_3,
-            self.conv_4,
-            self.res_conv_4,
-            self.conv_5,
-            self.res_conv_5,
-            self.conv_6,
-        )
+    def setup_graph_feature_extractor(self, shape):
+        norms = []
+        residuals = []
+        convs = []
+        prev = self.node_features
+        for channels in self.gnn_shape:
+            norms.append(LayerNorm(channels))
+            residuals.append(nn.Linear(prev, channels, device=Device.XPU))
+            convs.append(SGConv(prev, channels, K=1).to(Device.XPU))
+
+            prev = channels
+
+        self.norms = nn.ModuleList(norms)
+        self.residuals = nn.ModuleList(residuals)
+        self.gnn = nn.ModuleList(convs)
 
     def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
@@ -91,8 +81,8 @@ class GraphSG(BaseModule):
             control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
             prev_size = size
 
-        self.mlp = tuple(mlp)
-        self.control_mlp = tuple(control_mlp)
+        self.mlp = nn.ModuleList(mlp)
+        self.control_mlp = nn.ModuleList(control_mlp)
 
     def forward(self, x, *args):
         x = self.extract_features(x)
@@ -108,39 +98,19 @@ class GraphSG(BaseModule):
         if x.shape[0] == self.batch_size:
             batch_size = self.batch_size
             edge_index = self.batch_edge_index
+            batch = self.batch
         else:
             batch_size = x.shape[0]
-            edge_index = self.get_batch_edge_index(self.node_count, batch_size)
+            edge_index = self.get_batch_edge_index(batch_size)
+            batch = self.get_batch_ids(batch_size)
 
         x = x.view(-1, self.node_features)
-        res0 = self.res_conv_0(x)
-        # res0b = self.res_conv_0b(x)
-        # res0c = self.res_conv_0c(x)
-        x = F.dropout(F.relu(self.conv_1(x, edge_index)), p=0.25, training=self.training)
-        # x = self.norm1(x, batch, batch_size)
-        x = x + res0
 
-        res1 = self.res_conv_1(x)
-        x = F.dropout(F.relu(self.conv_2(x, edge_index)), p=0.25, training=self.training)
-        # x = self.norm2(x, batch, batch_size)
-        x = x + res1# + res0b
-
-        res2 = self.res_conv_2(x)
-        x = F.dropout(F.relu(self.conv_3(x, edge_index)), p=0.25, training=self.training)
-        # x = self.norm3(x, batch, batch_size)
-        x = x + res2# + res0c
-
-        res3 = self.res_conv_3(x)
-        x = F.dropout(F.relu(self.conv_4(x, edge_index)), p=0.25, training=self.training)
-        x = x + res3# + res0c
-
-        res4 = self.res_conv_4(x)
-        x = F.dropout(F.relu(self.conv_5(x, edge_index)), p=0.25, training=self.training)
-        x = x + res4# + res0c
-
-        res5 = self.res_conv_5(x)
-        x = F.dropout(F.relu(self.conv_6(x, edge_index)), p=0.25, training=self.training)
-        x = x + res5
+        for gnn, residual, norm in zip(self.gnn, self.residuals, self.norms):
+            res = residual(x)
+            x = F.dropout(F.relu(norm(gnn(x, edge_index), batch, batch_size)), p=0.25, training=self.training)
+            # x = self.norm1(x, batch, batch_size)
+            x = x + res
 
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
@@ -154,7 +124,7 @@ class GraphSG(BaseModule):
                     th.nn.init.zeros_(layer.lin.bias)
 
     def initialize_mlp_weights(self):
-        for layer in self.mlp + self.control_mlp:
+        for layer in list(self.mlp) + list(self.control_mlp):
             th.nn.init.kaiming_normal_(
                 layer.weight, mode="fan_in", nonlinearity="leaky_relu"
             )

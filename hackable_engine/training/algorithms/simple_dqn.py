@@ -40,7 +40,6 @@ from hackable_engine.training.envs.multiprocess_vector_env.util import EnvProgre
 from hackable_engine.training.envs.wrappers.episode_stats import EpisodeStats
 from hackable_engine.training.models.graph_gat import GraphGAT
 from hackable_engine.training.models.graph_gin2 import GraphGIN2
-from hackable_engine.training.models.graph_gine import GraphGINE
 from hackable_engine.training.models.graph_gine2 import GraphGINE2
 from hackable_engine.training.models.graph_gmm import GraphGMM
 from hackable_engine.training.models.graph_rgcn import GraphRGCN
@@ -75,7 +74,7 @@ board_size = 13
 board_size_squared = board_size**2
 binary_one = 2**board_size_squared - 1
 env_class = Logit13GraphEnv
-model_class = GraphGIN2
+model_class = GraphGMM
 gnn_shape = GNN_SHAPES[model_class]
 mlp_shape = (256,)  # board_size**2)
 num_episodes = 1024
@@ -83,38 +82,42 @@ episode_env_steps = board_size  # **2
 """relative for tensorboard graphs, such that training sessions are comparable"""
 num_envs = 128
 num_workers = 8
-lr_gnn = 1e-4
-lr_mlp = 0.3e-4  # if shape ONE, larger than the final lr_gnn
+lr_gnn = 3e-4
+lr_mlp = 2e-4  # if shape ONE, larger than the final lr_gnn
 assert lr_mlp <= lr_gnn
 lr_gamma = 1e-4
 lr_shape_gnn = LRShape.ONE
 lr_shape_mlp = LRShape.WARMUP_ONE
-lr_warm_up_len = 0.12
-assert 0 < lr_warm_up_len < 1
-lr_minimum_p = 0.01
+lr_gnn_warm_up_len = 0.2
+lr_mlp_warm_up_len = 0.5
+assert 0 < lr_gnn_warm_up_len <= lr_mlp_warm_up_len < 1
+lr_minimum_p = 0.05
 assert 0 < lr_minimum_p < 1
+gradient_max = 100.0
+"""do not clip too much or learning will stagnate"""
 target_update_frequency = 1
 target_update_mode = TargetUpdateMode.SOFT
-tau = 0.005  # recommended 0.005 – 0.01 for a learning rate of 1e-3, lower for smaller learning rates
+tau_high = 0.1
+tau_low = 0.005  # recommended 0.005 – 0.01 for a learning rate of 1e-3, lower for smaller learning rates
 """soft target update proportion"""
-batch_size = 128
-gamma_mode = GammaMode.RETRAINED
+batch_size = 64
+gamma_mode = GammaMode.ANNEALING
 """if set to TRAINED then below params are ignored"""
 expected_episode_steps = 64
 gamma_low = 0.1
 gamma_high = (expected_episode_steps - 1) / expected_episode_steps
-gamma_delay = 0
+gamma_delay = 0.02
 """when mean rewards reach `gamma_delay` gamma becomes `gamma_high`, otherwise proportional to the rewards"""
-assert (
-    gamma_delay <= 0.66
-)  # there is a custom formula for which larger delay will cause gamma to never reach maximum
-epsilon_max = 0.1
-epsilon_min = 0
+assert not (gamma_delay <= 0.66 and gamma_mode is GammaMode.REWARD_BASED) and not (
+    gamma_mode is GammaMode.ANNEALING and gamma_delay <= 0
+)
+epsilon_high = 0.05
+epsilon_low = 0
 control_weight_param = 0.5 if model_class is not GraphGIN2 else 2.0
 entropy_weight_param = 0.05
 entropy_temperature = 2.0  # default is 1.0
-action_temperature_max = 0.5
-action_temperature_min = 0.001
+action_temperature_high = 0.5
+action_temperature_low = 0.001
 """
 controls how much the softmax function spreads out the probabilities over all possible actions.
 A higher temp results in a wider spread of probabilities, making the agent explore more diverse actions.
@@ -123,20 +126,20 @@ Increase for exploration, decrease for exploitation.
 allow_illegal = True
 softmax_action_selection = True
 ### BUFFER ###
-should_load_init_buffer = True
+should_load_init_buffer = False
 should_dump_init_buffer = False
 should_dump_final_buffer = False
 # TODO: prioritize with TD-error priority instead
-buffer_priority_rate_max = 1.0 if model_class is not GraphGIN2 else 0.15
-buffer_priority_rate_min = 0.6 if model_class is not GraphGIN2 else 0.15
-buffer_size_low = 75_000
+buffer_priority_rate_high = 0.5 if model_class is not GraphGIN2 else 0.15
+buffer_priority_rate_low = 0.5 if model_class is not GraphGIN2 else 0.15
+buffer_size_low = 2_000
 buffer_size_high = 2_000_000
 buffer_mode = BufferMode.RAM
 disk_buffer = 1 * buffer_size_high
 start_training = buffer_size_low * 0.95
 buffer_ratio = 16
 """Defines the proportion between fresh experience training and buffer training"""
-target_model_inference_chunks = 1
+target_model_inference_chunks = 4
 epochs = num_envs * buffer_ratio // batch_size
 episode_step = 1
 
@@ -145,11 +148,10 @@ episode_step = 1
 # policy_loss_queue = deque(maxlen=2 * num_envs)
 value_loss_queue = deque(maxlen=2 * num_envs)
 control_loss_queue = deque(maxlen=2 * num_envs)
-# legality_loss_queue = deque(maxlen=2 * num_envs)
 entropy_queue = deque(maxlen=2 * num_envs)
 
 
-def epsilon_decay(episode):
+def fast_decay(episode):
     x = episode / num_episodes
     hyperbolic = 1 / (1 + 99 * x**0.5)
     # exponential = 0.995 ** episode
@@ -161,6 +163,17 @@ def buffer_priority_rate_decay(episode):
     x = episode / num_episodes
     hyperbolic = 1 / (1 + 15 * x**2)
     return min(1, hyperbolic)
+
+
+def tau_decay(episode):
+    x = episode / num_episodes
+    hyperbolic = 1 / (1 + 99 * x**0.5)
+    return min(1, hyperbolic)
+
+
+def gamma_annealing(episode):
+    x = min(1.0, episode / num_episodes / gamma_delay)
+    return gamma_low + ((gamma_high - gamma_low) * (3 * x**2 - 2 * x**3))
 
 
 class DQN:
@@ -178,15 +191,14 @@ class DQN:
                 output_size=1,
                 batch_size=batch_size,
                 num_envs=num_envs,
-                # num_epochs=epochs,
                 gnn_shape=gnn_shape,
                 # gnn_heads=6,
                 mlp_shape=mlp_shape,
                 edge_index=board.edge_index,
                 # edge_types=board.edge_types,
                 # edge_types=board.edge_types_rgcn,
-                # pseudo_coordinates=board.pseudo_coordinates,
-                use_res=True,
+                pseudo_coordinates=board.pseudo_coordinates,
+                # use_res=True,
             )
             .to(Device.XPU)
             .to(th.float32)
@@ -198,24 +210,24 @@ class DQN:
                 output_size=1,
                 batch_size=batch_size,
                 num_envs=num_envs,
-                # num_epochs=epochs,
                 gnn_shape=gnn_shape,
                 # gnn_heads=6,
                 mlp_shape=mlp_shape,
                 edge_index=board.edge_index,
                 # edge_types=board.edge_types,
                 # edge_types=board.edge_types_rgcn,
-                # pseudo_coordinates=board.pseudo_coordinates,
-                use_res=True,
+                pseudo_coordinates=board.pseudo_coordinates,
+                # use_res=True,
             )
             .to(Device.XPU)
             .to(th.float32)
         )
-        self.target_model.train(False)
+        # will switch to train() when replay buffer is loaded
+        self.model.eval()
+        self.target_model.eval()
 
         self.tmp_value_loss = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
         self.tmp_control_loss = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
-        # self.tmp_legality_loss = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
         self.tmp_entropy = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
 
         weight_decay = 0  # 2e-5 if model_class is GraphSG else 0
@@ -235,20 +247,22 @@ class DQN:
             },
             {
                 "params": [
-                    param for layer in self.model.control_mlp for param in layer.parameters()
+                    param
+                    for layer in self.model.control_mlp
+                    for param in layer.parameters()
                 ],
                 "lr": lr_mlp,
             },
         ]
         scheduler_params = [
             get_learning_rate_decay(
-                lr_shape_gnn, num_episodes, lr_warm_up_len, lr_minimum_p
+                lr_shape_gnn, num_episodes, lr_gnn_warm_up_len, lr_minimum_p
             ),
             get_learning_rate_decay(
-                lr_shape_mlp, num_episodes, lr_warm_up_len, lr_minimum_p
+                lr_shape_mlp, num_episodes, lr_mlp_warm_up_len, lr_minimum_p
             ),
             get_learning_rate_decay(
-                lr_shape_mlp, num_episodes, lr_warm_up_len, lr_minimum_p
+                lr_shape_mlp, num_episodes, lr_mlp_warm_up_len, lr_minimum_p
             ),
         ]
         if gamma_mode is GammaMode.TRAINED:
@@ -261,7 +275,7 @@ class DQN:
             optimizer_params.append({"params": self.model.gamma, "lr": lr_gamma})
             scheduler_params.append(
                 get_learning_rate_decay(
-                    LRShape.ONE, num_episodes, lr_warm_up_len, lr_minimum_p
+                    LRShape.ONE, num_episodes, lr_mlp_warm_up_len, lr_minimum_p
                 )
             )
 
@@ -276,7 +290,7 @@ class DQN:
             board_size=board_size,
             capacity=buffer_size_low,
             storage_type=ReplayBuffer.StorageType.LIST,
-            priority_rate=buffer_priority_rate_max,
+            priority_rate=buffer_priority_rate_high,
         )
         self.optimizer_scheduler = LambdaLR(
             self.optimizer,
@@ -286,25 +300,17 @@ class DQN:
         if load_version is not None:
             color_name = "white" if self.color else "black"
             model_weights = th.load(
-                f"dqn/dqn-model-{color_name}.v{load_version}", weights_only=True
+                f"dqn/dqn-model-{color_name}.v{load_version}", map_location="xpu"
             )
-            self.model.load_state_dict(
-                {k.replace("_orig_mod.", ""): v for k, v in model_weights.items()}
-            )
+            self.model.load_state_dict(model_weights, strict=True)
             target_weights = th.load(
-                f"dqn/dqn-target-model-{color_name}.v{load_version}",
-                weights_only=True,
+                f"dqn/dqn-target-model-{color_name}.v{load_version}", map_location="xpu"
             )
-            self.target_model.load_state_dict(
-                {k.replace("_orig_mod.", ""): v for k, v in target_weights.items()}
-            )
+            self.target_model.load_state_dict(target_weights, strict=True)
             optimizer_weights = th.load(
-                f"dqn/dqn-optimizer-{color_name}.v{load_version}",
-                weights_only=True,
+                f"dqn/dqn-optimizer-{color_name}.v{load_version}", map_location="xpu"
             )
-            self.optimizer.load_state_dict(
-                {k.replace("_orig_mod.", ""): v for k, v in optimizer_weights.items()}
-            )
+            self.optimizer.load_state_dict(optimizer_weights)
             print(f"weights from color {color_name} version {load_version} loaded")
         else:
             self.target_model.load_state_dict(self.model.state_dict())
@@ -314,7 +320,9 @@ class DQN:
         # print(th._inductor.list_mode_options())
         th._dynamo.reset()
         self.model = th.compile(self.model, backend="inductor", mode="reduce-overhead")
-        self.target_model = th.compile(self.target_model, backend="inductor", mode="reduce-overhead")
+        self.target_model = th.compile(
+            self.target_model, backend="inductor", mode="reduce-overhead"
+        )
 
         self.obs: list[np.ndarray] = []
         self.black_masks: list[int] = []
@@ -336,9 +344,10 @@ class DQN:
         asyncio.run(self.train())
 
     async def train(self):
-        eps = epsilon_max
+        eps = epsilon_high
+        tau = tau_high
         e_temperature = entropy_temperature
-        a_temperature = action_temperature_max
+        a_temperature = action_temperature_high
         gamma = gamma_low
         target_update_f = (
             target_update_frequency // 2
@@ -371,9 +380,14 @@ class DQN:
                 # th_obs = th.from_numpy(np.stack(self.obs, 0)).to(Device.XPU)
                 # q_values_chunks = (self.model(chunk) for chunk in th_obs.chunk(16))
                 # q_values = th.cat([chunk[0] for chunk in q_values_chunks])
-                q_values, _ = self.model(
-                    th.from_numpy(np.stack(self.obs, 0)).to(Device.XPU)
-                )
+                if self.training_started:
+                    q_values, _ = self.model(
+                        th.from_numpy(np.stack(self.obs, 0)).to(Device.XPU)
+                    )
+                else:
+                    q_values = self.model(
+                        th.from_numpy(np.stack(self.obs, 0)).to(Device.XPU)
+                    )
 
                 actions = self.get_logit_actions(eps, a_temperature, q_values)
                 # action_queue.extend(actions.flatten().tolist())
@@ -383,12 +397,11 @@ class DQN:
                 # print("env takes", perf_counter() - t0)
                 #
                 # t0 = perf_counter()
-                # value_loss, legality_loss, entropy, gamma, old_experiences = await self.train_on_buffer(gamma, new_experiences, old_experiences)
+                # value_loss, entropy, gamma, old_experiences = await self.train_on_buffer(gamma, new_experiences, old_experiences)
                 # print("training takes", perf_counter() - t0)
                 (self.obs, self.black_masks, self.white_masks, new_experiences), (
                     value_loss,
                     control_loss,
-                    # legality_loss,
                     entropy,
                     gamma,
                     old_experiences,
@@ -402,7 +415,6 @@ class DQN:
                 if value_loss and steps > episode_env_steps:
                     value_loss_queue.append(value_loss)
                     control_loss_queue.append(control_loss)
-                    # legality_loss_queue.append(legality_loss)
                     entropy_queue.append(entropy)
 
                     break
@@ -410,22 +422,32 @@ class DQN:
             if self.replay_buffer.size() < start_training:
                 continue
 
-            decay = epsilon_decay(episode)
-            eps = (epsilon_max - epsilon_min) * decay + epsilon_min
+            ### DECAYING AND ANNEALING PARAMETERS ###
+            decay = fast_decay(episode)
+            eps = (epsilon_high - epsilon_low) * decay + epsilon_low
             a_temperature = (
-                action_temperature_max - action_temperature_min
-            ) * decay + action_temperature_min
-            decay = (
-                buffer_priority_rate_max - buffer_priority_rate_min
-            ) * buffer_priority_rate_decay(episode)
-            self.replay_buffer.priority_rate = decay + buffer_priority_rate_min
+                action_temperature_high - action_temperature_low
+            ) * decay + action_temperature_low
+            tau = (
+                tau_low
+                if gamma_mode is GammaMode.RETRAINED
+                else (tau_high - tau_low) * decay + tau_low
+            )
+            self.replay_buffer.priority_rate = (
+                buffer_priority_rate_high - buffer_priority_rate_low
+            ) * buffer_priority_rate_decay(episode) + buffer_priority_rate_low
+            if gamma_mode is GammaMode.ANNEALING:
+                gamma = gamma_low + (
+                    (gamma_high - gamma_low) * gamma_annealing(episode)
+                )
+
             for i in range(episode_step):
                 self.optimizer_scheduler.step()
 
             remainder = 1 if target_update_frequency == 2 else 2
             if episode % target_update_f == remainder or target_update_frequency == 1:
                 print("updating target")
-                self.update_target()
+                self.update_target(tau)
                 if episode > target_update_f:
                     target_update_f = target_update_frequency
                     if gamma > 2 * gamma_low:
@@ -458,13 +480,14 @@ class DQN:
                 del mlp_gradients
 
                 lr_gnn_, lr_mlp_ = self.optimizer_scheduler.get_last_lr()[:2]
-                log_progress(
+                self.log_progress(
                     episode,
                     q_mean,
                     q_std,
                     gnn_gradient,
                     mlp_gradient,
                     eps,
+                    tau,
                     a_temperature,
                     gamma,
                     lr_gnn_,
@@ -523,17 +546,19 @@ class DQN:
     ) -> tuple[float, float, float, float, tuple[Experience, ...]]:
         prev_value_loss: float = 0
         prev_control_loss: float = 0
-        # prev_legality_loss: float = 0
         prev_entropy: float = 0
         gamma = last_gamma
         size = self.replay_buffer.size()
         if size > start_training:
-            if not self.training_started and should_dump_init_buffer:
+            if not self.training_started:
                 self.training_started = True
-                await self.replay_buffer.dump_to_disk(
-                    self.envs.single_observation_space.shape
-                )
-                print("dumped initial buffer to disk")
+                self.model.train()
+                print("started training")
+                if should_dump_init_buffer:
+                    await self.replay_buffer.dump_to_disk(
+                        self.envs.single_observation_space.shape
+                    )
+                    print("dumped initial buffer to disk")
 
             if not old_experiences:
                 old_experiences = tuple(
@@ -558,25 +583,14 @@ class DQN:
             )
             thread.start()
 
-            # illegality_masks = []
             control_stats_list = []
             for black_mask, white_mask in zip(black_masks, white_masks):
-                # illegality_masks.append(
-                #     int_to_binary_float_array(
-                #         black_mask | white_mask, board_size_squared
-                #     )
-                # )
                 control_stats_list.append(
                     self.replay_buffer.find_closest_prob_oc_stats(
                         black_mask, white_mask
                     )
                 )
 
-            # illegality_masks = [
-            #     int_to_binary_float_array(black_mask | white_mask, board_size_squared)
-            #     for black_mask, white_mask in zip(black_masks, white_masks)
-            # ]
-            # illegality_masks_stacked = th.from_numpy(np.stack(illegality_masks))
             control_stats_stacked = th.from_numpy(np.stack(control_stats_list))
 
             next_experiences = tuple(
@@ -594,37 +608,29 @@ class DQN:
             actions = actions.pin_memory().to(device=Device.XPU, non_blocking=True)
             rewards = rewards.pin_memory().to(device=Device.XPU, non_blocking=True)
             dones = dones.pin_memory().to(device=Device.XPU, non_blocking=True)
-            # illegality_masks_stacked = illegality_masks_stacked.pin_memory().to(
-            #     device=Device.XPU, non_blocking=True
-            # )
             control_stats_stacked = control_stats_stacked.pin_memory().to(
                 device=Device.XPU, non_blocking=True
             )
 
             states_chunks = states.chunk(epochs, dim=0)
+            next_states_chunks = next_states.chunk(epochs, dim=0)
             actions_chunks = actions.chunk(epochs, dim=0)
             rewards_chunks = rewards.chunk(epochs, dim=0)
             dones_chunks = dones.chunk(epochs, dim=0)
-            # illegality_masks_chunks = illegality_masks_stacked.chunk(epochs, dim=0)
             control_stats_chunks = control_stats_stacked.chunk(epochs, dim=0)
 
             # copying loss value from gpu takes significant time so let's do it while target thread is running
             prev_value_loss = self.tmp_value_loss.item() / epochs
             prev_control_loss = self.tmp_control_loss.item() / epochs
-            # prev_legality_loss = self.tmp_legality_loss.item() / epochs
             prev_entropy = self.tmp_entropy.item() / epochs
             control_loss_weight = (
                 abs(prev_value_loss / prev_control_loss) if prev_control_loss else 1.0
             )
-            # legality_loss_weight = (
-            #     abs(prev_value_loss / prev_legality_loss) if prev_legality_loss else 1.0
-            # )
             entropy_weight = (
                 -abs(prev_value_loss / prev_entropy) if prev_entropy else -1.0
             )
             self.tmp_value_loss.zero_()
             self.tmp_control_loss.zero_()
-            # self.tmp_legality_loss.zero_()
             self.tmp_entropy.zero_()
 
             target_q_values = thread.join()
@@ -635,16 +641,16 @@ class DQN:
 
             for i in range(epochs):
                 states_ = states_chunks[i]
+                next_states_ = next_states_chunks[i]
                 actions_ = actions_chunks[i]
                 rewards_ = rewards_chunks[i]
                 target_q_values_ = target_q_values_chunks[i]
                 dones_ = dones_chunks[i]
-                # illegality_masks = illegality_masks_chunks[i]
                 control_stats = control_stats_chunks[i]
 
-                # value_loss, legality_loss, control_loss, entropy = (
                 value_loss, control_loss, entropy = self.get_logit_loss(
                     states_,
+                    next_states_,
                     target_q_values_,
                     rewards_,
                     dones_,
@@ -659,17 +665,19 @@ class DQN:
                 (
                     value_loss
                     + control_loss * control_loss_weight * control_weight_param
-                    # + legality_loss * legality_loss_weight * legality_weight_param
                     + entropy * entropy_weight * entropy_weight_param
                 ).backward()
+                # clip gradient after is built in backward and before the optimizer step
                 if model_class is GraphGIN2:
                     nn.utils.clip_grad_norm_(self.model.gnn.parameters(), 5.0)
                     nn.utils.clip_grad_norm_(self.model.mlp.parameters(), 2.0)
                     nn.utils.clip_grad_norm_(self.model.control_mlp.parameters(), 2.0)
+                else:
+                    nn.utils.clip_grad_norm_(self.model.parameters(), gradient_max)
+
                 self.optimizer.step()
                 self.tmp_value_loss += value_loss.detach()
                 self.tmp_control_loss += control_loss.detach()
-                # self.tmp_legality_loss += legality_loss.detach()
                 self.tmp_entropy += entropy.detach()
             del (
                 old_experiences,
@@ -700,7 +708,6 @@ class DQN:
         return (
             prev_value_loss,
             prev_control_loss,
-            # prev_legality_loss,
             prev_entropy,
             gamma,
             next_experiences,
@@ -791,6 +798,7 @@ class DQN:
     def get_logit_loss(
         self,
         states,
+        next_states,
         target_q_values,
         rewards,
         dones,
@@ -799,9 +807,18 @@ class DQN:
         control_stats: th.Tensor,
         temperature: float,
     ):
-        target = rewards + gamma * target_q_values.max(dim=1)[0] * (1 - dones)
-        q_values, control = self.model(states)
-        q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
+        # VANILLA DQN
+        # q_values, control = self.model(states)
+        # target = rewards + gamma * target_q_values.max(dim=1)[0] * (1 - dones)
+
+        # DOUBLE DQN
+        batched = th.cat([states, next_states], dim=0)
+        q_values_all, control_all = self.model(batched)
+        q_values, next_q_online = q_values_all.chunk(2, dim=0)
+        control, _ = control_all.chunk(2, dim=0)
+        best_actions = next_q_online.argmax(dim=1)
+        target_q = target_q_values.gather(1, best_actions.unsqueeze(1)).squeeze(1)
+        target = rewards + gamma * target_q * (1 - dones)
 
         # TODO: monitor the following values, periodically if heavy
         # td_error = th.abs(q_value - target).mean().item()
@@ -816,6 +833,7 @@ class DQN:
         q_probs = F.softmax(q_values / temperature, dim=-1)
         entropy = -(q_probs * (q_probs + 1e-8).log()).sum(dim=-1).mean()
 
+        q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
         loss_function = F.smooth_l1_loss if model_class is GraphGIN2 else F.mse_loss
         return (
             loss_function(q_value, target),
@@ -833,7 +851,7 @@ class DQN:
         loss = 0.5 * quadratic**2 + delta * linear
         return loss.mean()
 
-    def update_target(self):
+    def update_target(self, tau):
         if target_update_mode is TargetUpdateMode.HARD:
             self.target_model.load_state_dict(self.model.state_dict())
         elif target_update_mode is TargetUpdateMode.SOFT:
@@ -848,11 +866,12 @@ class DQN:
             raise ValueError("unknown target update mode")
 
     def calculate_gamma(self, rewards, dones, last_gamma) -> th.Tensor | float:
-        if gamma_mode is GammaMode.MANUAL:
+        if gamma_mode is GammaMode.REWARD_BASED:
             sum_reward = (rewards * dones).sum().item()
             if sum_reward == 0:
                 return last_gamma
 
+            # WARNING: rewards are not from recent experiences, but from replay sample
             mean_reward = sum_reward / dones.sum().item()
             reward_curve_point = (
                 -(mean_reward**2) / 3 + mean_reward / 2 + 1 / 3
@@ -862,7 +881,10 @@ class DQN:
             a = min(max(gamma_delay - reward_curve_point, 0), 1)
             """starts from 1, gets closer to 0 as rewards grow, ==0 from reward>0.5, >0.5 from reward>-0.5"""
             gamma = gamma_low * a + gamma_high * (1 - a)
+            # print("mean rew", mean_reward)
             return (gamma + last_gamma) / 2
+        elif gamma_mode is GammaMode.ANNEALING:
+            return last_gamma
         elif gamma_mode is GammaMode.TRAINED:
             return F.sigmoid(self.model.gamma)
         elif gamma_mode is GammaMode.RETRAINED:
@@ -876,9 +898,9 @@ class DQN:
 
         if not os.path.exists("dqn"):
             os.mkdir("dqn")
-        th.save(self.model.state_dict(), f"dqn/dqn-model-{color_name}.v{version}")
+        th.save(self.model._orig_mod.state_dict(), f"dqn/dqn-model-{color_name}.v{version}")
         th.save(
-            self.target_model.state_dict(),
+            self.target_model._orig_mod.state_dict(),
             f"dqn/dqn-target-model-{color_name}.v{version}",
         )
         th.save(
@@ -886,66 +908,74 @@ class DQN:
             f"dqn/dqn-optimizer-{color_name}.v{version}",
         )
 
+    def log_progress(
+        self,
+        episode,
+        q_mean,
+        q_std,
+        gnn_gradient,
+        mlp_gradient,
+        eps,
+        tau,
+        temperature,
+        gamma,
+        lr_gnn_,
+        lr_mlp_,
+        priority_rate,
+    ):
+        # actions = np.array(action_queue)
+        # writer.add_histogram(
+        #     "actions/raw",
+        #     actions,
+        #     bins="auto",
+        #     max_bins=100,
+        # )
+        try:
+            env_progress_data: EnvProgressData = envs.get_progress_data()
+        except ZeroDivisionError:
+            print("Zero division error")  # FIXME
+            return
+        if env_progress_data.reward_mean > -0.5:
+            self.replay_buffer.should_sample_illegal = False
+
+        writer.add_scalar("episode/length", env_progress_data.length_mean, episode)
+        writer.add_scalar(
+            "episode/win_length", env_progress_data.win_length_mean, episode
+        )
+        writer.add_scalar(
+            "episode/loss_length", env_progress_data.loss_length_mean, episode
+        )
+        writer.add_scalar(
+            "episode/fps", env_progress_data.time_mean * num_envs, episode
+        )
+        writer.add_scalar("rewards/mean_total", env_progress_data.return_mean, episode)
+        writer.add_scalar("rewards/mean_winner", env_progress_data.winner_mean, episode)
+        writer.add_scalar("rewards/mean_final", env_progress_data.reward_mean, episode)
+        if allow_illegal:
+            # % of games that finished without any illegal moves
+            writer.add_scalar("rewards/%_legal", env_progress_data.legal_mean, episode)
+        # writer.add_scalar("losses/policy_loss", np.mean(policy_loss_queue), episode)
+        writer.add_scalar("losses/value_loss", np.mean(value_loss_queue), episode)
+        writer.add_scalar("losses/control_loss", np.mean(control_loss_queue), episode)
+        writer.add_scalar("losses/entropy", np.mean(entropy_queue), episode)
+        writer.add_scalar("gradients/gnn", gnn_gradient, episode)
+        writer.add_scalar("gradients/mlp", mlp_gradient, episode)
+        writer.add_scalar("misc/q_mean", q_mean, episode)
+        writer.add_scalar("misc/q_std", q_std, episode)
+        writer.add_scalar("misc/gamma", gamma, episode)
+        writer.add_scalar("misc/epsilon", eps, episode)
+        writer.add_scalar("misc/tau", tau, episode)
+        writer.add_scalar("misc/temperature", temperature, episode)
+        writer.add_scalar("misc/buffer_priority_rate", priority_rate, episode)
+        writer.add_scalar("misc/lr_gnn", lr_gnn_, episode)
+        writer.add_scalar("misc/lr_mlp", lr_mlp_, episode)
+
 
 def to_probs(actions):
     return F.sigmoid(actions)
     # mean = actions.mean()
     # std = actions.std()
     # return (F.tanh((actions - mean)/(std + 1e-8)) + 1) / 2
-
-
-def log_progress(
-    episode,
-    q_mean,
-    q_std,
-    gnn_gradient,
-    mlp_gradient,
-    eps,
-    temperature,
-    gamma,
-    lr_gnn_,
-    lr_mlp_,
-    priority_rate,
-):
-    # actions = np.array(action_queue)
-    # writer.add_histogram(
-    #     "actions/raw",
-    #     actions,
-    #     bins="auto",
-    #     max_bins=100,
-    # )
-    try:
-        env_progress_data: EnvProgressData = envs.get_progress_data()
-    except ZeroDivisionError:
-        print("Zero division error")  # FIXME
-        return
-    writer.add_scalar("episode/length", env_progress_data.length_mean, episode)
-    writer.add_scalar("episode/win_length", env_progress_data.win_length_mean, episode)
-    writer.add_scalar(
-        "episode/loss_length", env_progress_data.loss_length_mean, episode
-    )
-    writer.add_scalar("episode/fps", env_progress_data.time_mean * num_envs, episode)
-    writer.add_scalar("rewards/mean_total", env_progress_data.return_mean, episode)
-    writer.add_scalar("rewards/mean_winner", env_progress_data.winner_mean, episode)
-    writer.add_scalar("rewards/mean_final", env_progress_data.reward_mean, episode)
-    if allow_illegal:
-        # % of games that finished without any illegal moves
-        writer.add_scalar("rewards/%_legal", env_progress_data.legal_mean, episode)
-    # writer.add_scalar("losses/policy_loss", np.mean(policy_loss_queue), episode)
-    writer.add_scalar("losses/value_loss", np.mean(value_loss_queue), episode)
-    writer.add_scalar("losses/control_loss", np.mean(control_loss_queue), episode)
-    # writer.add_scalar("losses/legality_loss", np.mean(legality_loss_queue), episode)
-    writer.add_scalar("losses/entropy", np.mean(entropy_queue), episode)
-    writer.add_scalar("gradients/gnn", gnn_gradient, episode)
-    writer.add_scalar("gradients/mlp", mlp_gradient, episode)
-    writer.add_scalar("misc/q_mean", q_mean, episode)
-    writer.add_scalar("misc/q_std", q_std, episode)
-    writer.add_scalar("misc/gamma", gamma, episode)
-    writer.add_scalar("misc/epsilon", eps, episode)
-    writer.add_scalar("misc/temperature", temperature, episode)
-    writer.add_scalar("misc/buffer_priority_rate", priority_rate, episode)
-    writer.add_scalar("misc/lr_gnn", lr_gnn_, episode)
-    writer.add_scalar("misc/lr_mlp", lr_mlp_, episode)
 
 
 def get_args():
@@ -993,12 +1023,14 @@ if __name__ == "__main__":
         "lr_mlp": lr_mlp,
         "lr_shape_gnn": lr_shape_gnn,
         "lr_shape_mlp": lr_shape_mlp,
-        "lr_warm_up_len": lr_warm_up_len,
+        "lr_gnn_warm_up_len": lr_gnn_warm_up_len,
+        "lr_mlp_warm_up_len": lr_mlp_warm_up_len,
         "batch_size": batch_size,
         "buffer_ratio": buffer_ratio,
         "target_update_freq": target_update_frequency,
         "target_update_mode": target_update_mode,
-        "tau": tau,
+        "tau_high": tau_high,
+        "tau_low": tau_low,
         "gamma_mode": gamma_mode,
         "gamma_low": gamma_low,
         "gamma_high": gamma_high,
@@ -1010,6 +1042,7 @@ if __name__ == "__main__":
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
         % ("\n".join([f"|{key}|{value}|" for key, value in params.items()])),
+        global_step=0,
     )
 
     envs = MultiprocessAsyncEnv(

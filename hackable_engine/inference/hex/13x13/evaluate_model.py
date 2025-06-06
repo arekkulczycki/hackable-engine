@@ -13,6 +13,7 @@ from hackable_engine.training.device import Device
 from hackable_engine.training.models.graph_gin import GraphGIN
 from hackable_engine.training.models.graph_sg import GraphSG
 from hackable_engine.training.models.graph_rgcn import GraphRGCN
+from hackable_engine.training.models.graph_gmm import GraphGMM
 from hackable_engine.training.models.graph_gat import GraphGAT
 
 BOARD_SIZE = 13
@@ -34,26 +35,27 @@ args = parser.parse_args()
 
 board = HexBoard("", size=BOARD_SIZE, use_graph=True)
 model = (
-    GraphRGCN(
+    GraphGMM(
         node_count=board.size_square,
         node_features=9,
         output_size=1,
-        batch_size=64,
-        num_envs=1024,
+        batch_size=169,
+        num_envs=128,
         # num_epochs=epochs,
-        gnn_shape=(54, 108, 216, 324, 324, 324),
+        gnn_shape=(54, 108, 216, 324, 432, 486),
         # gnn_heads=6,
         mlp_shape=(256,),
         edge_index=board.edge_index,
-        edge_types=board.edge_types,
+        # edge_types=board.edge_types,
+        pseudo_coordinates=board.pseudo_coordinates,
         use_res=True,
     )
     .to(Device.XPU)
     .to(th.float32)
 )
-model.train(False)
+model.eval()
 model_weights = th.load(
-    f"simple_dqn/dqn-model-{'white' if args.color else 'black'}.v{args.version}", weights_only=True
+    f"dqn/dqn-model-{'white' if args.color else 'black'}.v{args.version}", weights_only=True
 )
 model.load_state_dict(
     {k.replace("_orig_mod.", ""): v for k, v in model_weights.items()}
@@ -61,7 +63,8 @@ model.load_state_dict(
 
 
 def select_model_move(board: HexBoard) -> Move:
-    logits, legality = model(th.from_numpy(board.get_hetero_graph_node_features_one_hot().astype(FLOAT_TYPE)).to(Device.XPU))
+    logits = model(th.from_numpy(board.get_hetero_graph_node_features_one_hot().reshape((1, 169, 9)).astype(FLOAT_TYPE)))#.to(Device.XPU))
+    logits = logits.reshape((169,))
 
     illegal_squares = list(generate_cells(board.occupied))
     min_val = logits.argmin().item()

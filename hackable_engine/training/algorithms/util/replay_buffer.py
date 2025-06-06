@@ -47,7 +47,9 @@ class ReplayBuffer:
         else:
             self.buffer = []
 
-        self.priority_indices: set[int] = set()
+        self.win_indices: set[int] = set()
+        self.loss_indices: set[int] = set()
+        self.illegal_indices: set[int] = set()
         self.priority_rate: float = priority_rate
         """Between 0 and 1, the % of sampled items took from the priority pool."""
 
@@ -59,6 +61,7 @@ class ReplayBuffer:
 
         self.backup: DiskBackupProcess | None = None
         self.control_stats: bool = control_stats
+        self.should_sample_illegal: bool = True
 
     def setup_disk_backup(
         self, capacity: int, batch_size: int, obs_shape: tuple[int, ...], version: int
@@ -93,8 +96,10 @@ class ReplayBuffer:
                 self.collect_control_stats(experience, position)
 
     def collect_control_stats(self, experience: Experience, position: int):
-        is_terminal = experience[2] != 0
-        is_legal = experience[2] >= -1
+        reward = experience[2]
+        is_terminal = reward != 0
+        is_win = reward > 0
+        is_legal = reward >= -1
         ocb = experience[-2]
         ocw = experience[-1]
         if (
@@ -109,12 +114,25 @@ class ReplayBuffer:
                 self.control_stats_keys[ocb.bit_count()].add((ocb, ocw))
 
         if is_terminal and is_legal:  # prioritize non-zero rewards
-            self.priority_indices.add(position)
+            if is_win:
+                self.win_indices.add(position)
+                self.loss_indices.discard(position)
+                self.illegal_indices.discard(position)
+            elif is_legal:
+                self.loss_indices.add(position)
+                self.win_indices.discard(position)
+                self.illegal_indices.discard(position)
+            elif self.should_sample_illegal:
+                self.illegal_indices.add(position)
+                self.loss_indices.discard(position)
+                self.win_indices.discard(position)
+
             if is_legal:
                 self.propagate_oc_to_children(ocb, ocw)
                 self.control_stats_terminal_keys.add((ocb, ocw))
         else:
-            self.priority_indices.discard(position)
+            for set_ in [self.win_indices, self.loss_indices, self.illegal_indices]:
+                set_.discard(position)
 
     def propagate_oc_to_children(self, ocb: int, ocw: int):
         """Find all keys that have a subset of white stones AND a subset of black stones."""
@@ -223,16 +241,22 @@ class ReplayBuffer:
 
     def sample(self, size: int) -> Generator[Experience, None, None]:
         priority_size = int(size * self.priority_rate)
-        try:
-            priority_batch_ids = sample(sorted(self.priority_indices), k=priority_size)
-        except ValueError:
-            population = len(self.priority_indices)
-            if population < size:
-                priority_batch_ids = list(self.priority_indices)
-                priority_size = population
-            else:
-                priority_batch_ids = sample(sorted(self.priority_indices), k=size)
-                priority_size = size
+        if self.should_sample_illegal:
+            win_size = min(len(self.win_indices), priority_size // 3)
+            loss_size = min(len(self.loss_indices), (priority_size - win_size) // 2)
+            illegal_size = min(
+                len(self.illegal_indices), priority_size - win_size - loss_size
+            )
+        else:
+            win_size = min(len(self.win_indices), priority_size // 2)
+            loss_size = min(len(self.loss_indices), priority_size - win_size)
+            illegal_size = 0
+        priority_size = win_size + loss_size
+        priority_batch_ids = (
+            sample(sorted(self.win_indices), k=win_size)
+            + sample(sorted(self.loss_indices), k=loss_size)
+            + sample(sorted(self.illegal_indices), k=illegal_size)
+        )
 
         batch_ids = sample(range(self.size()), k=(size - priority_size))
         batch = (self.buffer[i] for i in batch_ids + priority_batch_ids)

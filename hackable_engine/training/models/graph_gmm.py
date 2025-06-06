@@ -3,6 +3,7 @@ import torch as th
 from torch import nn
 from torch.nn import functional as F
 from torch_geometric.nn import GMMConv
+from torch_geometric.nn.norm import LayerNorm
 
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
@@ -21,7 +22,6 @@ class GraphGMM(BaseModule):
         mlp_shape,
         edge_index,
         pseudo_coordinates,
-        use_res: bool = True,
     ):
         super().__init__()
         self.node_count = node_count
@@ -30,7 +30,6 @@ class GraphGMM(BaseModule):
         self.batch_size = batch_size
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
-        self.use_res = use_res
 
         self.edge_index = edge_index.to(Device.XPU)
         self.batch_edge_index = self.get_batch_edge_index(batch_size)
@@ -56,62 +55,19 @@ class GraphGMM(BaseModule):
         return th.cat(batch_pseudo_coordinates, dim=0).to(Device.XPU)
 
     def setup_graph_feature_extractor(self):
-        if self.use_res:
-            self.res_proj_0 = nn.Linear(
-                self.node_features, self.gnn_shape[0], device=Device.XPU
-            )
-            self.res_proj_1 = nn.Linear(
-                self.gnn_shape[0], self.gnn_shape[1], device=Device.XPU
-            )
-            self.res_proj_2 = nn.Linear(
-                self.gnn_shape[1], self.gnn_shape[2], device=Device.XPU
-            )
-            self.res_proj_3 = nn.Linear(
-                self.gnn_shape[2], self.gnn_shape[3], device=Device.XPU
-            )
-            self.res_proj_4 = nn.Linear(
-                self.gnn_shape[3], self.gnn_shape[4], device=Device.XPU
-            )
-            self.res_proj_5 = nn.Linear(
-                self.gnn_shape[4], self.gnn_shape[5], device=Device.XPU
-            )
-        self.conv1 = GMMConv(
-            self.node_features,
-            self.gnn_shape[0],
-            dim=2,
-            kernel_size=6,
-        )
-        self.conv2 = GMMConv(
-            self.gnn_shape[0],
-            self.gnn_shape[1],
-            dim=2,
-            kernel_size=6,
-        )
-        self.conv3 = GMMConv(
-            self.gnn_shape[1],
-            self.gnn_shape[2],
-            dim=2,
-            kernel_size=6,
-        )
-        self.conv4 = GMMConv(
-            self.gnn_shape[2],
-            self.gnn_shape[3],
-            dim=2,
-            kernel_size=6,
-        )
-        self.conv5 = GMMConv(
-            self.gnn_shape[3],
-            self.gnn_shape[4],
-            dim=2,
-            kernel_size=6,
-        )
-        self.conv6 = GMMConv(
-            self.gnn_shape[4],
-            self.gnn_shape[5],
-            dim=2,
-            kernel_size=6,
-        )
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6)
+        gnn = []
+        residuals = []
+        # norms = []
+        prev = self.node_features
+        for channels in self.gnn_shape:
+            gnn.append(GMMConv(prev, channels, dim=2, kernel_size=6))
+            residuals.append(nn.Linear(prev, channels, device=Device.XPU))
+            # norms.append(LayerNorm(channels))
+            prev = channels
+
+        self.gnn = nn.ModuleList(gnn)
+        self.residuals = nn.ModuleList(residuals)
+        # self.norms = nn.ModuleList(norms)
 
     def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
@@ -127,8 +83,8 @@ class GraphGMM(BaseModule):
             control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
             prev_size = size
 
-        self.mlp = tuple(mlp)
-        self.control_mlp = tuple(control_mlp)
+        self.mlp = nn.ModuleList(mlp)
+        self.control_mlp = nn.ModuleList(control_mlp)
 
     def forward(self, x, *args):
         x = self.extract_features(x)
@@ -152,42 +108,13 @@ class GraphGMM(BaseModule):
 
         x = x.view(-1, self.node_features)
 
-        if self.use_res:
-            res0 = self.res_proj_0(x)
-        x = F.dropout(F.relu(self.conv1(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
-        # x = self.norm1(x, batch, batch_size)
+        # for conv, residual, norm in zip(self.gnn, self.residuals, self.norms):
+        for conv, residual in zip(self.gnn, self.residuals):
+            h = conv(x, edge_index, pseudo_coordinates)
+            # h = norm(h)
+            # x = F.dropout(F.relu(h + residual(x)), p=0.1, training=self.training)
+            x = F.dropout(F.relu(h), p=0.2, training=self.training) + residual(x)
 
-        if self.use_res:
-            x = x + res0
-            res1 = self.res_proj_1(x)
-        x = F.dropout(F.relu(self.conv2(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
-        # x = self.norm2(x, batch, batch_size)
-
-        if self.use_res:
-            x = x + res1
-            res2 = self.res_proj_2(x)
-        x = F.dropout(F.relu(self.conv3(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
-        # x = self.norm3(x, batch, batch_size)
-
-        if self.use_res:
-            x = x + res2
-            res3 = self.res_proj_3(x)
-        x = F.dropout(F.relu(self.conv4(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
-        # x = self.norm4(x, batch, batch_size)
-
-        if self.use_res:
-            x = x + res3
-            res4 = self.res_proj_4(x)
-        x = F.dropout(F.relu(self.conv5(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
-
-        if self.use_res:
-            x = x + res4
-            res5 = self.res_proj_5(x)
-        x = F.dropout(F.relu(self.conv6(x, edge_index, pseudo_coordinates)), p=0.25, training=self.training)
-
-        if self.use_res:
-            x = x + res5
-        # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
     def initialize_gnn_weights(self):

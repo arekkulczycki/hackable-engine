@@ -86,7 +86,7 @@ class BaseEnv(gym.Env):
         self.current_move: Move | None = None
 
         self.did_force_stop: bool = False
-        self.results: deque[float] = deque(maxlen=20)
+        self.results: deque[float] = deque(maxlen=25)
 
     def render(self, mode="human", close=False) -> RenderFrame:
         """"""
@@ -309,7 +309,7 @@ class BaseEnv(gym.Env):
             # TODO: 2x maybe unnecessary, added for stronger `reward smoothing`
             #  WARNING: it can produce positive reward for a loss or negative for a win
             reward = (
-                MINUS_ONE + 2 * self._quick_win_value(n_moves)
+                MINUS_ONE + 1.5 * self._quick_win_value(n_moves)
                 if self.color
                 else ONE - self._quick_win_value(n_moves)
             )
@@ -318,7 +318,7 @@ class BaseEnv(gym.Env):
             reward = (
                 ONE - self._quick_win_value(n_moves)
                 if self.color
-                else MINUS_ONE + 2 * self._quick_win_value(n_moves)
+                else MINUS_ONE + 1.5 * self._quick_win_value(n_moves)
             )
 
         else:

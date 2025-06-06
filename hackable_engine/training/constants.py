@@ -8,14 +8,15 @@ class LRShape(Enum):
     SIGMOID = 2
     WARMUP_SIGMOID = 3
     COSINE = 4
-    COSINE_SIGMOID = 5
-    WARMUP_COSINE_SIGMOID = 6
-    SQUARED = 7
+    WARMUP_COSINE = 5
+    COSINE_SIGMOID = 6
+    WARMUP_COSINE_SIGMOID = 7
+    SQUARED = 8
 
 def get_learning_rate_decay(lr_shape, num_episodes, warm_up_len, lr_minimum_p):
     def sigmoid(episode):
         x = episode / num_episodes
-        decay = -0.66 / (1 + np.e ** (-8 * (x - 0.5))) + 1
+        decay = -0.66 / (1 + np.e ** (-8 * (x - warm_up_len))) + 1
         return decay
 
     def warmup_sigmoid(episode):
@@ -23,7 +24,7 @@ def get_learning_rate_decay(lr_shape, num_episodes, warm_up_len, lr_minimum_p):
             x = episode / (warm_up_len * num_episodes)
             return (1 - lr_minimum_p) / (1 + np.e ** (-10 * (x - 0.5))) + lr_minimum_p
         x = (episode - warm_up_len * num_episodes) / ((1 - warm_up_len) * num_episodes)
-        decay = -0.69 / (1 + np.e ** (-10 * (x - 0.3))) + 1.025
+        decay = -0.69 / (1 + np.e ** (-10 * (x - warm_up_len))) + 1.025
         return decay
 
     def one(episode):
@@ -41,6 +42,9 @@ def get_learning_rate_decay(lr_shape, num_episodes, warm_up_len, lr_minimum_p):
         return (
             np.cos(episode * cosine_step) + 1
         ) / 2.0 * (1 - lr_minimum_p) + lr_minimum_p
+
+    def warmup_cosine(episode):
+        return cosine(episode) * warmup_one(episode)
 
     def cosine_sigmoid(episode):
         return cosine(episode) * sigmoid(episode)
@@ -65,6 +69,7 @@ def get_learning_rate_decay(lr_shape, num_episodes, warm_up_len, lr_minimum_p):
         LRShape.ONE: one,
         LRShape.WARMUP_ONE: warmup_one,
         LRShape.COSINE: cosine,
+        LRShape.WARMUP_COSINE: warmup_cosine,
         LRShape.COSINE_SIGMOID: cosine_sigmoid,
         LRShape.WARMUP_COSINE_SIGMOID: warmup_cosine_sigmoid,
         LRShape.SQUARED: squared,
@@ -79,9 +84,10 @@ class TargetUpdateMode(Enum):
 
 
 class GammaMode(Enum):
-    MANUAL = 0
+    REWARD_BASED = 0
     TRAINED = 1
     RETRAINED = 2
+    ANNEALING = 3
 
 
 class BufferMode(Enum):
