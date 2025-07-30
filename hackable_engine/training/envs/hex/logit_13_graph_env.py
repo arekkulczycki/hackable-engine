@@ -106,8 +106,9 @@ class Logit13GraphEnv(BaseEnv):
 
     def _make_opponent_move(self, n_moves):
         minimum_logical_moves = 0.2
+        len_results = len(self.results)
         win_percentage = (
-            np.mean(self.results) if len(self.results) >= 5 else minimum_logical_moves
+            sum(self.results)/len_results if len_results >= 5 else minimum_logical_moves
         )
         random_move_weight = (1 - win_percentage) * (1 - minimum_logical_moves) + 0.01
         if choices((True, False), weights=(random_move_weight, 1 - random_move_weight))[

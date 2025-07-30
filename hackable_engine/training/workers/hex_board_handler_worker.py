@@ -8,7 +8,7 @@ import onnxruntime as ort
 from nptyping import NDArray
 from numpy import float32
 
-from hackable_engine.board.hex.hex_board import HexBoard
+from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard as HexBoard
 from hackable_engine.common.queue.manager import QueueManager
 
 # fmt: off

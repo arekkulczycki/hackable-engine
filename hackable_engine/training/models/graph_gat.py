@@ -4,7 +4,6 @@ from torch import nn
 from torch.nn import functional as F
 from torch_geometric.nn import GATv2Conv
 
-from hackable_engine.common.constants import TH_FLOAT_TYPE
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
 
@@ -17,6 +16,7 @@ class GraphGAT(BaseModule):
         node_features,
         output_size,
         batch_size,
+        dropouts,
         num_envs,
         gnn_shape,
         gnn_heads,
@@ -30,6 +30,7 @@ class GraphGAT(BaseModule):
         self.node_features = node_features
         self.num_envs = num_envs
         self.batch_size = batch_size
+        self.dropouts = dropouts
         self.gnn_shape = gnn_shape
         self.gnn_heads = gnn_heads
         self.mlp_shape = mlp_shape
@@ -37,7 +38,7 @@ class GraphGAT(BaseModule):
 
         self.edge_index = edge_index.to(Device.XPU)
         self.batch_edge_index = self.get_batch_edge_index(batch_size)
-        self.edge_types = edge_types.to(Device.XPU).to(TH_FLOAT_TYPE)
+        self.edge_types = edge_types.to(Device.XPU)
         self.batch_edge_types = self.get_batch_edge_types(batch_size)
 
         self.setup_graph_feature_extractor()
@@ -188,30 +189,30 @@ class GraphGAT(BaseModule):
             # res02 = self.res_proj_0(x)
             # res03 = self.res_proj_0(x)
             # res04 = self.res_proj_0(x)
-        x = F.dropout(F.relu(self.conv1(x, edge_index, edge_attr=edge_types)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv1(x, edge_index, edge_attr=edge_types)), p=self.dropouts, training=self.training)
         # x = self.norm1(x, batch, batch_size)
 
         if self.use_res:
             x = x + res0
             res1 = self.res_proj_1(x)
-        x = F.dropout(F.relu(self.conv2(x, edge_index, edge_attr=edge_types)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv2(x, edge_index, edge_attr=edge_types)), p=self.dropouts, training=self.training)
         # x = self.norm2(x, batch, batch_size)
 
         if self.use_res:
             x = x + res1 #+ res01
             res2 = self.res_proj_2(x)
-        x = F.dropout(F.relu(self.conv3(x, edge_index, edge_attr=edge_types)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv3(x, edge_index, edge_attr=edge_types)), p=self.dropouts, training=self.training)
         # x = self.norm3(x, batch, batch_size)
 
         if self.use_res:
             x = x + res2 #+ res02
             res3 = self.res_proj_3(x)
-        x = F.dropout(F.relu(self.conv4(x, edge_index, edge_attr=edge_types)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv4(x, edge_index, edge_attr=edge_types)), p=self.dropouts, training=self.training)
 
         if self.use_res:
             x = x + res3 #+ res03
             res4 = self.res_proj_4(x)
-        x = F.dropout(F.relu(self.conv5(x, edge_index, edge_attr=edge_types)), p=0.25, training=self.training)
+        x = F.dropout(F.relu(self.conv5(x, edge_index, edge_attr=edge_types)), p=self.dropouts, training=self.training)
 
         if self.use_res:
             x = x + res4 #+ res04
@@ -238,7 +239,7 @@ class GraphGAT(BaseModule):
         control_x = x
         for layer in self.mlp[:-1]:
             mlp_x = F.leaky_relu(layer(mlp_x), negative_slope=0.05)
-            # x = F.dropout(F.leaky_relu(layer(x)), p=0.5, training=self.training)
+            # x = F.dropout(F.leaky_relu(layer(x)), p=self.dropouts, training=self.training)
 
         if self.training:
             for layer in self.control_mlp[:-1]:

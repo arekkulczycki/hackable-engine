@@ -8,7 +8,7 @@ from typing import Any, Generic, List, Optional, Tuple, TypeVar, TYPE_CHECKING
 from numpy import float32
 
 from hackable_engine.board import GameBoardBase
-from hackable_engine.board.chess.chess_board import ChessBoard
+# from hackable_engine.board.chess.chess_board import ChessBoard
 from hackable_engine.board.hex.hex_board import HexBoard
 from hackable_engine.common.constants import (
     DRAW,
@@ -24,10 +24,10 @@ from hackable_engine.common.constants import (
 from hackable_engine.common.queue.items.eval_item import EvalItem
 from hackable_engine.common.queue.items.selector_item import SelectorItem
 from hackable_engine.criteria.evaluation.base_eval import WeightsType, BaseEval
-from hackable_engine.criteria.evaluation.chess.square_control_eval import (
-    SquareControlEval,
-)
-from hackable_engine.criteria.evaluation.hex.distance_eval import DistanceEval
+# from hackable_engine.criteria.evaluation.chess.square_control_eval import (
+#     SquareControlEval,
+# )
+from hackable_engine.criteria.evaluation.hex.model_eval import ModelEval
 from hackable_engine.workers.base_worker import BaseWorker
 from hackable_engine.workers.configs.eval_worker_config import EvalWorkerConfig
 from hackable_engine.workers.configs.worker_locks import WorkerLocks
@@ -39,8 +39,11 @@ if TYPE_CHECKING:
 GameBoardT = TypeVar("GameBoardT", bound=GameBoardBase)
 
 EVALUATORS = {
-    ChessBoard: SquareControlEval(),
-    HexBoard: DistanceEval(),
+    # ChessBoard: SquareControlEval(),
+    # HexBoard: DistanceEval(),
+    # HexBoard: PathsEval,
+    HexBoard: ModelEval,
+    # HexBoard: WasmEval,
 }
 
 
@@ -55,14 +58,15 @@ class EvalWorker(BaseWorker, Generic[GameBoardT]):
         queues: WorkerQueues,
         *,
         config: EvalWorkerConfig,
+        memory = None,
     ) -> None:
-        super().__init__()
+        super().__init__(memory)
 
         self.locks: WorkerLocks = locks
         self.queues: WorkerQueues = queues
 
         self.worker_number: int = config.worker_number
-        self.evaluator: Optional[BaseEval[GameBoardT]] = EVALUATORS[config.board_class]
+        self.evaluator: Optional[BaseEval[GameBoardT]] = EVALUATORS[config.board_class](config.board_size)
 
         self.is_training_run: bool = config.is_training_run
 
@@ -107,19 +111,19 @@ class EvalWorker(BaseWorker, Generic[GameBoardT]):
             if status == Status.STARTED:
                 finished = False
 
-                if self.is_training_run and not weights_set:
-                    # in training the action will be constant across the entire search, contrary to play analysis
-                    with self.locks.weights_lock:
-                        try:
-                            action = self.get_memory_action(
-                                self.evaluator.PARAMS_NUMBER
-                            )
-                        except TypeError:
-                            print(
-                                "failed action retrieval of size: ",
-                                self.evaluator.PARAMS_NUMBER,
-                            )
-                    weights_set = True
+                # if self.is_training_run and not weights_set:
+                #     # in training the action will be constant across the entire search, contrary to play analysis
+                #     with self.locks.weights_lock:
+                #         try:
+                #             action = self.get_memory_action(
+                #                 self.evaluator.PARAMS_NUMBER
+                #             )
+                #         except TypeError:
+                #             print(
+                #                 "failed action retrieval of size: ",
+                #                 self.evaluator.PARAMS_NUMBER,
+                #             )
+                #     weights_set = True
 
                 items_to_eval: List[EvalItem] = self.queues.eval_queue.get_many(
                     queue_throttle, SLEEP
@@ -127,7 +131,7 @@ class EvalWorker(BaseWorker, Generic[GameBoardT]):
                 if items_to_eval:
                     if run_id is None:
                         with self.locks.status_lock:
-                            run_id = self.memory_manager.get_str(RUN_ID)
+                            run_id = self.memory_manager.get_str(RUN_ID).replace("\x00", "")
 
                     self.queues.selector_queue.put_many(
                         self.eval_items(items_to_eval, run_id, action)
@@ -139,7 +143,7 @@ class EvalWorker(BaseWorker, Generic[GameBoardT]):
                 finished = True
                 run_id = None
 
-                weights_set = False
+                # weights_set = False
                 with self.locks.finish_lock:
                     self.memory_manager.set_bool(
                         f"{WORKER}_{self.worker_number}", True, new=False

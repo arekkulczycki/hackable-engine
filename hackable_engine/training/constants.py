@@ -16,7 +16,7 @@ class LRShape(Enum):
 def get_learning_rate_decay(lr_shape, num_episodes, warm_up_len, lr_minimum_p):
     def sigmoid(episode):
         x = episode / num_episodes
-        decay = -0.66 / (1 + np.e ** (-8 * (x - warm_up_len))) + 1
+        decay = -0.66 / (1 + np.e ** (-7 * (x - warm_up_len))) + 1
         return decay
 
     def warmup_sigmoid(episode):

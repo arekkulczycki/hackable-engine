@@ -5,7 +5,6 @@ from torch.nn import functional as F
 from torch_geometric.nn import GINEConv
 from torch_geometric.nn.norm import GraphNorm
 
-from hackable_engine.common.constants import TH_FLOAT_TYPE
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
 
@@ -40,7 +39,7 @@ class GraphGINE(BaseModule):
 
         self.edge_index = edge_index.to(Device.XPU)
         self.batch_edge_index = self.get_batch_edge_index(node_count, batch_size)
-        self.edge_types = edge_types.to(Device.XPU).to(TH_FLOAT_TYPE)
+        self.edge_types = edge_types.to(Device.XPU)
         self.batch_edge_types = self.get_batch_edge_types(node_count, batch_size)
 
         self.setup_graph_feature_extractor(gnn_shape)

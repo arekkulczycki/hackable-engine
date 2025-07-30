@@ -1,7 +1,14 @@
 # -*- coding: utf-8 -*-
 from contextlib import nullcontext
-from multiprocessing import Lock
-from multiprocessing.synchronize import Lock as LockType
+
+from hackable_engine.common.constants import QUEUE_HANDLER, QueueHandler
+
+if QUEUE_HANDLER == QueueHandler.WASM:
+    from threading import Lock
+    from threading import Lock as LockType
+else:
+    from multiprocessing import Lock
+    from multiprocessing.synchronize import Lock as LockType
 from typing import Union, NamedTuple
 
 

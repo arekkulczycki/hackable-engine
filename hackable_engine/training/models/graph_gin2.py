@@ -17,6 +17,7 @@ class GraphGIN2(BaseModule):
         node_features,
         output_size,
         batch_size,
+        dropouts,
         num_envs,
         gnn_shape,
         mlp_shape,
@@ -28,6 +29,7 @@ class GraphGIN2(BaseModule):
         self.node_features = node_features
         self.num_envs = num_envs
         self.batch_size = batch_size
+        self.dropouts = dropouts
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
         self.use_res = use_res
@@ -67,7 +69,7 @@ class GraphGIN2(BaseModule):
                 nn.Linear(in_channels, out_channels, device=Device.XPU),
                 LayerNorm(out_channels),
                 nn.ReLU(),
-                nn.Dropout(0.1),
+                nn.Dropout(self.dropouts),
                 nn.Linear(out_channels, out_channels, device=Device.XPU),
             )
             convs.append(GINConv(mlp, train_eps=True))
@@ -116,8 +118,9 @@ class GraphGIN2(BaseModule):
         x = self.input_proj(x)
         for conv, residual in zip(self.gnn, self.residuals):
             h = conv(x, edge_index)
-            x = F.dropout(F.relu(h + residual(x)), p=0.1, training=self.training)
-            # x = F.dropout(F.relu(h), p=0.1, training=self.training) + residual(x)
+            # x = F.dropout(F.relu(h + residual(x)), p=self.dropouts, training=self.training)
+            # x = F.relu(h + residual(x))
+            x = F.dropout(F.relu(h), p=self.dropouts, training=self.training) + residual(x)
 
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
@@ -152,8 +155,8 @@ class GraphGIN2(BaseModule):
         mlp_x = x
         control_x = x
         for layer in self.mlp[:-1]:
-            # mlp_x = F.leaky_relu(layer(mlp_x), negative_slope=0.05)
-            mlp_x = F.dropout(F.leaky_relu(layer(x)), p=0.1, training=self.training)
+            mlp_x = F.leaky_relu(layer(mlp_x), negative_slope=0.05)
+            # mlp_x = F.dropout(F.leaky_relu(layer(x)), p=0.1, training=self.training)
 
         if self.training:
             for layer in self.control_mlp[:-1]:

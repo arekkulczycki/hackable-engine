@@ -7,7 +7,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium.core import ActType, ObsType, RenderFrame
 
-from hackable_engine.board.hex.hex_board import HexBoard, Move
+from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard as HexBoard, Move
 from hackable_engine.common.constants import FLOAT_TYPE
 
 # TODO: investigate why multiplying * 100 changed(equalized) proportion between
@@ -39,6 +39,7 @@ class BaseEnv(gym.Env):
 
     winner: Optional[bool]
     obs: np.ndarray  # th.Tensor
+    reward: FLOAT_TYPE
 
     def __init__(
         self,
@@ -56,12 +57,14 @@ class BaseEnv(gym.Env):
         super().__init__()
         self.BOARD_SIZE: int = 1
         self.MAX_MOVES: int = self.BOARD_SIZE**2
+        self.MIN_MOVES: int = self.BOARD_SIZE * 2
+        self.MAX_ADDITIONAL_MOVES: int = self.MAX_MOVES - self.MIN_MOVES
         self.DECISIVE_DISTANCE_ADVANTAGE: int = 3
         self.OPENINGS: list = []
 
         self.color: bool = color
         """Color of the agent."""
-        self.models: list = models if isinstance(models, List) else models()
+        self.models: list = models
         self.process_id: int | None = process_id
         self.env_id: int | None = env_id
         self.num_processes: int | None = num_processes
@@ -86,15 +89,12 @@ class BaseEnv(gym.Env):
         self.current_move: Move | None = None
 
         self.did_force_stop: bool = False
-        self.results: deque[float] = deque(maxlen=25)
+        self.results: deque[int] = deque(maxlen=25)
 
     def render(self, mode="human", close=False) -> RenderFrame:
         """"""
 
-        n = (
-            self.board.size_square
-            - self.board.unoccupied.bit_count()
-        )
+        n = self.board.size_square - self.board.unoccupied.bit_count()
         if n:
             if self.winner is None:
                 print("environment reset before game finished")
@@ -120,7 +120,6 @@ class BaseEnv(gym.Env):
 
         # self.intermediate_rewards.clear()
 
-        self.opp_model = choice(self.models)
         self.winner = None
         self.generations = 0
         self.last_intermediate_score = 0.0
@@ -129,12 +128,15 @@ class BaseEnv(gym.Env):
         # if winner is not None:
         notation = choice(self.OPENINGS)
         self.opening = notation
-        self.board = HexBoard(size=self.BOARD_SIZE, notation=notation, init_move_stack=True)
+        self.board = HexBoard(
+            size=self.BOARD_SIZE, notation=notation, init_move_stack=True
+        )
 
         if self.board.turn != self.color:
             self._make_opponent_move(0)
 
-        self._prepare_child_moves()
+        if "seq" in self.__class__.__name__.lower():
+            self._prepare_child_moves()
 
         # must be last, because the policy should evaluate the first move candidate
         self.obs = self.observation_from_board()
@@ -221,7 +223,7 @@ class BaseEnv(gym.Env):
         self.winner = winner
         self.reward = reward
         if winner is not None:
-            self.results.append(float(winner == self.color))
+            self.results.append(int(winner == self.color))
 
         return (
             self.obs,
@@ -306,26 +308,32 @@ class BaseEnv(gym.Env):
 
     def _get_reward(self, winner: Optional[bool], n_moves: int) -> FLOAT_TYPE:
         if winner is False:
-            # TODO: 2x maybe unnecessary, added for stronger `reward smoothing`
-            #  WARNING: it can produce positive reward for a loss or negative for a win
-            reward = (
-                MINUS_ONE + 1.5 * self._quick_win_value(n_moves)
-                if self.color
-                else ONE - self._quick_win_value(n_moves)
-            )
+            penalty = self._game_length_penalty(n_moves)
+            # reward = (MINUS_ONE + penalty) if self.color else (ONE - penalty)
+
+            # use the following if the games are very long filling whole board
+            # reward = (MINUS_ONE + 0.5 * penalty) if self.color else (ONE - penalty)
+
+            # use the following if the games are very short
+            reward = (MINUS_ONE + penalty) if self.color else (ONE - 0.5 * penalty)
 
         elif winner is True:
-            reward = (
-                ONE - self._quick_win_value(n_moves)
-                if self.color
-                else MINUS_ONE + 1.5 * self._quick_win_value(n_moves)
-            )
+            penalty = self._game_length_penalty(n_moves)
+            # reward = (ONE - penalty) if self.color else (MINUS_ONE + penalty)
+
+            # use the following if the games are very long filling whole board
+            # reward = (ONE - penalty) if self.color else (MINUS_ONE + 0.5 * penalty)
+
+            # use the following if the games are very short
+            reward = (ONE - 0.5 * penalty) if self.color else (MINUS_ONE + penalty)
 
         else:
-            reward = self._get_intermediate_reward(n_moves) + self.auxiliary_reward
-            self.auxiliary_reward = FLOAT_TYPE(0.0)
+            reward = ZERO
+            # reward = self._get_intermediate_reward(n_moves) + self.auxiliary_reward
+            # self.auxiliary_reward = FLOAT_TYPE(0.0)
 
-        return FLOAT_TYPE(reward)
+        return reward
+        # return FLOAT_TYPE(reward)
 
     def _get_intermediate_reward(self, n_moves):
         return ZERO
@@ -365,11 +373,12 @@ class BaseEnv(gym.Env):
     def _get_intersequence_reward(self, score):
         return ZERO
 
-    def _quick_win_value(self, n_moves: int) -> float:
+    def _game_length_penalty(self, n_moves: int) -> float:
         """The more moves are played the higher the punishment."""
 
+        return abs(((n_moves - self.MIN_MOVES) / self.MAX_ADDITIONAL_MOVES)) ** 1.2
         # return ZERO
-        return ((max(0, (n_moves - 2 * self.BOARD_SIZE)) / self.MAX_MOVES) ** 2) * ONE
+        # return ((max(0, (n_moves - 2 * self.BOARD_SIZE)) / self.MAX_MOVES) ** 2) * ONE
 
     def _get_distance_score(self, n_moves: int) -> FLOAT_TYPE:
         """
@@ -402,7 +411,9 @@ class BaseEnv(gym.Env):
         if not white_score and not black_score:
             return ZERO
 
-        return np.tanh((white_score - black_score)/(white_score + black_score) * 10).astype(FLOAT_TYPE)
+        return np.tanh(
+            (white_score - black_score) / (white_score + black_score) * 10
+        ).astype(FLOAT_TYPE)
 
     def _get_distance_score_perf(self, n_moves: int) -> FLOAT_TYPE:
         """
@@ -418,7 +429,7 @@ class BaseEnv(gym.Env):
             return ONE
         if not black_missing:
             return MINUS_ONE
-        return np.tanh((black_missing - white_missing)/2).astype(FLOAT_TYPE)
+        return np.tanh((black_missing - white_missing) / 2).astype(FLOAT_TYPE)
 
     def _weight_distance(self, distance, n_moves) -> int:
         """Calculate weighted value of distance. In the endgame close connections value more."""
@@ -455,13 +466,12 @@ class BaseEnv(gym.Env):
         self.board.push(move)
         return move
 
-    def _make_logical_move(self) -> Move:
+    def _make_logical_move(self, n_moves: int) -> Move:
         """"""
 
         opp_color = not self.color
         best_move: Optional[Move] = None
         best_score = None
-        n_moves = len(self.board.move_stack)
         for move in self.board.legal_moves:
             if best_move and np.random.choice((True, False)):
                 continue  # in order for the opponent to not always play the same move
@@ -565,10 +575,3 @@ class BaseEnv(gym.Env):
         """"""
 
         return self.board.as_matrix().astype(FLOAT_TYPE)
-
-    def summarize(self):
-        """"""
-
-        print(
-            f"games: {self.games}, score summary: {sorted(self.results, key=lambda x: x[1])}"
-        )

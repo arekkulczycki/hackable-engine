@@ -10,8 +10,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
-from hackable_engine.board.hex.hex_board import HexBoard
-from hackable_engine.common.constants import TH_FLOAT_TYPE
+from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard as HexBoard
 from hackable_engine.training.algorithms.util.replay_buffer import ReplayBuffer
 from hackable_engine.training.device import Device
 from hackable_engine.training.hyperparams import *
@@ -20,6 +19,7 @@ from hackable_engine.training.models.mixins.critic_seq_mixin import CriticMixin
 from hackable_engine.training.models.graph_sg import GraphSG
 
 LOG_PATH = "./hackable_engine/training/logs/"
+TH_FLOAT_TYPE = th.float32
 
 
 class Critic(CriticMixin, GraphSG):

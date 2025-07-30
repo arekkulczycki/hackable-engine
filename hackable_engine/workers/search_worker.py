@@ -26,7 +26,7 @@ from hackable_engine.common.constants import (
     TREE_PARAMS,
     WORKER,
     PRINTING,
-    SEARCH_LIMIT,
+    SEARCH_LIMIT, QUEUE_HANDLER, QueueHandler,
 )
 from hackable_engine.common.custom_threads import ReturningThread
 from hackable_engine.common.exceptions import SearchFailed
@@ -62,10 +62,11 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
         board: GameBoardT,
         locks: WorkerLocks,
         queues: WorkerQueues,
+        memory = None,
     ):
         super().__init__()
 
-        self.memory_manager = MemoryManager()
+        self.memory_manager = MemoryManager(memory)
 
         self.board: GameBoardT = board
         self.locks: WorkerLocks = locks
@@ -135,6 +136,8 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
     def _get_run_id(self, run_iteration: int = 0) -> str:
         """"""
 
+        if QUEUE_HANDLER is QueueHandler.WASM:
+            return str(randint(0, 999)).zfill(3)  # TODO: is this needed to be unique actually?
         # TODO: random part is added to decrease chance of collision, but another solution is needed to *never* collide
         # zfill 3 to fill constant space in memory
         return f"{Node, self.node_cache.root.move}.{run_iteration}.{str(randint(0, 999)).zfill(3)}"
@@ -210,6 +213,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
             self.memory_manager.set_int(STATUS, Status.STARTED)
 
         if not self.node_cache.root.children:  # or self.node_cache.root.only_forcing:
+            print("send root to distributor")
             self.node_cache.root.being_processed = True
             self.queues.distributor_queue.put(
                 DistributorItem(
@@ -222,6 +226,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
             )
             self.flags.started = True
 
+        print("start main loop")
         t_0: float = self.counters.time
         try:
             # TODO: refactor to use concurrency?
@@ -363,7 +368,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
 
             if PRINTING in [Print.CANDIDATES, Print.TREE]:
                 sorted_children: List[Node] = sorted(
-                    [child for child in root.children if not child.only_forcing],
+                    [child for child in root.children if not child.only_forcing and child.leaf_level > 1],
                     key=lambda node: node.score,
                     reverse=root.color,
                 )

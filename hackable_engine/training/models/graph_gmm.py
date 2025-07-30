@@ -17,23 +17,27 @@ class GraphGMM(BaseModule):
         node_features,
         output_size,
         batch_size,
+        dropouts,
         num_envs,
         gnn_shape,
         mlp_shape,
         edge_index,
         pseudo_coordinates,
+        device=Device.XPU,
     ):
         super().__init__()
         self.node_count = node_count
         self.node_features = node_features
         self.num_envs = num_envs
         self.batch_size = batch_size
+        self.dropouts = dropouts
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
+        self.device = device
 
-        self.edge_index = edge_index.to(Device.XPU)
+        self.edge_index = edge_index.to(device)
         self.batch_edge_index = self.get_batch_edge_index(batch_size)
-        self.pseudo_coordinates = pseudo_coordinates.to(Device.XPU)
+        self.pseudo_coordinates = pseudo_coordinates.to(device)
         self.batch_pseudo_coordinates = self.get_batch_pseudo_coord(batch_size)
 
         self.setup_graph_feature_extractor()
@@ -46,13 +50,13 @@ class GraphGMM(BaseModule):
         batch_edge_index = []
         for i in range(batch_size):
             batch_edge_index.append(self.edge_index + i * self.node_count)
-        return th.cat(batch_edge_index, dim=1).to(Device.XPU)
+        return th.cat(batch_edge_index, dim=1).to(self.device)
 
     def get_batch_pseudo_coord(self, batch_size):
         batch_pseudo_coordinates = []
         for i in range(batch_size):
             batch_pseudo_coordinates.append(self.pseudo_coordinates)
-        return th.cat(batch_pseudo_coordinates, dim=0).to(Device.XPU)
+        return th.cat(batch_pseudo_coordinates, dim=0).to(self.device)
 
     def setup_graph_feature_extractor(self):
         gnn = []
@@ -61,7 +65,7 @@ class GraphGMM(BaseModule):
         prev = self.node_features
         for channels in self.gnn_shape:
             gnn.append(GMMConv(prev, channels, dim=2, kernel_size=6))
-            residuals.append(nn.Linear(prev, channels, device=Device.XPU))
+            residuals.append(nn.Linear(prev, channels, device=self.device))
             # norms.append(LayerNorm(channels))
             prev = channels
 
@@ -75,12 +79,12 @@ class GraphGMM(BaseModule):
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, output_size]:
-            mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, 3]:
-            control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            control_mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
         self.mlp = nn.ModuleList(mlp)
@@ -113,7 +117,7 @@ class GraphGMM(BaseModule):
             h = conv(x, edge_index, pseudo_coordinates)
             # h = norm(h)
             # x = F.dropout(F.relu(h + residual(x)), p=0.1, training=self.training)
-            x = F.dropout(F.relu(h), p=0.2, training=self.training) + residual(x)
+            x = F.dropout(F.relu(h), p=self.dropouts, training=self.training) + residual(x)
 
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 

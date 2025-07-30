@@ -54,6 +54,7 @@ class QueueManager(Generic[TItem]):
     def inject_js(self, raw_item) -> None:
         """"""
 
+        # self.queue.inject(raw_item)
         self.queue.inject(raw_item.to_py().tobytes())
 
     def set_destination(self, port) -> None:

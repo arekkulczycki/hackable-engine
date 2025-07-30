@@ -17,8 +17,8 @@ from torch.utils.tensorboard import SummaryWriter
 import intel_extension_for_pytorch
 
 from hackable_engine.board.hex.bitboard_utils import generate_cells
-from hackable_engine.board.hex.hex_board import HexBoard
-from hackable_engine.common.constants import FLOAT_TYPE, TH_FLOAT_TYPE
+from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard as HexBoard
+from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.common.custom_threads import ReturningTargetThread
 from hackable_engine.training.algorithms.util.replay_buffer import (
     ReplayBuffer,
@@ -32,6 +32,7 @@ from hackable_engine.training.constants import (
     BufferMode,
 )
 from hackable_engine.training.device import Device
+from hackable_engine.training.envs.hex.logit_11_graph_env import Logit11GraphEnv
 from hackable_engine.training.envs.hex.logit_13_graph_env import Logit13GraphEnv
 from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_async_env import (
     MultiprocessAsyncEnv,
@@ -56,7 +57,7 @@ cnn_kernels = (5, 3, 3)
 cnn_strides = (1, 1, 1, 1)
 cnn_paddings = (0, 0, 0, 0)
 GNN_SHAPES = {
-    GraphSG: (54, 108, 216, 324, 432, 486),
+    GraphSG: (54, 108, 216, 324, 432),
     # GraphSG: (54, 162, 486, 648, 648, 648),
     # GraphGIN: (54, 162, 486, 648, 648, 648),
     # GraphGIN: (54, 108, 216, 432, 540, 648, 756),
@@ -70,39 +71,40 @@ GNN_SHAPES = {
 }
 # fmt: on
 
-board_size = 13
+board_size = 11
 board_size_squared = board_size**2
 binary_one = 2**board_size_squared - 1
-env_class = Logit13GraphEnv
-model_class = GraphGMM
+env_class = Logit13GraphEnv if board_size == 13 else Logit11GraphEnv
+model_class = GraphSG
 gnn_shape = GNN_SHAPES[model_class]
 mlp_shape = (256,)  # board_size**2)
-num_episodes = 1024
+num_episodes = 2048
 episode_env_steps = board_size  # **2
 """relative for tensorboard graphs, such that training sessions are comparable"""
 num_envs = 128
 num_workers = 8
-lr_gnn = 3e-4
+lr_gnn = 1e-4
 lr_mlp = 2e-4  # if shape ONE, larger than the final lr_gnn
-assert lr_mlp <= lr_gnn
+# assert lr_mlp <= lr_gnn
 lr_gamma = 1e-4
 lr_shape_gnn = LRShape.ONE
-lr_shape_mlp = LRShape.WARMUP_ONE
-lr_gnn_warm_up_len = 0.2
-lr_mlp_warm_up_len = 0.5
+lr_shape_mlp = LRShape.ONE
+lr_gnn_warm_up_len = 0.1
+lr_mlp_warm_up_len = 0.15
 assert 0 < lr_gnn_warm_up_len <= lr_mlp_warm_up_len < 1
-lr_minimum_p = 0.05
+lr_minimum_p = 0.1
 assert 0 < lr_minimum_p < 1
-gradient_max = 100.0
+gradient_max = 200.0
 """do not clip too much or learning will stagnate"""
 target_update_frequency = 1
 target_update_mode = TargetUpdateMode.SOFT
-tau_high = 0.1
-tau_low = 0.005  # recommended 0.005 – 0.01 for a learning rate of 1e-3, lower for smaller learning rates
+tau_high = 0.3
+tau_low = 0.01  # recommended 0.005 – 0.01 for a learning rate of 1e-3, lower for smaller learning rates
 """soft target update proportion"""
 batch_size = 64
-gamma_mode = GammaMode.ANNEALING
-"""if set to TRAINED then below params are ignored"""
+dropouts = 0.25 if "gin" not in model_class.__name__.lower() else 0.15
+gamma_mode = GammaMode.RETRAINED
+"""if set to TRAINED then below params are ignored, use RETRAINED when model is loaded"""
 expected_episode_steps = 64
 gamma_low = 0.1
 gamma_high = (expected_episode_steps - 1) / expected_episode_steps
@@ -114,8 +116,9 @@ assert not (gamma_delay <= 0.66 and gamma_mode is GammaMode.REWARD_BASED) and no
 epsilon_high = 0.05
 epsilon_low = 0
 control_weight_param = 0.5 if model_class is not GraphGIN2 else 2.0
-entropy_weight_param = 0.05
+entropy_weight_param = 0.075
 entropy_temperature = 2.0  # default is 1.0
+"""as the entropy is incentivised by the loss function, higher value incentivises higher spread"""
 action_temperature_high = 0.5
 action_temperature_low = 0.001
 """
@@ -132,14 +135,14 @@ should_dump_final_buffer = False
 # TODO: prioritize with TD-error priority instead
 buffer_priority_rate_high = 0.5 if model_class is not GraphGIN2 else 0.15
 buffer_priority_rate_low = 0.5 if model_class is not GraphGIN2 else 0.15
-buffer_size_low = 2_000
+buffer_size_low = 100_000
 buffer_size_high = 2_000_000
 buffer_mode = BufferMode.RAM
 disk_buffer = 1 * buffer_size_high
 start_training = buffer_size_low * 0.95
 buffer_ratio = 16
 """Defines the proportion between fresh experience training and buffer training"""
-target_model_inference_chunks = 4
+target_model_inference_chunks = 16
 epochs = num_envs * buffer_ratio // batch_size
 episode_step = 1
 
@@ -190,6 +193,7 @@ class DQN:
                 node_features=9,
                 output_size=1,
                 batch_size=batch_size,
+                dropouts=dropouts,
                 num_envs=num_envs,
                 gnn_shape=gnn_shape,
                 # gnn_heads=6,
@@ -197,7 +201,7 @@ class DQN:
                 edge_index=board.edge_index,
                 # edge_types=board.edge_types,
                 # edge_types=board.edge_types_rgcn,
-                pseudo_coordinates=board.pseudo_coordinates,
+                # pseudo_coordinates=board.pseudo_coordinates,
                 # use_res=True,
             )
             .to(Device.XPU)
@@ -209,6 +213,7 @@ class DQN:
                 node_features=9,
                 output_size=1,
                 batch_size=batch_size,
+                dropouts=0.0,  # no dropout during inference, but also set via training param
                 num_envs=num_envs,
                 gnn_shape=gnn_shape,
                 # gnn_heads=6,
@@ -216,7 +221,7 @@ class DQN:
                 edge_index=board.edge_index,
                 # edge_types=board.edge_types,
                 # edge_types=board.edge_types_rgcn,
-                pseudo_coordinates=board.pseudo_coordinates,
+                # pseudo_coordinates=board.pseudo_coordinates,
                 # use_res=True,
             )
             .to(Device.XPU)
@@ -226,9 +231,9 @@ class DQN:
         self.model.eval()
         self.target_model.eval()
 
-        self.tmp_value_loss = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
-        self.tmp_control_loss = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
-        self.tmp_entropy = th.tensor(0, dtype=TH_FLOAT_TYPE, device=Device.XPU)
+        self.tmp_value_loss = th.tensor(0, dtype=th.float32, device=Device.XPU)
+        self.tmp_control_loss = th.tensor(0, dtype=th.float32, device=Device.XPU)
+        self.tmp_entropy = th.tensor(0, dtype=th.float32, device=Device.XPU)
 
         weight_decay = 0  # 2e-5 if model_class is GraphSG else 0
         """use weight_decay for models which tend to have growing gradient towards the end"""
@@ -267,10 +272,10 @@ class DQN:
         ]
         if gamma_mode is GammaMode.TRAINED:
             self.model.gamma = nn.Parameter(
-                th.tensor(-2, dtype=TH_FLOAT_TYPE, device=Device.XPU)
+                th.tensor(-2, dtype=th.float32, device=Device.XPU)
             )
             self.target_model.gamma = nn.Parameter(
-                th.tensor(-2, dtype=TH_FLOAT_TYPE, device=Device.XPU)
+                th.tensor(-2, dtype=th.float32, device=Device.XPU)
             )
             optimizer_params.append({"params": self.model.gamma, "lr": lr_gamma})
             scheduler_params.append(
@@ -300,15 +305,15 @@ class DQN:
         if load_version is not None:
             color_name = "white" if self.color else "black"
             model_weights = th.load(
-                f"dqn/dqn-model-{color_name}.v{load_version}", map_location="xpu"
+                f"dqn/{board_size}/dqn-model-{color_name}.v{load_version}", map_location="xpu"
             )
             self.model.load_state_dict(model_weights, strict=True)
             target_weights = th.load(
-                f"dqn/dqn-target-model-{color_name}.v{load_version}", map_location="xpu"
+                f"dqn/{board_size}/dqn-target-model-{color_name}.v{load_version}", map_location="xpu"
             )
             self.target_model.load_state_dict(target_weights, strict=True)
             optimizer_weights = th.load(
-                f"dqn/dqn-optimizer-{color_name}.v{load_version}", map_location="xpu"
+                f"dqn/{board_size}/dqn-optimizer-{color_name}.v{load_version}", map_location="xpu"
             )
             self.optimizer.load_state_dict(optimizer_weights)
             print(f"weights from color {color_name} version {load_version} loaded")
@@ -344,7 +349,7 @@ class DQN:
         asyncio.run(self.train())
 
     async def train(self):
-        eps = epsilon_high
+        eps = 0
         tau = tau_high
         e_temperature = entropy_temperature
         a_temperature = action_temperature_high
@@ -384,12 +389,13 @@ class DQN:
                     q_values, _ = self.model(
                         th.from_numpy(np.stack(self.obs, 0)).to(Device.XPU)
                     )
+                    actions = self.get_logit_actions(eps, a_temperature, q_values, allow_illegal)
                 else:
                     q_values = self.model(
                         th.from_numpy(np.stack(self.obs, 0)).to(Device.XPU)
                     )
+                    actions = self.get_logit_actions(eps, a_temperature, q_values, gamma_mode is GammaMode.RETRAINED)
 
-                actions = self.get_logit_actions(eps, a_temperature, q_values)
                 # action_queue.extend(actions.flatten().tolist())
 
                 # t0 = perf_counter()
@@ -542,7 +548,7 @@ class DQN:
         last_gamma,
         new_experiences: tuple[Experience, ...],
         old_experiences: tuple[Experience, ...],
-        temperature: float,
+        e_temperature: float,
     ) -> tuple[float, float, float, float, tuple[Experience, ...]]:
         prev_value_loss: float = 0
         prev_control_loss: float = 0
@@ -657,7 +663,7 @@ class DQN:
                     actions_,
                     gamma,
                     control_stats,
-                    temperature,
+                    e_temperature,
                 )
                 del states_, actions_, rewards_, target_q_values_, dones_
 
@@ -728,8 +734,10 @@ class DQN:
         except Exception as e:
             print("*************\n", e)
 
-    def get_logit_actions(self, eps: float, temperature: float, q_values):
-        if allow_illegal:
+    def get_logit_actions(self, eps: float, a_temperature: float, q_values, allow_illegal_: bool):
+        """The action chosen is the highest value regardless of color, using `argmax`."""
+
+        if allow_illegal_:
             return np.array(
                 [
                     (
@@ -745,7 +753,7 @@ class DQN:
                         else (
                             q_values[i].argmax().item()
                             if softmax_action_selection
-                            else self.get_softmax_action(q_values[i], temperature)
+                            else self.get_softmax_action(q_values[i], a_temperature)
                         )
                     )
                     for i in range(num_envs)
@@ -786,8 +794,8 @@ class DQN:
             return np.array(actions, dtype=FLOAT_TYPE)
 
     @staticmethod
-    def get_softmax_action(q_values, temperature: float) -> int:
-        probabilities = F.softmax(q_values / temperature, dim=-1)
+    def get_softmax_action(q_values, a_temperature: float) -> int:
+        probabilities = F.softmax(q_values / a_temperature, dim=-1)
         return th.multinomial(probabilities, num_samples=1).item()
 
     @staticmethod
@@ -805,7 +813,7 @@ class DQN:
         actions,
         gamma: th.Tensor | float,
         control_stats: th.Tensor,
-        temperature: float,
+        e_temperature: float,
     ):
         # VANILLA DQN
         # q_values, control = self.model(states)
@@ -830,7 +838,7 @@ class DQN:
         # control_loss = -(control_log_probs * control_stats).mean()
         control_loss = F.kl_div(control_log_probs, control_stats, reduction="batchmean")
 
-        q_probs = F.softmax(q_values / temperature, dim=-1)
+        q_probs = F.softmax(q_values / e_temperature, dim=-1)
         entropy = -(q_probs * (q_probs + 1e-8).log()).sum(dim=-1).mean()
 
         q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -843,7 +851,7 @@ class DQN:
 
     @staticmethod
     def huber_loss(q_value: th.Tensor, target: th.Tensor, delta: int = 1.0):
-        """Alternative to F.mse_loss above, custom version of F.smooth_l1_loss."""
+        """Alternative to F.mse_loss, custom version of F.smooth_l1_loss."""
         error = q_value - target
         abs_error = th.abs(error)
         quadratic = th.minimum(abs_error, th.tensor(delta))
@@ -896,16 +904,16 @@ class DQN:
         color_name = "white" if self.color else "black"
         version = self.version if episode is None else f"{self.version}.{episode}"
 
-        if not os.path.exists("dqn"):
-            os.mkdir("dqn")
-        th.save(self.model._orig_mod.state_dict(), f"dqn/dqn-model-{color_name}.v{version}")
+        if not os.path.exists(f"dqn/{board_size}"):
+            os.mkdir(f"dqn/{board_size}")
+        th.save(self.model._orig_mod.state_dict(), f"dqn/{board_size}/dqn-model-{color_name}.v{version}")
         th.save(
             self.target_model._orig_mod.state_dict(),
-            f"dqn/dqn-target-model-{color_name}.v{version}",
+            f"dqn/{board_size}/dqn-target-model-{color_name}.v{version}",
         )
         th.save(
             self.optimizer.state_dict(),
-            f"dqn/dqn-optimizer-{color_name}.v{version}",
+            f"dqn/{board_size}/dqn-optimizer-{color_name}.v{version}",
         )
 
     def log_progress(
@@ -943,7 +951,13 @@ class DQN:
             "episode/win_length", env_progress_data.win_length_mean, episode
         )
         writer.add_scalar(
+            "episode/win_length_std", env_progress_data.win_length_std, episode
+        )
+        writer.add_scalar(
             "episode/loss_length", env_progress_data.loss_length_mean, episode
+        )
+        writer.add_scalar(
+            "episode/loss_length_std", env_progress_data.loss_length_std, episode
         )
         writer.add_scalar(
             "episode/fps", env_progress_data.time_mean * num_envs, episode
@@ -1010,10 +1024,13 @@ def get_args():
 
 if __name__ == "__main__":
     args = get_args()
+    if args.load_version is not None and gamma_mode is not GammaMode.RETRAINED:
+        raise ValueError("gamma mode should be RETRAINED when loading a model, also verify other hyperparams")
+    # if args.load_version is not None and gamma_mode is not GammaMode.RETRAINED:
 
     board = HexBoard("", size=board_size, use_graph=True)
     writer = SummaryWriter(
-        os.path.join(LOG_PATH, f"dqn_{board_size}", f"dqn_v{args.version}")
+        os.path.join(LOG_PATH, f"dqn_{board_size}", f"dqn-{args.color}-v{args.version}")
     )
     params = {
         "num_envs": num_envs,
@@ -1046,12 +1063,12 @@ if __name__ == "__main__":
     )
 
     envs = MultiprocessAsyncEnv(
-        lambda process_id, num_envs, color_, models=[]: EpisodeStats(
+        lambda process_id, num_envs, color_, models: EpisodeStats(
             SyncVectorEnv(
                 [
                     lambda: env_class(
-                        color=False,
-                        models=[None],
+                        color=color_,
+                        models=models,
                         process_id=process_id,
                         env_id=env_id,
                         num_processes=num_workers,
@@ -1066,7 +1083,7 @@ if __name__ == "__main__":
         num_workers,
         int(num_envs // num_workers),
         action_shape=(1,),
-        color=False,
+        color=args.color,
     )
     dqn = DQN(envs, args.color, args.version, args.load_version)
     try:

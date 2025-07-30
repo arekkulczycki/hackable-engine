@@ -17,6 +17,7 @@ class GraphSG(BaseModule):
         node_features,
         output_size,
         batch_size,
+        dropouts,
         num_envs,
         gnn_shape,
         mlp_shape,
@@ -27,6 +28,7 @@ class GraphSG(BaseModule):
         self.node_features = node_features
         self.num_envs = num_envs
         self.batch_size = batch_size
+        self.dropouts = dropouts
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
 
@@ -108,7 +110,7 @@ class GraphSG(BaseModule):
 
         for gnn, residual, norm in zip(self.gnn, self.residuals, self.norms):
             res = residual(x)
-            x = F.dropout(F.relu(norm(gnn(x, edge_index), batch, batch_size)), p=0.25, training=self.training)
+            x = F.dropout(F.relu(norm(gnn(x, edge_index), batch, batch_size)), p=self.dropouts, training=self.training)
             # x = self.norm1(x, batch, batch_size)
             x = x + res
 

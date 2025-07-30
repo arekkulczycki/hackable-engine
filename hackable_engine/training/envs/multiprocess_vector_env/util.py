@@ -12,7 +12,9 @@ class EnvProgressData:
     time_mean: np.array
     length_mean: np.array
     win_length_mean: np.array
+    win_length_std: np.array
     loss_length_mean: np.array
+    loss_length_std: np.array
     return_mean: np.array
     reward_mean: np.array
     winner_mean: np.array

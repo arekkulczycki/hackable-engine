@@ -5,7 +5,6 @@ from torch.nn import functional as F
 from torch_geometric.nn import GINEConv
 from torch_geometric.nn.norm import GraphNorm, LayerNorm
 
-from hackable_engine.common.constants import TH_FLOAT_TYPE
 from hackable_engine.training.device import Device
 from hackable_engine.training.models import BaseModule
 
@@ -18,6 +17,7 @@ class GraphGINE2(BaseModule):
         node_features,
         output_size,
         batch_size,
+        dropouts,
         num_envs,
         gnn_shape,
         mlp_shape,
@@ -31,6 +31,7 @@ class GraphGINE2(BaseModule):
         self.node_features = node_features
         self.num_envs = num_envs
         self.batch_size = batch_size
+        self.dropouts = dropouts
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
         self.is_seq = is_seq
@@ -38,7 +39,7 @@ class GraphGINE2(BaseModule):
 
         self.edge_index = edge_index.to(Device.XPU)
         self.batch_edge_index = self.get_batch_edge_index(batch_size)
-        self.edge_types = edge_types.to(Device.XPU).to(TH_FLOAT_TYPE)
+        self.edge_types = edge_types.to(Device.XPU)
         self.batch_edge_types = self.get_batch_edge_types(batch_size)
         self.batch = self.get_batch_ids(batch_size)
 
@@ -87,7 +88,7 @@ class GraphGINE2(BaseModule):
                 nn.Linear(in_channels, out_channels, device=Device.XPU),
                 LayerNorm(out_channels),
                 nn.ReLU(),
-                nn.Dropout(0.1),
+                nn.Dropout(self.dropouts),
                 nn.Linear(out_channels, out_channels, device=Device.XPU),
             )
             convs.append(GINEConv(mlp, train_eps=True, edge_dim=3))
@@ -145,7 +146,7 @@ class GraphGINE2(BaseModule):
             # h = norm(conv(x, edge_index, edge_attr=edge_types), batch, batch_size)
             h = conv(x, edge_index, edge_attr=edge_types)
             # x = F.dropout(F.relu(h + residual(x)), p=0.1, training=self.training)
-            x = F.dropout(F.relu(h), p=0.1, training=self.training) + residual(x)
+            x = F.dropout(F.relu(h), p=self.dropouts, training=self.training) + residual(x)
 
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
@@ -179,8 +180,8 @@ class GraphGINE2(BaseModule):
         mlp_x = x
         control_x = x
         for layer in self.mlp[:-1]:
-            # mlp_x = F.leaky_relu(layer(mlp_x), negative_slope=0.05)
-            mlp_x = F.dropout(F.leaky_relu(layer(x)), p=0.1, training=self.training)
+            mlp_x = F.leaky_relu(layer(mlp_x), negative_slope=0.05)
+            # mlp_x = F.dropout(F.leaky_relu(layer(x)), p=0.1, training=self.training)
 
         if self.training:
             for layer in self.control_mlp[:-1]:

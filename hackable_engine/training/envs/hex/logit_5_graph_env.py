@@ -89,7 +89,7 @@ class Logit5GraphEnv(BaseEnv):
     def _get_intermediate_reward(self, n_moves):
         return ZERO
 
-    def _quick_win_value(self, n_moves: int) -> float:
+    def _game_length_penalty(self, n_moves: int) -> float:
         """The more moves are played the higher the punishment."""
 
         return ZERO
