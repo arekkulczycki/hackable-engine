@@ -5,7 +5,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.sampler import BaseSampler, NodeSamplerInput, SamplerOutput, NeighborSampler
 from torch_geometric.sampler.base import SubgraphType
 
-from hackable_engine.training.device import Device
+from hackable_engine.training.utils.device import Device
 
 
 class HexGraphSampler(BaseSampler):

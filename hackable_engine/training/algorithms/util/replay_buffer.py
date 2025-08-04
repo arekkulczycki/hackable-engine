@@ -20,6 +20,7 @@ from hackable_engine.board.hex.bitboard_utils import (
 from hackable_engine.common.constants import FLOAT_TYPE
 
 Experience = tuple[np.array, float, float, np.array, bool, int, int]
+IndexedExperience = tuple[np.array, float, float, np.array, bool, int, int, int]
 
 
 class ReplayBuffer:
@@ -39,7 +40,9 @@ class ReplayBuffer:
         self.board_size: int = board_size
         self.board_size_squared: int = board_size**2
         self.board_mask: int = (1 << self.board_size_squared) - 1
+        self._capacity: int
         self.capacity: int = capacity
+        self.td_errors: np.array = np.zeros(capacity, dtype=FLOAT_TYPE)
         self.storage_type: ReplayBuffer.StorageType = storage_type
 
         if storage_type is storage_type.DEQUE:
@@ -63,15 +66,20 @@ class ReplayBuffer:
         self.control_stats: bool = control_stats
         self.should_sample_illegal: bool = True
 
-    def setup_disk_backup(
-        self, capacity: int, batch_size: int, obs_shape: tuple[int, ...], version: int
-    ):
+    @property
+    def capacity(self):
+        return self._capacity
+
+    @capacity.setter
+    def capacity(self, value: int):
+        self._capacity = value
+        self.td_errors = np.zeros(value, dtype=FLOAT_TYPE)
+
+    def setup_disk_backup(self, capacity: int, batch_size: int, obs_shape: tuple[int, ...], version: int):
         self.in_queue = Queue(maxsize=10 * 1024 * 1024)
         self.out_queue = Queue(maxsize=10 * 1024 * 1024)
 
-        self.backup = DiskBackupProcess(
-            self.out_queue, self.in_queue, capacity, batch_size, obs_shape, version
-        )
+        self.backup = DiskBackupProcess(self.out_queue, self.in_queue, capacity, batch_size, obs_shape, version)
         self.backup.start()
 
     def push(self, position: int, experience: Experience):
@@ -102,11 +110,7 @@ class ReplayBuffer:
         is_legal = reward >= -1
         ocb = experience[-2]
         ocw = experience[-1]
-        if (
-            is_legal
-            and ocb not in self.control_stats_dict
-            or ocw not in self.control_stats_dict[ocb]
-        ):
+        if is_legal and ocb not in self.control_stats_dict or ocw not in self.control_stats_dict[ocb]:
             self.control_stats_dict[ocb][ocw] = self.initialize_oc_stats(ocb, ocw)
             # self.control_stats_keys_arr[position][0] = split_mask_to_uint64_array(ocb)
             # self.control_stats_keys_arr[position][1] = split_mask_to_uint64_array(ocw)
@@ -204,9 +208,7 @@ class ReplayBuffer:
     def get_avg_prob_oc_stats(self) -> np.array:
         return np.zeros(dtype=FLOAT_TYPE, shape=(self.board_size_squared, 3)) + 1 / 3
 
-    def find_mask_subsets_vectorized(
-        self, ocb: int, ocw: int
-    ) -> Generator[tuple[int, int], None, None]:
+    def find_mask_subsets_vectorized(self, ocb: int, ocw: int) -> Generator[tuple[int, int], None, None]:
         # Convert target into 3-part chunks
         ocb_chunks = split_mask_to_uint64_array(ocb)
         ocw_chunks = split_mask_to_uint64_array(ocw)
@@ -218,9 +220,7 @@ class ReplayBuffer:
         condition_ocb = np.all((child_ocb_arr & ocb_chunks) == child_ocb_arr, axis=1)
         condition_ocw = np.all((child_ocw_arr & ocw_chunks) == child_ocw_arr, axis=1)
 
-        subset_arr = self.control_stats_keys_arr[
-            condition_ocb & condition_ocw
-        ]  # shape (N, 2, 3)
+        subset_arr = self.control_stats_keys_arr[condition_ocb & condition_ocw]  # shape (N, 2, 3)
         return self.subset_arr_to_pairs(subset_arr)
         # Combine masks
         # mask = mask_A & mask_B
@@ -239,33 +239,41 @@ class ReplayBuffer:
     def combine_chunks_to_int(chunks):
         return int(chunks[0]) + (int(chunks[1]) << 64) + (int(chunks[2]) << 128)
 
-    def sample(self, size: int) -> Generator[Experience, None, None]:
+    def sample(self, size: int) -> Generator[IndexedExperience, None, None]:
         priority_size = int(size * self.priority_rate)
         if self.should_sample_illegal:
             win_size = min(len(self.win_indices), priority_size // 3)
             loss_size = min(len(self.loss_indices), (priority_size - win_size) // 2)
-            illegal_size = min(
-                len(self.illegal_indices), priority_size - win_size - loss_size
-            )
+            illegal_size = min(len(self.illegal_indices), priority_size - win_size - loss_size)
         else:
             win_size = min(len(self.win_indices), priority_size // 2)
             loss_size = min(len(self.loss_indices), priority_size - win_size)
             illegal_size = 0
         priority_size = win_size + loss_size
-        priority_batch_ids = (
-            sample(sorted(self.win_indices), k=win_size)
-            + sample(sorted(self.loss_indices), k=loss_size)
-            + sample(sorted(self.illegal_indices), k=illegal_size)
+        priority_batch_ids = np.concat(
+            [
+                np.random.choice(list(self.win_indices), size=win_size, replace=False),
+                np.random.choice(list(self.loss_indices), size=loss_size, replace=False),
+                np.random.choice(list(self.illegal_indices), size=illegal_size, replace=False),
+            ]
         )
 
-        batch_ids = sample(range(self.size()), k=(size - priority_size))
-        batch = (self.buffer[i] for i in batch_ids + priority_batch_ids)
+        if self.size() == self.capacity:
+            td_errors = self.td_errors
+            weights_sum = self.td_errors.sum()
+        else:
+            td_errors = self.td_errors[:self.size()]
+            weights_sum = td_errors.sum()
+        if weights_sum > 0.0:
+            batch_ids = np.random.choice(
+                self.size(), size=(size - priority_size), replace=False, p=td_errors / weights_sum
+            )
+        else:
+            batch_ids = np.random.choice(self.size(), size=(size - priority_size), replace=False)
+            # batch_ids = sample(range(self.size()), k=(size - priority_size))
+        batch = ((*self.buffer[i], i) for i in np.concat((batch_ids, priority_batch_ids)).astype(int))
 
-        if (
-            self.backup is not None
-            and self.backup.active
-            and self.size() >= self.capacity
-        ):
+        if self.backup is not None and self.backup.active and self.size() >= self.capacity:
             try:
                 backup_batches = self.in_queue.get_many_nowait(max_messages_to_get=size)
             except Empty:
@@ -276,7 +284,7 @@ class ReplayBuffer:
 
         return batch
 
-    def size(self):
+    def size(self) -> int:
         if self.storage_type is self.StorageType.DEQUE:
             return len(self.buffer)
         else:
@@ -285,20 +293,14 @@ class ReplayBuffer:
     async def dump_to_disk(self, obs_shape: tuple[int, ...], path: str | None = None):
         # disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer")
         # disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer_legal")
-        disk = DiskBackup(
-            obs_shape, path or "/var/tmp/hackable_engine/init_buffer_heuristic"
-        )
+        disk = DiskBackup(obs_shape, path or "/var/tmp/hackable_engine/init_buffer_heuristic")
         for position, experience in enumerate(self.buffer):
             await disk.store(position, experience)
 
-    async def load_init_buffer(
-        self, obs_shape: tuple[int, ...], size: int, path: str | None = None
-    ):
+    async def load_init_buffer(self, obs_shape: tuple[int, ...], size: int, path: str | None = None):
         # disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer")
         # disk = DiskBackup(obs_shape, "/var/tmp/hackable_engine/initial_buffer_legal")
-        disk = DiskBackup(
-            obs_shape, path or "/var/tmp/hackable_engine/init_buffer_heuristic"
-        )
+        disk = DiskBackup(obs_shape, path or "/var/tmp/hackable_engine/init_buffer_heuristic")
         # disk = DiskBackup(obs_shape, path or "/var/tmp/hackable_engine/final_buffer")
 
         for position in range(size):
@@ -328,9 +330,7 @@ class DiskBackup:
             + pack("f", experience[2])
             + experience[3].tobytes()
             + (bytes([1 if experience[4] else 0]))
-            + experience[5].to_bytes(
-                22, byteorder="big", signed=False
-            )  # TODO: 22 depends on board size, here 13x13
+            + experience[5].to_bytes(22, byteorder="big", signed=False)  # TODO: 22 depends on board size, here 13x13
             + experience[6].to_bytes(22, byteorder="big", signed=False)
         )
         await self.set_file_content(f"replay_buffer_{position}", value)
@@ -422,27 +422,18 @@ class DiskBackupProcess(Process):
             else:
                 coroutines = []
                 for experience in experiences:
-                    coroutines.append(
-                        asyncio.create_task(self.store(self.write_pointer, experience))
-                    )
+                    coroutines.append(asyncio.create_task(self.store(self.write_pointer, experience)))
                 if coroutines:
                     await asyncio.wait(coroutines)
 
-            if self.out_queue.empty() and (
-                self.filled
-                or self._write_pointer > self._read_pointer + self.batch_size
-            ):
-                self.out_queue.put_many(
-                    [el for el in await self.prepare_batch() if el is not None]
-                )
+            if self.out_queue.empty() and (self.filled or self._write_pointer > self._read_pointer + self.batch_size):
+                self.out_queue.put_many([el for el in await self.prepare_batch() if el is not None])
                 await asyncio.sleep(0.01)
             elif self._write_pointer == 0:
                 await asyncio.sleep(0.01)
 
     async def prepare_batch(self):
-        return await asyncio.gather(
-            *(self.get(self.read_pointer) for _ in range(self.batch_size))
-        )
+        return await asyncio.gather(*(self.get(self.read_pointer) for _ in range(self.batch_size)))
 
     async def get(self, position: int) -> Experience | None:
         return await self.disk.get(position)

@@ -30,8 +30,9 @@ from hackable_engine.training.constants import (
     TargetUpdateMode,
     GammaMode,
     BufferMode,
+    LOG_PATH,
 )
-from hackable_engine.training.device import Device
+from hackable_engine.training.utils.device import Device
 from hackable_engine.training.envs.hex.logit_11_graph_env import Logit11GraphEnv
 from hackable_engine.training.envs.hex.logit_13_graph_env import Logit13GraphEnv
 from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_async_env import (
@@ -40,12 +41,11 @@ from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_async_en
 from hackable_engine.training.envs.multiprocess_vector_env.util import EnvProgressData
 from hackable_engine.training.envs.wrappers.episode_stats import EpisodeStats
 from hackable_engine.training.models.graph_gat import GraphGAT
-from hackable_engine.training.models.graph_gin2 import GraphGIN2
-from hackable_engine.training.models.graph_gine2 import GraphGINE2
+from hackable_engine.training.models.graph_gin import GraphGIN
+from hackable_engine.training.models.graph_gine import GraphGINE
 from hackable_engine.training.models.graph_gmm import GraphGMM
 from hackable_engine.training.models.graph_rgcn import GraphRGCN
 from hackable_engine.training.models.graph_sg import GraphSG
-from hackable_engine.training.run import LOG_PATH
 
 # th._dynamo.config.cache_size_limit = 16 * 1024 * 1024 * 1024
 # th._dynamo.config.suppress_errors = True
@@ -62,10 +62,10 @@ GNN_SHAPES = {
     # GraphGIN: (54, 162, 486, 648, 648, 648),
     # GraphGIN: (54, 108, 216, 432, 540, 648, 756),
     # GraphGIN2: (54, 108, 162, 162, 162, 162, 216, 216, 216, 216),
-    GraphGIN2: (54, 108, 216, 432, 432, 432, 432, 432),
-    # GraphGINE: (54, 108, 216, 324, 432, 486),
-    GraphGINE2: (54, 108, 216, 432, 432, 432, 432, 432),
-    GraphRGCN: (54, 108, 216, 324, 432, 486),
+    GraphGIN: (54, 108, 216, 432, 432, 432, 432, 432),
+    GraphGINE: (54, 108, 216, 432, 432, 432),
+    # GraphGINE2: (54, 108, 216, 432, 432, 432, 432, 432),
+    GraphRGCN: (54, 108, 216, 324, 432),
     GraphGMM: (54, 108, 216, 324, 432, 486),
     GraphGAT: (54, 72, 90, 108, 216),
 }
@@ -75,16 +75,18 @@ board_size = 11
 board_size_squared = board_size**2
 binary_one = 2**board_size_squared - 1
 env_class = Logit13GraphEnv if board_size == 13 else Logit11GraphEnv
-model_class = GraphSG
+model_class = GraphRGCN
 gnn_shape = GNN_SHAPES[model_class]
 mlp_shape = (256,)  # board_size**2)
-num_episodes = 2048
+num_episodes = 1024
 episode_env_steps = board_size  # **2
 """relative for tensorboard graphs, such that training sessions are comparable"""
+gamma_mode = GammaMode.RETRAINED
+"""if set to TRAINED then below params are ignored, use RETRAINED when model is loaded"""
 num_envs = 128
 num_workers = 8
-lr_gnn = 1e-4
-lr_mlp = 2e-4  # if shape ONE, larger than the final lr_gnn
+lr_gnn = 3e-4
+lr_mlp = 4.5e-4  # if shape ONE, larger than the final lr_gnn
 # assert lr_mlp <= lr_gnn
 lr_gamma = 1e-4
 lr_shape_gnn = LRShape.ONE
@@ -94,17 +96,16 @@ lr_mlp_warm_up_len = 0.15
 assert 0 < lr_gnn_warm_up_len <= lr_mlp_warm_up_len < 1
 lr_minimum_p = 0.1
 assert 0 < lr_minimum_p < 1
+weight_decay = 3e-4
 gradient_max = 200.0
 """do not clip too much or learning will stagnate"""
 target_update_frequency = 1
 target_update_mode = TargetUpdateMode.SOFT
-tau_high = 0.3
-tau_low = 0.01  # recommended 0.005 – 0.01 for a learning rate of 1e-3, lower for smaller learning rates
+tau_high = 0.5
+tau_low = 0.0333  # recommended 0.005 – 0.01 for a learning rate of 1e-3, lower for smaller learning rates
 """soft target update proportion"""
-batch_size = 64
+batch_size = 128
 dropouts = 0.25 if "gin" not in model_class.__name__.lower() else 0.15
-gamma_mode = GammaMode.RETRAINED
-"""if set to TRAINED then below params are ignored, use RETRAINED when model is loaded"""
 expected_episode_steps = 64
 gamma_low = 0.1
 gamma_high = (expected_episode_steps - 1) / expected_episode_steps
@@ -115,7 +116,7 @@ assert not (gamma_delay <= 0.66 and gamma_mode is GammaMode.REWARD_BASED) and no
 )
 epsilon_high = 0.05
 epsilon_low = 0
-control_weight_param = 0.5 if model_class is not GraphGIN2 else 2.0
+control_weight_param = 0.5 if model_class is not GraphGIN else 2.0
 entropy_weight_param = 0.075
 entropy_temperature = 2.0  # default is 1.0
 """as the entropy is incentivised by the loss function, higher value incentivises higher spread"""
@@ -133,9 +134,9 @@ should_load_init_buffer = False
 should_dump_init_buffer = False
 should_dump_final_buffer = False
 # TODO: prioritize with TD-error priority instead
-buffer_priority_rate_high = 0.5 if model_class is not GraphGIN2 else 0.15
-buffer_priority_rate_low = 0.5 if model_class is not GraphGIN2 else 0.15
-buffer_size_low = 100_000
+buffer_priority_rate_high = 0.5 if model_class is not GraphGIN else 0.15
+buffer_priority_rate_low = 0.5 if model_class is not GraphGIN else 0.15
+buffer_size_low = 13_000
 buffer_size_high = 2_000_000
 buffer_mode = BufferMode.RAM
 disk_buffer = 1 * buffer_size_high
@@ -200,7 +201,7 @@ class DQN:
                 mlp_shape=mlp_shape,
                 edge_index=board.edge_index,
                 # edge_types=board.edge_types,
-                # edge_types=board.edge_types_rgcn,
+                edge_types=board.edge_types_rgcn,
                 # pseudo_coordinates=board.pseudo_coordinates,
                 # use_res=True,
             )
@@ -220,7 +221,7 @@ class DQN:
                 mlp_shape=mlp_shape,
                 edge_index=board.edge_index,
                 # edge_types=board.edge_types,
-                # edge_types=board.edge_types_rgcn,
+                edge_types=board.edge_types_rgcn,
                 # pseudo_coordinates=board.pseudo_coordinates,
                 # use_res=True,
             )
@@ -235,8 +236,6 @@ class DQN:
         self.tmp_control_loss = th.tensor(0, dtype=th.float32, device=Device.XPU)
         self.tmp_entropy = th.tensor(0, dtype=th.float32, device=Device.XPU)
 
-        weight_decay = 0  # 2e-5 if model_class is GraphSG else 0
-        """use weight_decay for models which tend to have growing gradient towards the end"""
         optimizer_params = [
             {
                 "params": [
@@ -287,7 +286,7 @@ class DQN:
         # optimizer = optim.SGD(
         #     model.parameters(), lr=learning_rate, momentum=0.9, nesterov=True
         # )
-        self.optimizer = optim.Adam(
+        self.optimizer = optim.AdamW(
             optimizer_params,
             weight_decay=weight_decay,
         )
@@ -674,7 +673,7 @@ class DQN:
                     + entropy * entropy_weight * entropy_weight_param
                 ).backward()
                 # clip gradient after is built in backward and before the optimizer step
-                if model_class is GraphGIN2:
+                if model_class is GraphGIN:
                     nn.utils.clip_grad_norm_(self.model.gnn.parameters(), 5.0)
                     nn.utils.clip_grad_norm_(self.model.mlp.parameters(), 2.0)
                     nn.utils.clip_grad_norm_(self.model.control_mlp.parameters(), 2.0)
@@ -842,7 +841,16 @@ class DQN:
         entropy = -(q_probs * (q_probs + 1e-8).log()).sum(dim=-1).mean()
 
         q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
-        loss_function = F.smooth_l1_loss if model_class is GraphGIN2 else F.mse_loss
+
+        has_error = False
+        for i, tensr in enumerate([batched, q_values_all, control_all, q_values, next_q_online, control, best_actions, target_q, target]):
+            if th.isnan(tensr).any():
+                has_error = True
+                print(f"nan in tensor {i}")
+        if has_error:
+            raise ValueError("nan in tensor")
+
+        loss_function = F.smooth_l1_loss if model_class is GraphGIN else F.mse_loss
         return (
             loss_function(q_value, target),
             control_loss,

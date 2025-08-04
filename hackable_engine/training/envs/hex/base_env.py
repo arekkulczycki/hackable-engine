@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from collections import deque
 from random import choice, shuffle, choices
-from typing import Any, Dict, Generator, List, Optional, SupportsFloat, Tuple
+from typing import Any, Generator, Optional, SupportsFloat
 
 import gymnasium as gym
 import numpy as np
@@ -14,14 +14,16 @@ from hackable_engine.common.constants import FLOAT_TYPE
 #  mean_reward and mean_return, as they should have been proportional before too
 ZERO = FLOAT_TYPE(0)
 ONE = FLOAT_TYPE(1)
+TWO = FLOAT_TYPE(2)
 MINUS_ONE = FLOAT_TYPE(-1)
+MINUS_TWO = FLOAT_TYPE(-2)
 
 
 class BaseEnv(gym.Env):
     """"""
 
     ENV_NAME: str = "raw1hex"
-    REWARDS: Dict[Optional[bool], FLOAT_TYPE] = {
+    REWARDS: dict[Optional[bool], FLOAT_TYPE] = {
         None: ZERO,
         True: ONE,
         False: MINUS_ONE,
@@ -32,9 +34,7 @@ class BaseEnv(gym.Env):
     Maximum and minimum sum aggregated over an entire episode, not just the final reward. 
     """  # TODO: aggregated really?
 
-    observation_space = gym.spaces.Box(
-        -1, 1, shape=(1, 1, 1), dtype=FLOAT_TYPE
-    )  # should be int8
+    observation_space = gym.spaces.Box(-1, 1, shape=(1, 1, 1), dtype=FLOAT_TYPE)  # should be int8
     action_space = gym.spaces.Box(MINUS_ONE, ONE, shape=(1,), dtype=FLOAT_TYPE)
 
     winner: Optional[bool]
@@ -46,7 +46,7 @@ class BaseEnv(gym.Env):
         *,
         render_mode=None,
         color: bool = True,
-        models: list = [],
+        models: list | None = None,
         process_id: int | None = None,
         env_id: int | None = None,
         num_processes: int | None = None,
@@ -64,7 +64,7 @@ class BaseEnv(gym.Env):
 
         self.color: bool = color
         """Color of the agent."""
-        self.models: list = models
+        self.models: list | None = models
         self.process_id: int | None = process_id
         self.env_id: int | None = env_id
         self.num_processes: int | None = num_processes
@@ -85,11 +85,12 @@ class BaseEnv(gym.Env):
 
         self.moves: Generator[Move, None, None] = HexBoard.generate_nothing()
         # self.moves_list: List[Move] = []
-        self.best_move: Tuple[Move, FLOAT_TYPE] | None = None
+        self.best_move: tuple[Move, FLOAT_TYPE] | None = None
         self.current_move: Move | None = None
 
         self.did_force_stop: bool = False
         self.results: deque[int] = deque(maxlen=25)
+        self.opp_ort_session = self.models and choice(self.models)
 
     def render(self, mode="human", close=False) -> RenderFrame:
         """"""
@@ -111,11 +112,12 @@ class BaseEnv(gym.Env):
         *,
         seed: int | None = None,
         options: dict[str, Any] | None = None,
+        logits: np.ndarray | None = None,
+        opening: str | None = None,
     ) -> tuple[ObsType, dict[str, Any]]:
         """"""
 
         super().reset(seed=seed)
-
         self.render()
 
         # self.intermediate_rewards.clear()
@@ -126,20 +128,16 @@ class BaseEnv(gym.Env):
 
         # winner = self.board.winner_no_turn()
         # if winner is not None:
-        notation = choice(self.OPENINGS)
-        self.opening = notation
-        self.board = HexBoard(
-            size=self.BOARD_SIZE, notation=notation, init_move_stack=True
-        )
+        self.opening = opening or choice(self.OPENINGS)
+        self.board = HexBoard(size=self.BOARD_SIZE, notation=self.opening, init_move_stack=True)
+
+        self.opp_ort_session = self.models and choice(self.models)
 
         if self.board.turn != self.color:
-            self._make_opponent_move(0)
-
-        if "seq" in self.__class__.__name__.lower():
-            self._prepare_child_moves()
+            self._make_opponent_move(1, logits)
 
         # must be last, because the policy should evaluate the first move candidate
-        self.obs = self.observation_from_board()
+        self.obs = self.observation_from_board(self.board)
         return self.obs, {
             "action": 0,
             "winner": None,
@@ -161,9 +159,7 @@ class BaseEnv(gym.Env):
 
         self.board.push(self.current_move)
 
-    def step(
-        self, action: ActType
-    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+    def step(self, action: ActType) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         """
         Iterate over all legal moves and evaluate each, storing the move with the best score.
 
@@ -183,18 +179,14 @@ class BaseEnv(gym.Env):
             self.best_move = (self.current_move, score)
         else:
             best_score = self.best_move[1]
-            if (self.color and score > best_score) or (
-                not self.color and score < best_score
-            ):
+            if (self.color and score > best_score) or (not self.color and score < best_score):
                 self.best_move = (self.current_move, score)
 
         try:
             # if the move gets maximum score then stop searching for a better one
             best_score = self.best_move[1]
             force_stop_threshold = 0.0
-            if best_score >= force_stop_threshold and self.sigmoid_random(
-                best_score, force_stop_threshold
-            ):
+            if best_score >= force_stop_threshold and self.sigmoid_random(best_score, force_stop_threshold):
                 self.did_force_stop = True
                 raise StopIteration
             # if doesn't raise then there are still moves to be evaluated
@@ -214,7 +206,7 @@ class BaseEnv(gym.Env):
             reward = self._get_intersequence_reward(score)
             final_selection = False
 
-        self.obs = self.observation_from_board()
+        self.obs = self.observation_from_board(self.board)
 
         if final_selection and n_moves % self.MAX_MOVES <= 1:
             winner = self.color if reward > 0 else not self.color
@@ -238,20 +230,16 @@ class BaseEnv(gym.Env):
             },
         )
 
-    def step_from_logits(
-        self, logits
-    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+    def step_from_logits(self, logits) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         move, score = self.get_move_from_logits(logits)
         self.board.push(move)
 
-        winner, reward = self._get_winner_and_reward(
-            len(self.board.move_stack), with_iterations=False
-        )
+        winner, reward = self._get_winner_and_reward(len(self.board.move_stack))
 
         self.winner = winner
         self.reward = reward
 
-        self.obs = self.observation_from_board()
+        self.obs = self.observation_from_board(self.board)
         return (
             self.obs,
             reward,
@@ -265,40 +253,14 @@ class BaseEnv(gym.Env):
             },
         )
 
-    def _on_stop_iteration(self, n_moves) -> Tuple[Optional[bool], FLOAT_TYPE]:
-        """"""
-
-        # all moves evaluated - undo the last and push the best move on the board
-        self.board.pop()
-        self.board.push(self.best_move[0])
-        # self._make_random_move(self.board)
-        return self._get_winner_and_reward(n_moves, with_iterations=True)
-
-    def _get_winner_and_reward(self, n_moves, *, with_iterations: bool):
+    def _get_winner_and_reward(self, n_moves, logits: np.ndarray | None = None):
         winner = self.board.winner_no_turn()
         reward = self._get_reward(winner, n_moves)
 
-        # if the last move didn't conclude the game, now play opponent move and reset generator
+        # if the last move didn't conclude the game, now play opponent move
         if winner is None:
-            self._make_opponent_move(n_moves)
-
-            if with_iterations:
-                # reset generator and play the first option to be evaluated, regardless if the game is concluded
-                try:
-                    self._prepare_child_moves()
-                except StopIteration:
-                    # can only happen if the black player fills the last empty cell in the board
-                    winner = False
-                else:
-                    # the winner is checked after the move preparation in order to avoid calculating reward for game over
-                    winner = self.board.winner_no_turn()
-
-                    if winner is (not self.color):
-                        # if the opponent move concluded, undo the generated move
-                        self.board.pop()
-                        assert self.board.turn is self.color
-            else:
-                winner = self.board.winner_no_turn()
+            self._make_opponent_move(n_moves, logits)
+            winner = self.board.winner_no_turn()
 
         if winner is not None:
             # overwrite the reward because a winner was found
@@ -312,20 +274,20 @@ class BaseEnv(gym.Env):
             # reward = (MINUS_ONE + penalty) if self.color else (ONE - penalty)
 
             # use the following if the games are very long filling whole board
-            # reward = (MINUS_ONE + 0.5 * penalty) if self.color else (ONE - penalty)
+            # reward = (MINUS_ONE + penalty**2) if self.color else (ONE - penalty**0.5)
 
             # use the following if the games are very short
-            reward = (MINUS_ONE + penalty) if self.color else (ONE - 0.5 * penalty)
+            reward = (MINUS_TWO + 2 * penalty**0.5) if self.color else (ONE - penalty**2)
 
         elif winner is True:
             penalty = self._game_length_penalty(n_moves)
             # reward = (ONE - penalty) if self.color else (MINUS_ONE + penalty)
 
             # use the following if the games are very long filling whole board
-            # reward = (ONE - penalty) if self.color else (MINUS_ONE + 0.5 * penalty)
+            # reward = (ONE - penalty**0.5) if self.color else (MINUS_ONE + penalty**2)
 
             # use the following if the games are very short
-            reward = (ONE - 0.5 * penalty) if self.color else (MINUS_ONE + penalty)
+            reward = (ONE - penalty**2) if self.color else (MINUS_TWO + 2 * penalty**0.5)
 
         else:
             reward = ZERO
@@ -353,9 +315,7 @@ class BaseEnv(gym.Env):
         relative_score = score - self.last_intermediate_score
         self.last_intermediate_score = score
 
-        if (self.color and relative_score > 0) or (
-            not self.color and relative_score < 0
-        ):
+        if (self.color and relative_score > 0) or (not self.color and relative_score < 0):
             return True
         return False
 
@@ -364,9 +324,7 @@ class BaseEnv(gym.Env):
         relative_score = score - self.last_intermediate_score
         self.last_intermediate_score = score
 
-        if (self.color and relative_score > 0) or (
-            not self.color and relative_score < 0
-        ):
+        if (self.color and relative_score > 0) or (not self.color and relative_score < 0):
             return True
         return False
 
@@ -376,7 +334,7 @@ class BaseEnv(gym.Env):
     def _game_length_penalty(self, n_moves: int) -> float:
         """The more moves are played the higher the punishment."""
 
-        return abs(((n_moves - self.MIN_MOVES) / self.MAX_ADDITIONAL_MOVES)) ** 1.2
+        return (max(0, (n_moves - self.MIN_MOVES)) / self.MAX_ADDITIONAL_MOVES) ** 1.2
         # return ZERO
         # return ((max(0, (n_moves - 2 * self.BOARD_SIZE)) / self.MAX_MOVES) ** 2) * ONE
 
@@ -399,21 +357,13 @@ class BaseEnv(gym.Env):
             black_variants,
         ) = self.board.get_short_missing_distances_perf_cached(False)
 
-        white_score = sum(
-            (self._weight_distance(self.BOARD_SIZE - k, n_moves) * v)
-            for k, v in white_variants.items()
-        )
-        black_score = sum(
-            (self._weight_distance(self.BOARD_SIZE - k, n_moves) * v)
-            for k, v in black_variants.items()
-        )
+        white_score = sum((self._weight_distance(self.BOARD_SIZE - k, n_moves) * v) for k, v in white_variants.items())
+        black_score = sum((self._weight_distance(self.BOARD_SIZE - k, n_moves) * v) for k, v in black_variants.items())
 
         if not white_score and not black_score:
             return ZERO
 
-        return np.tanh(
-            (white_score - black_score) / (white_score + black_score) * 10
-        ).astype(FLOAT_TYPE)
+        return np.tanh((white_score - black_score) / (white_score + black_score) * 10).astype(FLOAT_TYPE)
 
     def _get_distance_score_perf(self, n_moves: int) -> FLOAT_TYPE:
         """
@@ -441,7 +391,7 @@ class BaseEnv(gym.Env):
         else:
             return distance
 
-    def _make_opponent_move(self, n_moves):
+    def _make_opponent_move(self, n_moves, logits: np.ndarray | None = None):
         # self._make_logical_move()
         self._make_random_move()
         # win_percentage = (
@@ -480,12 +430,7 @@ class BaseEnv(gym.Env):
             # score = self._get_distance_score(n_moves)
             score = self._get_distance_score_perf(n_moves)
             self.board.pop()
-            if best_move is None or (
-                (
-                    (opp_color and score > best_score)
-                    or (not opp_color and score < best_score)
-                )
-            ):
+            if best_move is None or (((opp_color and score > best_score) or (not opp_color and score < best_score))):
                 best_move = move
                 best_score = score
 
@@ -514,9 +459,7 @@ class BaseEnv(gym.Env):
         best_score = None
         for move in self.board.legal_moves:
             score = logits[move.mask.bit_length() - 1]
-            if best_move is None or (
-                score > best_score and choice([True, False])
-            ):  # inherent randomization
+            if best_move is None or (score > best_score and choice([True, False])):  # inherent randomization
                 best_move = move
                 best_score = score
 
@@ -531,9 +474,7 @@ class BaseEnv(gym.Env):
             moves.append(move)
             board.push(move)
             # TODO: the reshape is for compatibility to graph trained model input, delete this
-            obss.append(
-                self.observation_from_board(board).reshape(self.BOARD_SIZE**2, 1)
-            )
+            obss.append(self.observation_from_board(board).reshape(self.BOARD_SIZE**2, 1))
             # obss.append(self.observation_from_board(board))
             board.pop()
 
@@ -542,11 +483,7 @@ class BaseEnv(gym.Env):
         best_move: Optional[Move] = None
         best_score = None
         for move, score in zip(moves, scores):
-            if (
-                best_move is None
-                or (opp_color and score > best_score)
-                or (not opp_color and score < best_score)
-            ):
+            if best_move is None or (opp_color and score > best_score) or (not opp_color and score < best_score):
                 best_move = move
                 best_score = score
 
@@ -571,7 +508,8 @@ class BaseEnv(gym.Env):
         else:
             return 1 / (1 + np.e ** (-13 * x + 9)) * 1.015
 
-    def observation_from_board(self) -> np.ndarray:
+    @staticmethod
+    def observation_from_board(board) -> np.ndarray:
         """"""
 
-        return self.board.as_matrix().astype(FLOAT_TYPE)
+        return board.as_matrix().astype(FLOAT_TYPE)

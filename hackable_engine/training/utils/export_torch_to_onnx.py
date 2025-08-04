@@ -3,7 +3,9 @@ import torch
 import onnxruntime as ort
 
 from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard
-from hackable_engine.training.device import Device
+from hackable_engine.training.models.graph_gine import GraphGINE
+from hackable_engine.training.models.graph_sg import GraphSG
+from hackable_engine.training.utils.device import Device
 from hackable_engine.training.envs.hex.logit_11_graph_env import Logit11GraphEnv
 from hackable_engine.training.models.graph_gmm import GraphGMM
 
@@ -13,19 +15,20 @@ obs_sample = Logit11GraphEnv.observation_space.sample().astype(numpy.float32).re
 obs_sample_torch = torch.from_numpy(obs_sample).to(torch.float32)
 
 board = TrainingHexBoard(size=11, use_graph=True)
-model = GraphGMM(
+model = GraphGINE(
     node_count=board.size_square,
     node_features=9,
     output_size=1,
     batch_size=64,
+    dropouts=0.00,
     num_envs=128,
-    gnn_shape=(54, 108, 216, 324, 432, 486),
+    gnn_shape=(54, 108, 216, 432, 432, 432),
     # gnn_heads=6,
     mlp_shape=(256,),
     edge_index=board.edge_index,
-    # edge_types=board.edge_types,
+    edge_types=board.edge_types,
     # edge_types=board.edge_types_rgcn,
-    pseudo_coordinates=board.pseudo_coordinates,
+    # pseudo_coordinates=board.pseudo_coordinates,
     # use_res=True,
     device=Device.CPU,
 )

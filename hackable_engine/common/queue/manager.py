@@ -47,64 +47,40 @@ class QueueManager(Generic[TItem]):
         return self.queue.name
 
     def inject(self, raw_item: bytes) -> None:
-        """"""
-
         self.queue.inject(raw_item)
 
     def inject_js(self, raw_item) -> None:
-        """"""
-
         # self.queue.inject(raw_item)
         self.queue.inject(raw_item.to_py().tobytes())
 
     def set_destination(self, port) -> None:
-        """"""
-
         self.queue.set_destination(port)
 
     def set_mixed_destination(self, ports) -> None:
-        """"""
-
         self.queue.set_mixed_destination(ports)
 
     def put(self, item: TItem) -> None:
-        """"""
-
         self.queue.put(item)
 
     def put_many(self, items: List[TItem]) -> None:
-        """"""
-
         self.queue.put_many(items)
 
     def get(self) -> Optional[TItem]:
-        """"""
-
         return self.queue.get()
 
     def get_many(
         self, max_messages_to_get: int = 10, timeout: float = 0.0
     ) -> List[TItem]:
-        """"""
-
         return self.queue.get_many(max_messages_to_get, timeout)
 
     def get_all(self) -> List[TItem]:
-        """"""
-
         return self.queue.get_all()
 
     def is_empty(self) -> bool:
-        """"""
-
         return self.queue.is_empty()
 
     def size(self) -> int:
-        """"""
-
         return self.queue.size()
 
     def close(self) -> None:
-        """"""
-
         self.queue.close()

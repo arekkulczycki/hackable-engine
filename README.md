@@ -1,26 +1,21 @@
 # The most hackable game engine (wannabe)
 
 The purpose of this project is to provide a game engine that works in a 
-simple, readable and transparent way and most importantly opens up to a user means to 
-implement and test their own ideas.
+simple, readable and transparent way and most importantly facilitates it for a user to 
+easily implement and test their own ideas.
 
 Implemented games: Chess, Hex.
 
 ### Installation
 
-Project tested with python 3.8 to 3.12 in debian and arch OS.
+Generally should require just python>=3.8, project uses `uv` package manager.
 
-##### For running the engine
-
-`pip install -r requirements.txt`
+Install python dependencies:
+`uv sync`
 
 ##### For training your model
 
-`pip install -r hackable_engine/training/requirements.txt`
-
-This will take more effort though, as it depends on your hardware. 
-
-For instance as an Intel ArcA770 user I have intel torch extensions. For Nvidia GPU you may want CUDA-related stuff, etc.
+Project is prepared to train on Intel GPU with python==3.13, pytorch==2.7. For a different setup you're on your own.
 
 ### Basic Usage - run engine to find the best move in a position
 
@@ -30,32 +25,25 @@ Chess:
 Hex size 13:
 `PYTHONPATH=. python hackable_engine -G=hex -S=13 -m -n=a4`
 
-### Advanced Usage - implement your own criteria
-
-WIP
-
 ### Training
 
-The model files are saved into current working directory.
+Multiple algorithms were used along the way, but the project settled with a custom implementation of DQN. 
+Other algorithms are not facilitated to be run at this point. The following commands are just for the DQN training loop.
 
 To train a model
 `PYTHONPATH=. python hackable_engine/training/run.py -t -e=<ENVIRONMENT NAME>`
 
-To retrain a model
+To load and retrain a model
 `PYTHONPATH=. python hackable_engine/training/run.py -t -e=<ENVIRONMENT NAME> -v=<VERSION TO LOAD>`
 
-To plot the training rewards over the training period
-`PYTHONPATH=. python hackable_engine/training/run.py -pl -e=<ENVIRONMENT NAME>`
-
-To view the tensorboard log, if used
+To monitor training progress open tensorboard log in web browser
 `tensorboard --logdir <PATH TO THE LOG DIRECTORY>`
-
-Add custom tensorboard logs in `hackable_engine/training/callbacks.py`.
 
 ### Development directions
 
+- Train a state-of-the-art model for Hex
 - Build a WASM version to run a Hex bot in a website
-- GUI with the board and sliders for criteria, option to check move suggestions by the engine with given criteria
+- Clean up and make the project more "hackable" as promised
 - Make a lichess bot
 
 ##### Speeding up for python < 3.11

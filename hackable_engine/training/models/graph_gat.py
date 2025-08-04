@@ -4,7 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 from torch_geometric.nn import GATv2Conv
 
-from hackable_engine.training.device import Device
+from hackable_engine.training.utils.device import Device
 from hackable_engine.training.models import BaseModule
 
 
@@ -23,7 +23,7 @@ class GraphGAT(BaseModule):
         mlp_shape,
         edge_index,
         edge_types,
-        use_res: bool = True,
+        device=Device.XPU,
     ):
         super().__init__()
         self.node_count = node_count
@@ -34,11 +34,12 @@ class GraphGAT(BaseModule):
         self.gnn_shape = gnn_shape
         self.gnn_heads = gnn_heads
         self.mlp_shape = mlp_shape
-        self.use_res = use_res
+        self.device = device
+        self.use_res = True
 
-        self.edge_index = edge_index.to(Device.XPU)
+        self.edge_index = edge_index.to(device)
         self.batch_edge_index = self.get_batch_edge_index(batch_size)
-        self.edge_types = edge_types.to(Device.XPU)
+        self.edge_types = edge_types.to(device)
         self.batch_edge_types = self.get_batch_edge_types(batch_size)
 
         self.setup_graph_feature_extractor()
@@ -51,56 +52,56 @@ class GraphGAT(BaseModule):
         batch_edge_index = []
         for i in range(batch_size):
             batch_edge_index.append(self.edge_index + i * self.node_count)
-        return th.cat(batch_edge_index, dim=1).to(Device.XPU)
+        return th.cat(batch_edge_index, dim=1).to(self.device)
 
     def get_batch_edge_types(self, batch_size):
         batch_edge_types = []
         for i in range(batch_size):
             batch_edge_types.append(self.edge_types)
-        return th.cat(batch_edge_types, dim=0).to(Device.XPU)
+        return th.cat(batch_edge_types, dim=0).to(self.device)
 
     def setup_graph_feature_extractor(self):
         if self.use_res:
             self.res_proj_0 = nn.Linear(
                 self.node_features,
                 self.gnn_shape[0] * self.gnn_heads,
-                device=Device.XPU,
+                device=self.device,
             )
             self.res_proj_1 = nn.Linear(
                 self.gnn_shape[0] * self.gnn_heads,
                 self.gnn_shape[1] * self.gnn_heads,
-                device=Device.XPU,
+                device=self.device,
             )
             # self.res_proj_01 = nn.Linear(
             #     self.node_features,
             #     self.gnn_shape[1] * self.gnn_heads,
-            #     device=Device.XPU,
+            #     device=self.device,
             # )
             self.res_proj_2 = nn.Linear(
                 self.gnn_shape[1] * self.gnn_heads,
                 self.gnn_shape[2] * self.gnn_heads,
-                device=Device.XPU,
+                device=self.device,
             )
             # self.res_proj_02 = nn.Linear(
             #     self.node_features,
             #     self.gnn_shape[2] * self.gnn_heads,
-            #     device=Device.XPU,
+            #     device=self.device,
             # )
             self.res_proj_3 = nn.Linear(
                 self.gnn_shape[2] * self.gnn_heads,
                 self.gnn_shape[3] * self.gnn_heads,
-                device=Device.XPU,
+                device=self.device,
             )
             # self.res_proj_03 = nn.Linear(
             #     self.node_features,
             #     self.gnn_shape[3] * self.gnn_heads,
-            #     device=Device.XPU,
+            #     device=self.device,
             # )
             self.res_proj_4 = nn.Linear(
-                self.gnn_shape[3] * self.gnn_heads, self.gnn_shape[4], device=Device.XPU
+                self.gnn_shape[3] * self.gnn_heads, self.gnn_shape[4], device=self.device
             )
             # self.res_proj_04 = nn.Linear(
-            #     self.node_features, self.gnn_shape[4], device=Device.XPU
+            #     self.node_features, self.gnn_shape[4], device=self.device
             # )
         self.conv1 = GATv2Conv(
             self.node_features,
@@ -150,16 +151,16 @@ class GraphGAT(BaseModule):
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, output_size]:
-            mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, 3]:
-            control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            control_mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
-        self.mlp = tuple(mlp)
-        self.control_mlp = tuple(control_mlp)
+        self.mlp = nn.ModuleList(mlp)
+        self.control_mlp = nn.ModuleList(control_mlp)
 
     def forward(self, x, *args):
         x = self.extract_features(x)

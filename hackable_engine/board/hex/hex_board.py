@@ -787,6 +787,8 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
 
         Considered forcing when adjacent to both own and opponent stone *or* when adjacent to lone opponent stone.
         """
+        # TODO: use different levels if they dont fuck up tree search
+        return 0
 
         adjacent_black: Optional[BitBoard] = None
         adjacent_white: Optional[BitBoard] = None
@@ -1582,18 +1584,18 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         return shortest_distance, variants
 
     @lru_cache(maxsize=4_000_000)
-    def get_short_missing_distances_cached(self, color: bool, should_subtract: bool) -> tuple[int, dict[float, int]]:
+    def get_short_missing_distances_cached(self, color: bool, *, should_subtract: bool = False) -> tuple[int, dict[float, int]]:
         return self.get_short_missing_distances(color, should_subtract=should_subtract)
 
     def get_short_missing_distances_maybe_cached(self, color: bool, *, should_subtract: bool = False):
         if self.unoccupied.bit_count() >= self.size_square - 4 * self.size:
-            return self.get_short_missing_distances_cached(color, should_subtract)
+            return self.get_short_missing_distances_cached(color, should_subtract=should_subtract)
         else:
             return self.get_short_missing_distances(color, should_subtract=should_subtract)
 
     def get_short_missing_distances_perf_cached(self, color: bool, *, should_subtract: bool = False):
         if self.unoccupied.bit_count() >= self.size_square - 4 * self.size:
-            return self.get_short_missing_distances_cached(color, should_subtract)
+            return self.get_short_missing_distances_cached(color, should_subtract=should_subtract)
         else:
             return self.get_short_missing_distances_perf(color, should_subtract=should_subtract)
 

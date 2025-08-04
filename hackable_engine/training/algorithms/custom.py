@@ -20,7 +20,7 @@ from torch_geometric.nn.norm import GraphNorm
 from hackable_engine.board.hex.bitboard_utils import generate_masks
 from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard as HexBoard
 from hackable_engine.board.hex.move import Move
-from hackable_engine.training.device import Device
+from hackable_engine.training.utils.device import Device
 from hackable_engine.training.envs.hex.logit_9_graph_env import Logit9GraphEnv
 from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_async_env import MultiprocessAsyncEnv
 from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_env import MultiprocessEnv

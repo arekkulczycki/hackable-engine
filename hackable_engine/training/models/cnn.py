@@ -3,7 +3,7 @@ import torch as th
 from torch import nn
 from torch.nn import functional as F
 
-from hackable_engine.training.device import Device
+from hackable_engine.training.utils.device import Device
 from hackable_engine.training.models import BaseModule
 
 

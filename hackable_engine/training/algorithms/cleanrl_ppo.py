@@ -10,7 +10,7 @@ from torch.distributions.normal import Normal
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
 
-from hackable_engine.training.device import Device
+from hackable_engine.training.utils.device import Device
 from hackable_engine.training.hyperparams import *
 
 LOG_PATH = "./hackable_engine/training/logs/"

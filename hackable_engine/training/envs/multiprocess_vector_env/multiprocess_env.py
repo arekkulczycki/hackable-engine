@@ -111,16 +111,16 @@ class MultiprocessEnv:
         loss_count = (total_count - win_count)
         win_length_mean = win_lengths_sum / win_count if win_count else 0
         loss_length_mean = (length_sum - win_lengths_sum) / loss_count
-        win_variance = (win_squares_sum - win_count * win_length_mean ** 2) / (win_count - 1)
-        loss_variance = (loss_squares_sum - loss_count * loss_length_mean ** 2) / (loss_count - 1)
+        win_variance = ((win_squares_sum - win_count * win_length_mean ** 2) / (win_count - 1)) if win_count > 1 else 0
+        loss_variance = ((loss_squares_sum - loss_count * loss_length_mean ** 2) / (loss_count - 1)) if loss_count > 1 else 0
 
         return EnvProgressData(
             time_mean=np.sum(self.time_queue) / total_count,
             length_mean=length_sum / total_count,
             win_length_mean=win_length_mean,
-            win_length_std=sqrt(win_variance),
+            win_length_std=sqrt(win_variance) if win_variance else 0,
             loss_length_mean=loss_length_mean,
-            loss_length_std=sqrt(loss_variance),
+            loss_length_std=sqrt(loss_variance) if loss_variance else 0,
             return_mean=np.sum(self.return_queue) / total_count,
             reward_mean=np.sum(self.reward_queue) / total_count,
             winner_mean=win_count / total_count,
@@ -395,7 +395,7 @@ class ProcessEnv(Process):
         super().__init__(daemon=True)
         models = []
         color_ext = "black" if color else "white"
-        for model_version in ["a", "b"]:
+        for model_version in ["gmm1", "gmm2", "sg", "gine"]:
             path = f"11_{color_ext}_{model_version}.onnx"
             models.append(
                 InferenceSession(path, providers=["CPUExecutionProvider"])

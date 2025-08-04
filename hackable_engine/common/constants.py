@@ -7,7 +7,7 @@ import numpy as np
 FLOAT_TYPE = np.float32
 INF: float = 1000000.0
 DRAW: float = 0.0
-ZERO: float = 0.0
+ZERO: FLOAT_TYPE = FLOAT_TYPE(0.0)
 SLEEP: float = 0.001
 LOG_INTERVAL: float = 1.0
 BREAK_INTERVAL: float = 3.0
@@ -20,6 +20,7 @@ STATUS: str = "status"
 RUN_ID: str = "run_id"
 WORKER: str = "worker"
 DISTRIBUTED: str = "distributed"
+EVALUATED: str = "evaluated"
 
 DEFAULT_HEX_BOARD_SIZE: int = 13
 
@@ -34,7 +35,7 @@ class Print(IntEnum):
     LOGS = 4
 
 
-PRINT_CANDIDATES = 5
+PRINT_CANDIDATES = 8
 
 
 class QueueHandler(IntEnum):

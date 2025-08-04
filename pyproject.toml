@@ -7,11 +7,11 @@ authors = [
     {name = "arekkulczycki", email = "ten.arek@gmail.com"},
 ]
 dependencies = [
-#    "chess==1.11.*",
+    "chess==1.11.*",
     "anytree==2.12.*",
     "astar==0.99",
     "numpy==2.2.5",  # current version in pyodide
-#    "faster-fifo==1.5.2",
+    "faster-fifo==1.5.2",
 ]
 requires-python = "==3.13.3"
 readme = "README.md"
@@ -24,7 +24,7 @@ training = [
     "intel-extension-for-pytorch==2.7.10+xpu",
     "oneccl_bind_pt==2.7.0+xpu",
 #    "intel-sycl-rt==2025.2.0",
-#    "pytorch-triton-xpu",
+    "pytorch-triton-xpu==3.3",
     "torch==2.7.0",
     "torchaudio==2.7.0",
     "torchvision==0.22.0",
@@ -36,14 +36,16 @@ training = [
     "onnxruntime==1.22.*"
 ]
 testing = [
-    "black>=25.1.0",
-    "ipython>=8.32.0",
-    "memray>=1.16.0",
-    "nptyping==2.5.*",
-    "pip==25.1.*",
-    "pympler>=1.1",
-    "pyright>=1.1.402",
-    "ruff>=0.12.2",
+    "black>=25",
+    "ipython>=8",
+    "memray>=1",
+    "mypy>=1",
+    "perflint>=0",
+    "pip>=25",
+    "pyinstrument>=5",
+    "pympler>=1",
+    "pyright>=1",
+    "ruff>=0",
 ]
 
 [options]

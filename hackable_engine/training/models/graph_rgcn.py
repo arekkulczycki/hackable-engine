@@ -4,7 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 from torch_geometric.nn import FastRGCNConv, RGCNConv
 
-from hackable_engine.training.device import Device
+from hackable_engine.training.utils.device import Device
 from hackable_engine.training.models import BaseModule
 
 
@@ -22,7 +22,7 @@ class GraphRGCN(BaseModule):
         mlp_shape,
         edge_index,
         edge_types,
-        use_res: bool = True,
+        device=Device.XPU,
     ):
         super().__init__()
         self.node_count = node_count
@@ -32,11 +32,12 @@ class GraphRGCN(BaseModule):
         self.dropouts = dropouts
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
-        self.use_res = use_res
+        self.device = device
+        self.use_res = True
 
-        self.edge_index = edge_index.to(Device.XPU)
+        self.edge_index = edge_index.to(device)
         self.batch_edge_index = self.get_batch_edge_index(batch_size)
-        self.edge_types = edge_types.to(Device.XPU)
+        self.edge_types = edge_types.to(device)
         self.batch_edge_types = self.get_batch_edge_types(batch_size)
 
         self.setup_graph_feature_extractor()
@@ -49,34 +50,24 @@ class GraphRGCN(BaseModule):
         batch_edge_index = []
         for i in range(batch_size):
             batch_edge_index.append(self.edge_index + i * self.node_count)
-        return th.cat(batch_edge_index, dim=1).to(Device.XPU)
+        return th.cat(batch_edge_index, dim=1).to(self.device)
 
     def get_batch_edge_types(self, batch_size):
         batch_edge_types = []
         for i in range(batch_size):
             batch_edge_types.append(self.edge_types)
-        return th.cat(batch_edge_types, dim=0).to(Device.XPU).to(th.long)
+        return th.cat(batch_edge_types, dim=0).to(self.device).to(th.long)
 
     def setup_graph_feature_extractor(self):
         if self.use_res:
-            self.res_proj_0 = nn.Linear(
-                self.node_features, self.gnn_shape[0], device=Device.XPU
-            )
-            self.res_proj_1 = nn.Linear(
-                self.gnn_shape[0], self.gnn_shape[1], device=Device.XPU
-            )
-            self.res_proj_2 = nn.Linear(
-                self.gnn_shape[1], self.gnn_shape[2], device=Device.XPU
-            )
-            self.res_proj_3 = nn.Linear(
-                self.gnn_shape[2], self.gnn_shape[3], device=Device.XPU
-            )
-            self.res_proj_4 = nn.Linear(
-                self.gnn_shape[3], self.gnn_shape[4], device=Device.XPU
-            )
-            self.res_proj_5 = nn.Linear(
-                self.gnn_shape[4], self.gnn_shape[5], device=Device.XPU
-            )
+            self.res_proj_0 = nn.Linear(self.node_features, self.gnn_shape[0], device=self.device)
+            self.res_proj_1 = nn.Linear(self.gnn_shape[0], self.gnn_shape[1], device=self.device)
+            self.res_proj_2 = nn.Linear(self.gnn_shape[1], self.gnn_shape[2], device=self.device)
+            self.res_proj_3 = nn.Linear(self.gnn_shape[2], self.gnn_shape[3], device=self.device)
+            self.res_proj_4 = nn.Linear(self.gnn_shape[3], self.gnn_shape[4], device=self.device)
+            # self.res_proj_5 = nn.Linear(
+            #     self.gnn_shape[4], self.gnn_shape[5], device=self.device
+            # )
         self.conv1 = RGCNConv(
             self.node_features,
             self.gnn_shape[0],
@@ -102,12 +93,12 @@ class GraphRGCN(BaseModule):
             self.gnn_shape[4],
             num_relations=3,
         )
-        self.conv6 = RGCNConv(
-            self.gnn_shape[4],
-            self.gnn_shape[5],
-            num_relations=3,
-        )
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5, self.conv6)
+        # self.conv6 = RGCNConv(
+        #     self.gnn_shape[4],
+        #     self.gnn_shape[5],
+        #     num_relations=3,
+        # )
+        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)  # , self.conv6)
 
     def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
@@ -115,16 +106,16 @@ class GraphRGCN(BaseModule):
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, output_size]:
-            mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, 3]:
-            control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            control_mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
-        self.mlp = tuple(mlp)
-        self.control_mlp = tuple(control_mlp)
+        self.mlp = nn.ModuleList(mlp)
+        self.control_mlp = nn.ModuleList(control_mlp)
 
     def forward(self, x, *args):
         x = self.extract_features(x)
@@ -179,27 +170,23 @@ class GraphRGCN(BaseModule):
 
         if self.use_res:
             x = x + res4
-            res5 = self.res_proj_5(x)
-        x = F.dropout(F.relu(self.conv6(x, edge_index, edge_type=edge_types)), p=self.dropouts, training=self.training)
-
-        if self.use_res:
-            x = x + res5
+        #     res5 = self.res_proj_5(x)
+        # x = F.dropout(F.relu(self.conv6(x, edge_index, edge_type=edge_types)), p=self.dropouts, training=self.training)
+        #
+        # if self.use_res:
+        #     x = x + res5
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
     def initialize_gnn_weights(self):
         for layer in self.gnn:
-            th.nn.init.kaiming_uniform_(
-                layer.lin.weight, mode="fan_in", nonlinearity="relu"
-            )
+            th.nn.init.kaiming_uniform_(layer.lin.weight, mode="fan_in", nonlinearity="relu")
             if layer.lin.bias is not None:
                 th.nn.init.zeros_(layer.lin.bias)
 
     def initialize_mlp_weights(self):
         for layer in self.mlp + self.control_mlp:
-            th.nn.init.kaiming_normal_(
-                layer.weight, mode="fan_in", nonlinearity="leaky_relu"
-            )
+            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="leaky_relu")
             th.nn.init.zeros_(layer.bias)
 
     def make_decision(self, x: th.Tensor):

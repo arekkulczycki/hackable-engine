@@ -28,6 +28,7 @@ from hackable_engine.criteria.evaluation.base_eval import WeightsType, BaseEval
 #     SquareControlEval,
 # )
 from hackable_engine.criteria.evaluation.hex.model_eval import ModelEval
+from hackable_engine.criteria.evaluation.hex.paths_eval import PathsEval
 from hackable_engine.workers.base_worker import BaseWorker
 from hackable_engine.workers.configs.eval_worker_config import EvalWorkerConfig
 from hackable_engine.workers.configs.worker_locks import WorkerLocks
@@ -41,8 +42,8 @@ GameBoardT = TypeVar("GameBoardT", bound=GameBoardBase)
 EVALUATORS = {
     # ChessBoard: SquareControlEval(),
     # HexBoard: DistanceEval(),
-    # HexBoard: PathsEval,
-    HexBoard: ModelEval,
+    HexBoard: PathsEval,
+    # HexBoard: ModelEval,
     # HexBoard: WasmEval,
 }
 
@@ -78,6 +79,8 @@ class EvalWorker(BaseWorker, Generic[GameBoardT]):
             if config.board_size
             else config.board_class()
         )
+
+        # self.evaluated = 0
 
     def _set_selector_wasm_port(self, port) -> None:
         """"""
@@ -133,9 +136,11 @@ class EvalWorker(BaseWorker, Generic[GameBoardT]):
                         with self.locks.status_lock:
                             run_id = self.memory_manager.get_str(RUN_ID).replace("\x00", "")
 
+                    # self.evaluated += len(items_to_eval)
                     self.queues.selector_queue.put_many(
                         self.eval_items(items_to_eval, run_id, action)
                     )
+                    # print("evalated: ", self.evaluated)
 
                 await asyncio.sleep(0)
 

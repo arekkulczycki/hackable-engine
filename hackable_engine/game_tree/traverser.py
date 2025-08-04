@@ -60,7 +60,7 @@ class Traverser:
         """Children of the best node."""
 
         while True:
-            # if the node is `only_forcing` it means all forcing children were analysed, but is relevant to check
+            # if the node is `only_forcing` it means all forcing children were analysed, but is relevant to check also
             #  its non-forcing children
             if (
                 best_node.only_forcing and not best_node.being_processed
@@ -78,12 +78,15 @@ class Traverser:
             #     if not node.being_processed and node.level > level  # preventing inf loop over transpositions
             # ]
             some_children_being_processed = False
+            all_children_being_processed = True
             children_to_look_at = []
             for child in children:
                 # comparing level to prevent an infinite loop over transpositions, child level can only go up
-                if not child.being_processed and child.level > best_node.level:
-                    children_to_look_at.append(child)
-                elif child.being_processed:
+                if not child.being_processed:
+                    all_children_being_processed = False
+                    if child.level > best_node.level:
+                        children_to_look_at.append(child)
+                else:
                     some_children_being_processed = True
 
             if children_to_look_at:
@@ -95,7 +98,7 @@ class Traverser:
                     return None
 
                 # all children being processed, go up the tree again
-                if some_children_being_processed:
+                if all_children_being_processed:
                     best_node.being_processed = True  # marking to not enter this branch, will be unmarked by children
                 best_node = best_node.parent
 

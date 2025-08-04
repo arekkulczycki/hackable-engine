@@ -130,7 +130,7 @@ class Node:
         """Assign the score to self from a given value or children."""
 
         if self.being_processed:
-            # if being processed it means not all children have finished processing, therefore can wait
+            # if being processed it means all children are being evaluated, therefore must wait
             pass
 
         elif self.parent is not None:

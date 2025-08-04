@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from torch_geometric.nn import SGConv
 from torch_geometric.nn.norm import LayerNorm
 
-from hackable_engine.training.device import Device
+from hackable_engine.training.utils.device import Device
 from hackable_engine.training.models import BaseModule
 
 
@@ -22,6 +22,7 @@ class GraphSG(BaseModule):
         gnn_shape,
         mlp_shape,
         edge_index,
+        device=Device.XPU,
     ):
         super().__init__()
         self.node_count = node_count
@@ -31,9 +32,10 @@ class GraphSG(BaseModule):
         self.dropouts = dropouts
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
+        self.device = device
 
-        self.edge_index = edge_index.to(Device.XPU)
-        self.batch_edge_index = self.get_batch_edge_index( batch_size)
+        self.edge_index = edge_index.to(device)
+        self.batch_edge_index = self.get_batch_edge_index(batch_size)
         self.batch = self.get_batch_ids(batch_size)
 
         self.setup_graph_feature_extractor(gnn_shape)
@@ -46,12 +48,12 @@ class GraphSG(BaseModule):
         batch_edge_index = []
         for i in range(batch_size):
             batch_edge_index.append(self.edge_index + i * self.node_count)
-        return th.cat(batch_edge_index, dim=1).to(Device.XPU)
+        return th.cat(batch_edge_index, dim=1).to(self.device)
 
     def get_batch_ids(self, batch_size):
         return th.repeat_interleave(
             th.arange(batch_size), self.node_count
-        ).to(Device.XPU)
+        ).to(self.device)
 
     def setup_graph_feature_extractor(self, shape):
         norms = []
@@ -60,8 +62,8 @@ class GraphSG(BaseModule):
         prev = self.node_features
         for channels in self.gnn_shape:
             norms.append(LayerNorm(channels))
-            residuals.append(nn.Linear(prev, channels, device=Device.XPU))
-            convs.append(SGConv(prev, channels, K=1).to(Device.XPU))
+            residuals.append(nn.Linear(prev, channels, device=self.device))
+            convs.append(SGConv(prev, channels, K=1).to(self.device))
 
             prev = channels
 
@@ -75,12 +77,12 @@ class GraphSG(BaseModule):
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, output_size]:
-            mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, 3]:
-            control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            control_mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
         self.mlp = nn.ModuleList(mlp)

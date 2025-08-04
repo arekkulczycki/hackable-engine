@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-import asyncio
-from typing import cast, Generic, List, Optional, Type, TypeVar
+from asyncio import PriorityQueue, create_task, wait, gather, sleep
+from typing import Generic, Optional, Type, TypeVar
 
 import numpy as np
 
@@ -15,10 +15,12 @@ from hackable_engine.common.constants import (
     Status,
     WORKER,
     ZERO,
+    EVALUATED,
 )
 from hackable_engine.common.queue.items.control_item import ControlItem
 from hackable_engine.common.queue.items.distributor_item import DistributorItem
 from hackable_engine.common.queue.items.eval_item import EvalItem
+from hackable_engine.common.queue.items.priority_item import PriorityItem
 from hackable_engine.workers.base_worker import BaseWorker
 from hackable_engine.workers.configs.worker_locks import WorkerLocks
 from hackable_engine.workers.configs.worker_queues import WorkerQueues
@@ -36,20 +38,29 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
         self,
         locks: WorkerLocks,
         queues: WorkerQueues,
-        board_class: Type[GameBoardT],  # TODO: just pass in an initialized board
+        board_class: Type[GameBoardT],  # cannot pass board because is not picklable for a new process
         board_size: Optional[int],
-        memory = None,
+        root_color: bool,
+        memory=None,
     ):
         super().__init__(memory)
 
         self.locks: WorkerLocks = locks
         self.queues: WorkerQueues = queues
+        # TODO: consider janus?
+        self.priority_queue_size = 100_000
+        self.priority_get_ratio = 0.001
+        self.priority_get_size = int(self.priority_queue_size * self.priority_get_ratio)
+        self.priority_queue: PriorityQueue = PriorityQueue(maxsize=self.priority_queue_size + self.priority_get_size)
 
-        self.board: GameBoardT = (
-            board_class(size=board_size) if board_size else board_class()
-        )
+        self.board: GameBoardT = board_class(size=board_size) if board_size else board_class()
+        self.root_color = root_color
+        """if white, then looking for the best black move, then looking for the lowest score"""
 
         self.distributed = 0
+        self.evaluated = 0
+        self.evaluated_ratio = 0.8
+        # self.received = 0
 
     def _set_control_wasm_port(self, port) -> None:
         """"""
@@ -65,10 +76,8 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
         """"""
 
         # self._profile_code()
-
-        get_items = self.get_items
-        finished = True
-        run_id: Optional[str] = None
+        self.root_handled = False
+        self.run_id: Optional[str] = None
 
         if self.pid:  # is None in WASM
             with self.locks.status_lock:
@@ -82,32 +91,18 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
                 status: int = self.memory_manager.get_int(STATUS)
 
             if status == Status.STARTED:
-                # throttle has to be larger than value in search worker for putting
-                items: List[DistributorItem] = get_items(QUEUE_THROTTLE * 2)
+                if self.run_id is None:
+                    with self.locks.status_lock:
+                        self.run_id = self.memory_manager.get_str(RUN_ID).replace("\x00", "")
 
-                if items:
-                    if run_id is None:
-                        with self.locks.status_lock:
-                            run_id = self.memory_manager.get_str(RUN_ID).replace("\x00", "")
-                    self.distribute_items(items, run_id)
+                await self.prioritize_distribution()
 
-                if finished is True and items:
-                    # could switch without items too, but this is for debug purposes
-                    # print("distributed items: ", self.distributed, [item.node_name for item in items])
-                    finished = False
-
-                if finished:
-                    # print("distributor: started but no items found")
-                    await asyncio.sleep(SLEEP * 100)
-                else:
-                    await asyncio.sleep(0)
-
-            elif not finished:
-                finished = True
-                run_id = None
+            elif self.run_id is not None:
+                self.root_handled = False
+                self.run_id = None
 
                 # empty queue, **must come before marking worker finished**
-                while get_items(QUEUE_THROTTLE):
+                while self.get_items(QUEUE_THROTTLE):
                     pass
 
                 with self.locks.counters_lock:
@@ -119,15 +114,47 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
                 self.distributed = 0
 
             else:
-                await asyncio.sleep(SLEEP)
+                await sleep(SLEEP)
 
-    def get_items(self, queue_throttle: int) -> List[DistributorItem]:
+    async def prioritize_distribution(self) -> None:
+        # throttle has to be larger than value in search worker for putting
+        items: list[DistributorItem] = self.get_items(QUEUE_THROTTLE * 2)
+        # self.received += len(items)
+
+        await wait((create_task(self.put_many(items)), create_task(self.distribute_prioritized())))
+
+    async def distribute_prioritized(self):
+        with self.locks.counters_lock:
+            self.evaluated = self.memory_manager.get_int(EVALUATED)
+
+        size = self.priority_queue.qsize()
+        if self.evaluated >= self.evaluated_ratio * self.distributed:
+            if size > (1 / self.priority_get_ratio):
+                to_get = int(size * self.priority_get_ratio)
+            else:
+                to_get = 1
+        else:
+            to_get = 0
+        if to_get:
+            items = await gather(*(self.priority_queue.get() for _ in range(to_get)))
+            # print([(item.item.score, item.level) for item in items])
+            self.distribute_items([item.item for item in items])
+        elif size >= 1:
+            if not self.root_handled:
+                self.distribute_items([(await self.priority_queue.get()).item])
+                self.root_handled = True
+
+    async def put_many(self, items: list[DistributorItem]):
+        for item in items:
+            await self.priority_queue.put(PriorityItem(item, self.root_color))
+
+    def get_items(self, queue_throttle: int) -> list[DistributorItem]:
         """"""
 
         queue_throttle = 4
         return self.queues.distributor_queue.get_many(queue_throttle, SLEEP)
 
-    def distribute_items(self, items: List[DistributorItem], run_id: str) -> None:
+    def distribute_items(self, items: list[DistributorItem]) -> None:
         """
         Queue all legal moves for evaluation.
 
@@ -137,14 +164,12 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
         queue_items = []
 
         for item in items:
-            if item.run_id != run_id:
+            if item.run_id != self.run_id:
                 continue
 
             eval_items = self._get_eval_items(item)
 
-            if (
-                item.node_name == ROOT_NODE_NAME and len(eval_items) == 1
-            ):  # only 1 root child, so just play it
+            if item.node_name == ROOT_NODE_NAME and len(eval_items) == 1:  # only 1 root child, so just play it
                 self.queues.control_queue.put(ControlItem(item.run_id, item.node_name))
                 return
 
@@ -160,7 +185,7 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
             with self.locks.counters_lock:
                 self.memory_manager.set_int(DISTRIBUTED, self.distributed, new=False)
 
-    def _get_eval_items(self, item: DistributorItem) -> List[EvalItem]:
+    def _get_eval_items(self, item: DistributorItem) -> list[EvalItem]:
         """
         Get all legal moves, starting from the node given in `item`, to be evaluated.
         """
@@ -169,11 +194,12 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
 
         # TODO: if it could be done efficiently, would be beneficial to check game over here
 
-        parent_board_repr = self.board.as_matrix()#.reshape(self.board.size, self.board.size)
+        parent_board_repr = self.board.as_matrix()  # .reshape(self.board.size, self.board.size)
 
         only_forcing_moves = []
         eval_items = []
         board_reprs = []
+        # TODO: drop _get_eval_scores later and run inference here to get only the best legal moves
         for move in self.board.legal_moves:
             eval_item = self._get_eval_item(item, move)
             board_repr = self._board_repr_from_parent(parent_board_repr, move, self.board.turn)
@@ -206,18 +232,14 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
 
         return self._items_with_scores(eval_items, scores)
 
-    def _get_eval_scores(self, board_matrices: List[np.ndarray]) -> List[np.float32]:
+    def _get_eval_scores(self, board_matrices: list[np.ndarray]) -> list[np.float32]:
         """"""
 
-        return [
-            ZERO for _ in range(len(board_matrices))
-        ]  # TODO: initialize and use a model
+        return [ZERO for _ in range(len(board_matrices))]  # TODO: initialize and use a model
         # return self.model.run(None, {"inputs": np.stack(np.asarray(board_matrices), axis=0)})[0][0]
 
     @staticmethod
-    def _items_with_scores(
-        items: List[EvalItem], scores: List[np.float32]
-    ) -> List[EvalItem]:
+    def _items_with_scores(items: list[EvalItem], scores: list[np.float32]) -> list[EvalItem]:
         """"""
 
         for eval_item, score in zip(items, scores):
@@ -244,9 +266,7 @@ class DistributorWorker(BaseWorker, Generic[GameBoardT, GameMoveT]):
         return eval_item
 
     @staticmethod
-    def _board_repr_from_parent(
-        parent_board_repr: np.ndarray, move: GameMoveT, color: bool
-    ) -> np.ndarray:
+    def _board_repr_from_parent(parent_board_repr: np.ndarray, move: GameMoveT, color: bool) -> np.ndarray:
         """board_repr array is (3, size, size), first dim is (empty, white, black)"""
 
         idx = 1 if color else 2

@@ -149,6 +149,7 @@ class Controller(Generic[GameBoardT]):
             self.worker_queues,
             self.board.__class__,
             self.board.size,
+            not self.board.turn,
         )
         self.child_processes.append(distributor)
 

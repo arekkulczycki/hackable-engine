@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from struct import pack, unpack
-from typing import ClassVar
+from typing import ClassVar, Self
 
 from numpy import float32
 
@@ -27,17 +27,11 @@ class DistributorItem(BaseItem):
     score: float32
     board: bytes
 
-    def __init__(
-        self,
-        run_id: str,
-        node_name: str,
-        forcing_level: int,
-        score: float32,
-        board: bytes,
-    ) -> None:
+    def __init__(self, run_id: str, node_name: str, forcing_level: int, score: float32, board: bytes) -> None:
         self.run_id: str = run_id
         self.node_name: str = node_name
         self.forcing_level: int = forcing_level
+        """Treat also as priority"""
         self.score: float32 = score
         self.board: bytes = board
 
@@ -48,9 +42,7 @@ class DistributorItem(BaseItem):
         board_and_float_bytes_number = DistributorItem.board_bytes_number + 4
 
         string_part = bytes_[:-board_and_float_bytes_number]
-        float_part = bytes_[
-            -board_and_float_bytes_number : -DistributorItem.board_bytes_number
-        ]
+        float_part = bytes_[-board_and_float_bytes_number : -DistributorItem.board_bytes_number]
         board = bytes_[-DistributorItem.board_bytes_number :]
         values = string_part.decode("utf-8").split(";")
 
@@ -67,8 +59,4 @@ class DistributorItem(BaseItem):
 
         score_bytes = pack("f", self.score)
 
-        return (
-            f"{self.run_id};{self.node_name};{self.forcing_level}".encode()
-            + score_bytes
-            + self.board
-        )
+        return f"{self.run_id};{self.node_name};{self.forcing_level}".encode() + score_bytes + self.board
