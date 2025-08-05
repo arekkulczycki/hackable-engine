@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # type: ignore
 from hackable_engine.board.hex.move import Move
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import Optional
 
 from numpy import expand_dims, eye, float32, int8, mean, ndarray, partition, reshape

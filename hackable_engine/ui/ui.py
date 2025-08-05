@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import Optional, TypeVar, Generic, Callable, Dict
 
 from hackable_engine.board import GameBoardBase

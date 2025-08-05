@@ -45,7 +45,7 @@ class HexGraphFeaturesExtractor(BaseFeaturesExtractor):
         self.conv_type = conv_type
         self.activation_fns = [activation_fn() for _ in output_filters if activation_fn]
         self.use_residuals = use_residuals
-        self.edge_index = HexBoard("", size=board_size, use_graph=True).edge_index.to(device=device)
+        self.edge_index = HexBoard("", size=board_size).edge_index.to(device=device)
 
         features_dim = board_size**2 * output_filters[-1]
         if self.conv_type == "gat":

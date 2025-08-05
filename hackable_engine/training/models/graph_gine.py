@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import torch as th
 from torch import nn
 from torch.nn import functional as F
@@ -113,7 +112,7 @@ class GraphGINE(BaseModule):
         self.control_mlp = nn.ModuleList(control_mlp)
 
     def forward(self, x, *args):
-        if self.training:
+        if self.training:  # for batched input
             x = x.flatten(0, 1)
         x = self.extract_features(x)
 

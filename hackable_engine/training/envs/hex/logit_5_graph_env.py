@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from itertools import cycle
 from random import randint, choice, choices
 from typing import Any

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import sys
 from itertools import cycle
 from typing import Dict, Optional

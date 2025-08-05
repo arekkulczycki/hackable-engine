@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 from collections import deque
 from queue import Empty, Full

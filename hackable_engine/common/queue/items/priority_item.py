@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import Self
 
 from hackable_engine.common.queue.items.base_item import BaseItem
@@ -12,6 +11,12 @@ class PriorityItem:
         If white, then looking for the best black move.
         This means looking for the lowest score on odd levels and highest scores on even levels.
         """
+        self.chosen_children: set[str] = set()
+        self.children_count: int = 0
+
+    def add_child(self, child: str):
+        self.chosen_children.add(child)
+        self.children_count += 1
 
     def level(self, item: BaseItem):
         """Example: 1.a1 is level 1"""
@@ -22,6 +27,9 @@ class PriorityItem:
 
         if self.item.forcing_level != other.item.forcing_level:
             return self.item.forcing_level > other.item.forcing_level
+
+        if self.children_count != other.children_count:
+            return self.children_count < other.children_count
 
         self_level = self.level(self.item)
         other_level = self.level(other.item)
@@ -38,14 +46,14 @@ class PriorityItem:
             else:
                 return self.item.score > other.item.score
 
-        # remaining case is one of them being even and the other being odd
-        if self.item.score != other.item.score:
-            if self.root_color:
-                # looking for the best black move therefore choose the lower score
-                return self.item.score < other.item.score
-            else:
-                # looking for the best white move therefore choose the higher score
-                return self.item.score > other.item.score
+        # # remaining case is one of them being even and the other being odd
+        # if self.item.score != other.item.score:
+        #     if self.root_color:
+        #         # looking for the best black move therefore choose the lower score
+        #         return self.item.score < other.item.score
+        #     else:
+        #         # looking for the best white move therefore choose the higher score
+        #         return self.item.score > other.item.score
 
         # if same score then dig into the deeper branch
         return self_level > other_level

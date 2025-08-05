@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from functools import partial
 from queue import Empty, Full
 from typing import Callable, List, Optional

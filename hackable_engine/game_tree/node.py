@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint: disable=protected-access  #-> complains about protected access to _score, but accessed within the same class
 from __future__ import annotations
 
@@ -7,7 +6,7 @@ from typing import ClassVar, Generator, List, Optional, Tuple
 
 from numpy import float32
 
-from hackable_engine.common.constants import ROOT_NODE_NAME
+from hackable_engine.common.constants import ROOT_NODE_NAME, ZERO, INFF
 
 
 class Node:
@@ -64,10 +63,9 @@ class Node:
         self.leaf_color = color
         self.leaf_level = self.level
 
-        self.propagate_being_processed_up()
-
         # assign last because requires other attributes initiated
         self.score = score
+        self.propagate_being_processed_up()
 
     def __repr__(self):
         return (
@@ -83,9 +81,7 @@ class Node:
         name: str = self.move
         parent: Optional[Node] = self.parent
         while parent:
-            name = (
-                f"{parent.move}.{name}" if parent.parent else f"{ROOT_NODE_NAME}.{name}"
-            )
+            name = f"{parent.move}.{name}" if parent.parent else f"{ROOT_NODE_NAME}.{name}"
             parent = parent.parent
 
         return name
@@ -113,35 +109,36 @@ class Node:
         Parallel propagation is an idea in progress, does nothing right now.
         """
 
-        old_value: Optional[float32] = getattr(
-            self, "_score", None
-        )  # None means is a leaf
+        old_value: Optional[float32] = getattr(self, "_score", None)  # None means is a leaf
         self._score = value
 
         parent: Optional[Node] = self.parent
         if parent:
-            # TODO: to not propagate is good idea only if we wait all captures to finish which is not the case
-            if parallel_propagation:
-                self.propagate_parallel(value, old_value)
-            else:
-                parent.inherit_score(value, old_value)
+            parent.inherit_score(value, old_value)
 
-    def inherit_score(self, value: float32, old_value: Optional[float32]) -> None:
+    def inherit_score(self, child_value: float32, old_child_value: Optional[float32]) -> None:
         """Assign the score to self from a given value or children."""
 
-        if self.being_processed:
-            # if being processed it means all children are being evaluated, therefore must wait
-            pass
+        self.simple_propagate(self.children)
+        # if self.being_processed:
+        #     # if being processed it means all children are being evaluated, therefore must wait
+        #     pass
+        #
+        # elif self.parent is not None:
+        #     parent_score: float32 = self.parent.score
+        #
+        #     if self.only_forcing:
+        #         self.propagate_only_forcing(child_value)
+        #     else:
+        #         self.propagate_optimal(self.children, parent_score, child_value, old_child_value)
+        #
+        # # root
+        # else:
+        #     # value (child) must never be higher than the substitute of parent_score
+        #     #  if white then comparing black moves, therefore -INFF, otherwise INFF
+        #     self.propagate_optimal(self.children, INFF if self.color else -INFF, child_value, old_child_value)
 
-        elif self.parent is not None:
-            parent_score: float32 = self.parent.score
-
-            if self.only_forcing:
-                self.propagate_only_forcing(value)
-            else:
-                self.propagate_optimal(self.children, parent_score, value, old_value)
-
-    def propagate_only_forcing(self, value: float32) -> None:
+    def propagate_only_forcing(self, child_value: float32) -> None:
         """
         Propagate score to this node knowing that all children are forcing moves.
 
@@ -151,39 +148,47 @@ class Node:
         # pylint: disable=consider-using-max-builtin,consider-using-min-builtin
 
         if self.color:
-            if value > self.score:
-                self.score = value
+            if child_value > self.score:
+                self.score = child_value
         else:
-            if value < self.score:
-                self.score = value
+            if child_value < self.score:
+                self.score = child_value
 
     def propagate_optimal(
         self,
         children: List[Node],
         parent_score: float32,
-        value: float32,
-        old_value: Optional[float32],
+        child_score: float32,
+        old_child_score: Optional[float32],
     ):
         """"""
 
         if self.color:
-            if value > parent_score:
-                # score increased, propagate immediately
-                self.score = value
-            elif old_value is not None and value < old_value < parent_score:
-                # score decreased, but old score indicates an insignificant node
-                pass
-            else:
-                self.score = reduce(self.maximal, children)._score
-        else:
-            if value < parent_score:
-                # score increased (relatively), propagate immediately
-                self.score = value
-            elif old_value is not None and value > old_value > parent_score:
-                # score decreased (relatively), but old score indicates an insignificant node
+            if child_score > parent_score:
+                # score increased from earlier black move to next black move, propagate immediately
+                self.score = child_score
+            elif old_child_score is not None and child_score < old_child_score < parent_score:
+                # score decreased from earlier black move to next black move, but old score indicates an insignificant node
                 pass
             else:
                 self.score = reduce(self.minimal, children)._score
+        else:
+            if child_score < parent_score:
+                # score decreased from earlier white move to next white move, propagate immediately
+                self.score = child_score
+            elif old_child_score is not None and child_score > old_child_score > parent_score:
+                # score increased from earlier white move to next white move, but old score indicates an insignificant node
+                pass
+            else:
+                self.score = reduce(self.maximal, children)._score
+
+    def simple_propagate(self, children: List[Node]):
+        """"""
+
+        if self.color:
+            self.score = reduce(self.minimal, children)._score
+        else:
+            self.score = reduce(self.maximal, children)._score
 
     def propagate_parallel(self, value: float32, old_value: Optional[float32]):
         """
@@ -234,8 +239,7 @@ class Node:
                 self.parent.leaf_level = self.leaf_level
                 self.parent.leaf_color = self.leaf_color
 
-            if not self.being_processed and self.parent.being_processed:
-                # switch parent to not being processed if node is not being processed anymore
+            if not self.being_processed:
                 self.parent.being_processed = False
 
             self.parent.propagate_being_processed_up()
@@ -269,3 +273,12 @@ class Node:
                 return True
             expected = expected.parent
         return False
+
+    def get_root_child_ancestor(self):
+        if self.parent is None:
+            return None  # The node is root
+
+        child = self
+        while child.parent and child.parent.parent:
+            child = child.parent
+        return child

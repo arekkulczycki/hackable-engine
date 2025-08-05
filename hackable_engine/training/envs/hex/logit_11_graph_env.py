@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import math
 from random import choices, sample, choice
 from typing import Any
@@ -6,7 +5,9 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 from gymnasium.envs.registration import register
+from onnxruntime import InferenceSession
 
+from hackable_engine.board.hex.bitboard_utils import generate_cells
 from hackable_engine.board.hex.move import Move
 from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.training.envs.hex.base_env import BaseEnv
@@ -17,6 +18,7 @@ ONE: FLOAT_TYPE = FLOAT_TYPE(1)
 MINUS_ONE: FLOAT_TYPE = FLOAT_TYPE(-1)
 MINUS_ONEHALF: FLOAT_TYPE = FLOAT_TYPE(-1.5)
 MINUS_TWO: FLOAT_TYPE = FLOAT_TYPE(-2)
+MINUS_THREE: FLOAT_TYPE = FLOAT_TYPE(-3)
 ZERO_BYTES = (0).to_bytes(22)
 
 
@@ -48,14 +50,14 @@ class Logit11GraphEnv(BaseEnv):
         self.OPENINGS = [
             "a1","a2","a3","a4","a5","a6","a7","a8","a9","a10","a11",
             "k1","k2","k3","k4","k5","k6","k7","k8","k9","k10","k11",
-            "c2","c10","d2","d10","e2","e10","f2","f10","g2","g10","h2","h10",
+            "c2","c10","d2","d10","e2","e10","f2","f10","g2","g10","h2","h10","i2","i10",
             "e3","e9","f3","f9","g3","g9"
         ]
         # fmt: on
 
         self.rtm = RealTimeMeanVariance()
-        # self.opp_ort_session = InferenceSession(choice(self.models), providers=["OpenVINOExecutionProvider"])
-        self.opp_ort_session = choice(self.models) if self.models else None
+        opp_color_text = "black" if self.color else "white"
+        # self.opp_ort_session = None if self.models is None else InferenceSession(f"{self.BOARD_SIZE}_{opp_color_text}_{choice(self.models)}.onnx", providers=["CPUExecutionProvider"])
 
     def reset(
         self,
@@ -64,7 +66,7 @@ class Logit11GraphEnv(BaseEnv):
         options: dict[str, Any] | None = None,
         logits: np.ndarray | None = None,
         opening: str | None = None,
-    ) -> tuple[np.array, dict[str, Any]]:
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         obs, info = super().reset(seed=seed, logits=logits, opening=opening)
 
         info["ocb"] = self.board.occupied_co[False].to_bytes(22)
@@ -82,14 +84,7 @@ class Logit11GraphEnv(BaseEnv):
             self.results.append(0)
             return step_result
 
-        logits = (
-            self.opp_ort_session
-            and self.opp_ort_session.run(
-                None, {"inputs": np.expand_dims(self.observation_from_board(self.board), axis=0)}
-            )[0]
-        )
-
-        return self.finalize_step(n_moves=n_moves, logits=logits)
+        return self.finalize_step(n_moves=n_moves, logits=None)
 
     def prepare_step(self, move_position):
         n_moves = self.MAX_MOVES - self.board.unoccupied.bit_count()
@@ -101,7 +96,7 @@ class Logit11GraphEnv(BaseEnv):
 
         return n_moves, None
 
-    def finalize_step(self, *, n_moves, logits):
+    def finalize_step(self, *, n_moves, logits: np.ndarray | None):
         self.winner, self.reward = self._get_winner_and_reward(n_moves, logits)
         if self.winner is not None:
             self.results.append(int(self.winner == self.color))
@@ -133,7 +128,7 @@ class Logit11GraphEnv(BaseEnv):
             # print(f"attempting to push {move_position}", move.get_coord())
             # print(f"illegal move {move.get_coord()} in position {self.board.get_notation()}, turn {self.board.turn}")  # process {self.process_id}")
             self.winner = not self.color
-            self.reward = MINUS_TWO + self._game_length_penalty(n_moves)
+            self.reward = MINUS_THREE + self._game_length_penalty(n_moves)
             # self.reward = FLOAT_TYPE(
             #     MINUS_TWO + n_moves / (self.MAX_MOVES - 2 * self.BOARD_SIZE)
             # )
@@ -157,7 +152,24 @@ class Logit11GraphEnv(BaseEnv):
             )
 
     def _make_opponent_move(self, n_moves, logits: np.ndarray | None = None):
-        minimum_logical_moves = 0.8
+        if logits is None and self.opp_ort_session is not None:
+            logits = self.opp_ort_session.run(
+                None, {"inputs": np.expand_dims(self.observation_from_board(self.board), axis=0)}
+            )[0].flatten()
+
+        if logits is not None:
+            # move = self._make_random_move()
+            # print(logits)
+            move = self._make_opponent_move_from_logits(logits)
+            # opponent_move_random set internally
+        else:
+            move = self._make_random_move()
+            # move = self._make_logical_move(n_moves + 1)
+            self.opponent_move_random = True
+        self.opponent_move = move
+
+    def _make_opponent_maybe_random_move(self, n_moves, logits: np.ndarray | None = None):
+        minimum_logical_moves = 0.9
         len_results = len(self.results)
         win_percentage = sum(self.results) / len_results if len_results > 0 else minimum_logical_moves
         random_move_weight = (1 - win_percentage)**2 * (1 - minimum_logical_moves)
@@ -184,10 +196,15 @@ class Logit11GraphEnv(BaseEnv):
 
     def _make_opponent_move_from_logits(self, logits: np.ndarray):
         """The action chosen is the highest value regardless of color, using `argmax` or similar."""
+        illegal_squares = list(generate_cells(self.board.occupied))
+        min_val = logits.argmin().item()
+        logits[illegal_squares] = logits[min_val].item()
+
         # deterministic
         # move_c = np.argmax(logits).item()
         # stochastic
-        move_c = self._get_softmax_action(logits.flatten(), 0.05)
+        # move_c = self._get_softmax_action(logits, 0.005)
+        move_c = self._get_softmax_action(logits, 0.01)
         move = Move.from_c(move_c, size=self.BOARD_SIZE)
         try:
             self.board.push(move)
@@ -199,8 +216,8 @@ class Logit11GraphEnv(BaseEnv):
 
         return move
 
-    def _get_softmax_action(self, q_values: np.ndarray, a_temperature: float) -> int:
-        scaled_qs = q_values / a_temperature
+    def _get_softmax_action(self, logits: np.ndarray, a_temperature: float) -> int:
+        scaled_qs = logits / a_temperature
         max_q = np.max(scaled_qs)  # for numerical stability
         exp_qs = np.exp(scaled_qs - max_q)
         probabilities = exp_qs / np.sum(exp_qs)

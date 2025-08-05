@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import Generator
 
 from anytree import Node, RenderTree

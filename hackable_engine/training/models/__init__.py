@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -16,6 +15,8 @@ class BaseModule(nn.Module, ABC):
     gnn: nn.ModuleList
     mlp: nn.ModuleList
     control_mlp: nn.ModuleList
+    value_head: nn.Sequential
+    policy_head: nn.Sequential
 
     def forward(self, x: th.Tensor, *args: Any):
         x = self.extract_features(x)

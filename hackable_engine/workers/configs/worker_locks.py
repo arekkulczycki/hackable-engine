@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from contextlib import nullcontext
 
 from hackable_engine.common.constants import QUEUE_HANDLER, QueueHandler

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import Callable, Generic, List, Optional, TypeVar
 
 from hackable_engine.common.constants import QUEUE_HANDLER, QueueHandler

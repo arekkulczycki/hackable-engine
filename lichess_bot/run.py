@@ -1,8 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 Start lichess playing loop.
 """
-
+import os
 from time import sleep
 
 import requests
@@ -10,7 +9,7 @@ import requests
 from hackable_engine.common.constants import Print
 from hackable_engine.controller import Controller
 
-token = "lip_o2ZT2O8UxRCT4HRUFLNm"
+token = os.environ["LICHESS_TOKEN"]
 headers = {"Authorization": f"Bearer {token}"}
 
 

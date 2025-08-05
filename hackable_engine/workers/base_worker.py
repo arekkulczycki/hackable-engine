@@ -1,7 +1,8 @@
-# -*- coding: utf-8 -*-
 import asyncio
 import sys
 from multiprocessing import Process
+
+from setproctitle import setproctitle
 
 # from hackable_engine.common.memory.adapters.shared_memory_adapter import remove_shm_from_resource_tracker
 from hackable_engine.common.memory.manager import MemoryManager
@@ -14,13 +15,13 @@ class BaseWorker(Process, ProfilerMixin):
     Base for the worker process.
     """
 
-    def __init__(self, memory=None):
-        super().__init__()
+    def __init__(self, name: str, *, memory=None):
+        super(Process, self).__init__(None, None, name)
 
         self.memory_manager: MemoryManager = MemoryManager(memory)
 
     def run(self) -> None:
-        """"""
+        setproctitle(self.name)
 
         try:
             asyncio.run(self._run())

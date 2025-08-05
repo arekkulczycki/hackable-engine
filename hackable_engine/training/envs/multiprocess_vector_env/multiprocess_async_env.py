@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from threading import Thread
 from typing import Callable, Any
 
@@ -10,14 +9,13 @@ from hackable_engine.common.constants import FLOAT_TYPE
 from hackable_engine.training.envs.multiprocess_vector_env.multiprocess_env import (
     MultiprocessEnv,
     EnvProgressData,
-    MultiprocessEnvRunner,
 )
 
 
 class MultiprocessAsyncEnv:
     def __init__(
         self,
-        make_env: Callable[[int, int, bool, list], Env],
+        make_env: Callable[[int, int, bool], Env],
         num_workers: int,
         env_per_worker: int,
         color: bool = True,
@@ -66,3 +64,7 @@ class MultiprocessAsyncEnv:
     @property
     def single_observation_space(self):
         return self.env.local_env.single_observation_space
+
+    @property
+    def single_action_space(self):
+        return self.env.single_action_space

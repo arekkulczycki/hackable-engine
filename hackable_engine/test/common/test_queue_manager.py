@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # type: ignore
 from time import perf_counter
 from unittest import TestCase

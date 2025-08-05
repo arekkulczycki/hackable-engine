@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import torch as th
 from torch import nn
 from torch.nn import functional as F
@@ -22,6 +21,7 @@ class GraphGIN(BaseModule):
         gnn_shape,
         mlp_shape,
         edge_index,
+        device: Device = Device.XPU,
     ):
         super().__init__()
         self.node_count = node_count
@@ -31,8 +31,9 @@ class GraphGIN(BaseModule):
         self.dropouts = dropouts
         self.gnn_shape = gnn_shape
         self.mlp_shape = mlp_shape
+        self.device = device
 
-        self.edge_index = edge_index.to(Device.XPU)
+        self.edge_index = edge_index.to(device)
         self.batch_edge_index = self.get_batch_edge_index(node_count, batch_size)
 
         self.setup_graph_feature_extractor()
@@ -46,11 +47,11 @@ class GraphGIN(BaseModule):
         batch_edge_index = []
         for i in range(batch_size):
             batch_edge_index.append(self.edge_index + i * node_count)
-        return th.cat(batch_edge_index, dim=1).to(Device.XPU)
+        return th.cat(batch_edge_index, dim=1).to(self.device)
 
     def setup_graph_feature_extractor(self):
         self.input_proj = nn.Linear(
-            self.node_features, self.gnn_shape[0], device=Device.XPU
+            self.node_features, self.gnn_shape[0], device=self.device
         )
 
         convs = []
@@ -60,15 +61,15 @@ class GraphGIN(BaseModule):
                 residuals.append(nn.Identity())
             else:
                 residuals.append(
-                    nn.Linear(in_channels, out_channels, device=Device.XPU)
+                    nn.Linear(in_channels, out_channels, device=self.device)
                 )
 
             mlp = nn.Sequential(
-                nn.Linear(in_channels, out_channels, device=Device.XPU),
+                nn.Linear(in_channels, out_channels, device=self.device),
                 LayerNorm(out_channels),
                 nn.ReLU(),
                 nn.Dropout(self.dropouts),
-                nn.Linear(out_channels, out_channels, device=Device.XPU),
+                nn.Linear(out_channels, out_channels, device=self.device),
             )
             convs.append(GINConv(mlp, train_eps=True))
 
@@ -81,19 +82,20 @@ class GraphGIN(BaseModule):
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, output_size]:
-            mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
         prev_size = gnn_shape[-1]
         for size in [*mlp_shape, 3]:
-            control_mlp.append(nn.Linear(prev_size, size, device=Device.XPU))
+            control_mlp.append(nn.Linear(prev_size, size, device=self.device))
             prev_size = size
 
         self.mlp = nn.ModuleList(mlp)
         self.control_mlp = nn.ModuleList(control_mlp)
 
     def forward(self, x, *args):
-        x = x.flatten(0, 1)
+        if self.training:  # for batched input
+            x = x.flatten(0, 1)
         x = self.extract_features(x)
 
         if self.training:

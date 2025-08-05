@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # type: ignore
 from pytest import mark
 

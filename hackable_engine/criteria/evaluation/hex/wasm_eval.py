@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import Optional
 
 from numpy import array, eye, float32, int8, ndarray, reshape

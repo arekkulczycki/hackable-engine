@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import Generator, List, Optional, cast
 
 from numpy import abs as np_abs, float32
@@ -45,6 +44,10 @@ class Traverser:
         )
         nodes: List[Node] = [node for node in maybe_nodes if node is not None]
 
+        # for node in nodes:
+        #     ancestor = node.get_root_child_ancestor()
+        #     print("selecting to explore:", ancestor.move, node.level, ancestor.color, ancestor.score)
+
         return nodes
 
     def get_next_leaf_to_look_at(self) -> Optional[Node]:
@@ -84,7 +87,7 @@ class Traverser:
                 # comparing level to prevent an infinite loop over transpositions, child level can only go up
                 if not child.being_processed:
                     all_children_being_processed = False
-                    if child.level > best_node.level:
+                    if child.level > best_node.level:  # isn't this always true? or do transpositions come into play?
                         children_to_look_at.append(child)
                 else:
                     some_children_being_processed = True
@@ -119,12 +122,12 @@ class Traverser:
         best_node.being_processed = True
         return best_node
 
-    def select_promising_node(self, nodes: List[Node], color: bool) -> Node:
+    def select_promising_node(self, nodes: List[Node], parent_color: bool) -> Node:
         """
         Get the child node, selected based on implemented criteria.
         """
 
-        return self.selector.select(nodes, color)
+        return self.selector.select(nodes, not parent_color)
 
     def create_nodes_and_autodistribute(
         self, candidates: List[SelectorItem]

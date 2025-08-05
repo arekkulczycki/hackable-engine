@@ -1,11 +1,9 @@
-# -*- coding: utf-8 -*-
 import asyncio
 import os.path
 from collections import deque, defaultdict
 from enum import Enum
 from multiprocessing import Process
 from queue import Empty
-from random import sample
 from struct import pack, unpack
 from typing import Generator
 
@@ -19,8 +17,8 @@ from hackable_engine.board.hex.bitboard_utils import (
 )
 from hackable_engine.common.constants import FLOAT_TYPE
 
-Experience = tuple[np.array, float, float, np.array, bool, int, int]
-IndexedExperience = tuple[np.array, float, float, np.array, bool, int, int, int]
+Experience = tuple[np.ndarray, float, float, np.ndarray, bool, int, int]
+IndexedExperience = tuple[np.ndarray, float, float, np.ndarray, bool, int, int, int]
 
 
 class ReplayBuffer:
@@ -42,7 +40,7 @@ class ReplayBuffer:
         self.board_mask: int = (1 << self.board_size_squared) - 1
         self._capacity: int
         self.capacity: int = capacity
-        self.td_errors: np.array = np.zeros(capacity, dtype=FLOAT_TYPE)
+        self.td_errors: np.ndarray = np.zeros(capacity, dtype=FLOAT_TYPE)
         self.storage_type: ReplayBuffer.StorageType = storage_type
 
         if storage_type is storage_type.DEQUE:
@@ -56,7 +54,7 @@ class ReplayBuffer:
         self.priority_rate: float = priority_rate
         """Between 0 and 1, the % of sampled items took from the priority pool."""
 
-        self.control_stats_dict: dict[int, dict[int, np.array]] = defaultdict(dict)
+        self.control_stats_dict: dict[int, dict[int, np.ndarray]] = defaultdict(dict)
         self.control_stats_keys: dict[int, set[tuple[int, int]]] = defaultdict(set)
         self.control_stats_terminal_keys: set[tuple[int, int]] = set()
         # self.control_stats_keys_arr: np.array = np.empty(shape=(2_000_000, 2, 3), dtype=np.uint64)  # 91 MB
@@ -162,7 +160,7 @@ class ReplayBuffer:
                 child_control_stats = self.control_stats_dict[ocb_child][ocw_child]
                 self.increment_oc_stats(child_control_stats, ocb, ocw)
 
-    def increment_oc_stats(self, arr: np.array, ocb: int, ocw: int) -> np.array:
+    def increment_oc_stats(self, arr: np.ndarray, ocb: int, ocw: int) -> np.ndarray:
         # iterate over all cells in the board
         for mask in generate_masks(self.board_mask):
             c = mask.bit_length() - 1
@@ -173,7 +171,7 @@ class ReplayBuffer:
             else:
                 arr[c][2] += 1
 
-    def initialize_oc_stats(self, ocb: int, ocw: int) -> np.array:
+    def initialize_oc_stats(self, ocb: int, ocw: int) -> np.ndarray:
         arr = np.zeros(dtype=FLOAT_TYPE, shape=(self.board_size_squared, 3))
 
         # increment with itself to avoid zeros
@@ -202,10 +200,10 @@ class ReplayBuffer:
         return self.get_avg_prob_oc_stats()
 
     @staticmethod
-    def get_prob_oc_stats(oc_stats: np.array) -> np.array:
+    def get_prob_oc_stats(oc_stats: np.ndarray) -> np.ndarray:
         return oc_stats / np.sum(oc_stats, axis=-1, keepdims=True)
 
-    def get_avg_prob_oc_stats(self) -> np.array:
+    def get_avg_prob_oc_stats(self) -> np.ndarray:
         return np.zeros(dtype=FLOAT_TYPE, shape=(self.board_size_squared, 3)) + 1 / 3
 
     def find_mask_subsets_vectorized(self, ocb: int, ocw: int) -> Generator[tuple[int, int], None, None]:
@@ -270,7 +268,6 @@ class ReplayBuffer:
             )
         else:
             batch_ids = np.random.choice(self.size(), size=(size - priority_size), replace=False)
-            # batch_ids = sample(range(self.size()), k=(size - priority_size))
         batch = ((*self.buffer[i], i) for i in np.concat((batch_ids, priority_batch_ids)).astype(int))
 
         if self.backup is not None and self.backup.active and self.size() >= self.capacity:

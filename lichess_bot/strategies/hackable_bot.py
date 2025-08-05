@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Wrapper to interface between lichess bot and the engine.
 """

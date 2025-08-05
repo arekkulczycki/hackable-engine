@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import os
 import random
 
@@ -44,7 +43,7 @@ def run(version, policy_kwargs, env, env_name, device):
     np.random.seed(1)
     th.manual_seed(1)
 
-    board = HexBoard("", size=policy_kwargs["board_size"], use_graph=True)
+    board = HexBoard("", size=policy_kwargs["board_size"])
     gnn_shape = policy_kwargs["gnn_arch"]
     mlp_shape = policy_kwargs["mlp_arch"]
 

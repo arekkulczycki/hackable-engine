@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from struct import pack, unpack
 from typing import Tuple
 
@@ -78,7 +77,10 @@ class HexBoardSerializerMixin:
         if self.size < 14:
             return self.split_bitboard_in_three_components(self.occupied_co[color])
 
-        raise NotImplementedError("Larger than 24x24 board size not implemented")
+        if self.size < 17:
+            return self.split_bitboard_in_four_components(self.occupied_co[color])
+
+        raise NotImplementedError("Larger than 16x16 board size not implemented")
 
     @staticmethod
     def split_bitboard_in_two_components(b: BitBoard) -> Tuple[BitBoard, BitBoard]:
@@ -98,8 +100,13 @@ class HexBoardSerializerMixin:
         one = (1 << 64) - 1
         return b & one, (b >> 64) & one, b >> (2 * 64)
 
+    @staticmethod
+    def split_bitboard_in_four_components(b: BitBoard) -> Tuple[BitBoard, BitBoard, BitBoard, BitBoard]:
+        one = (1 << 64) - 1
+        return b & one, (b >> 64) & one, b >> (2 * 64) & one, b >> (3 * 64)
+
     def unpack_components(self: HexBoardProtocol, bytes_: bytes) -> BitBoard:
-        """"""
+        """Q holds up to 64 bits, representing a board of size N requires NxN bits."""
 
         if self.size < 9:
             return unpack("Q", bytes_)[0]
@@ -114,4 +121,12 @@ class HexBoardSerializerMixin:
                 + (unpack("Q", bytes_[16:])[0] << 2 * 64)
             )
 
-        raise NotImplementedError("Larger than 24x24 board size not implemented")
+        if self.size < 17:
+            return (
+                unpack("Q", bytes_[:8])[0]
+                + (unpack("Q", bytes_[8:16])[0] << 64)
+                + (unpack("Q", bytes_[16:24])[0] << 2 * 64)
+                + (unpack("Q", bytes_[24:])[0] << 3 * 64)
+            )
+
+        raise NotImplementedError("Larger than 16x16 board size not implemented")

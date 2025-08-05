@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from collections import defaultdict
@@ -17,7 +16,7 @@ from typing import (
 import math
 import numpy as np
 from astar import find_path
-from numpy import asarray, empty, int8, mean, zeros, ndarray
+from numpy import empty, int8, mean, zeros, ndarray
 
 from hackable_engine.board import BitBoard, GameBoardBase
 from hackable_engine.board.hex.bitboard_utils import (
@@ -47,6 +46,7 @@ MINUS_ONE = -1
 class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     """
     Handling the hex board and calculating features of a position.
+    TODO: use https://github.com/hjweide/pyastar2d/blob/master/src/cpp/astar.cpp
     """
 
     has_draws = False
@@ -70,7 +70,6 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
         *,
         size: int = DEFAULT_HEX_BOARD_SIZE,
         init_move_stack: bool = False,
-        use_graph: bool = False,
     ) -> None:
         """"""
 
@@ -145,6 +144,9 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
             notation += move.get_coord()
 
         return notation
+
+    def count_moves(self):
+        return self.size_square - self.unoccupied.bit_count()
 
     def reset(self) -> None:
         """"""
@@ -1587,17 +1589,9 @@ class HexBoard(HexBoardSerializerMixin, GameBoardBase):
     def get_short_missing_distances_cached(self, color: bool, *, should_subtract: bool = False) -> tuple[int, dict[float, int]]:
         return self.get_short_missing_distances(color, should_subtract=should_subtract)
 
-    def get_short_missing_distances_maybe_cached(self, color: bool, *, should_subtract: bool = False):
-        if self.unoccupied.bit_count() >= self.size_square - 4 * self.size:
-            return self.get_short_missing_distances_cached(color, should_subtract=should_subtract)
-        else:
-            return self.get_short_missing_distances(color, should_subtract=should_subtract)
-
+    @lru_cache(maxsize=4_000_000)
     def get_short_missing_distances_perf_cached(self, color: bool, *, should_subtract: bool = False):
-        if self.unoccupied.bit_count() >= self.size_square - 4 * self.size:
-            return self.get_short_missing_distances_cached(color, should_subtract=should_subtract)
-        else:
-            return self.get_short_missing_distances_perf(color, should_subtract=should_subtract)
+        return self.get_short_missing_distances_perf(color, should_subtract=should_subtract)
 
     def pair_name(self, pair):
         """"""

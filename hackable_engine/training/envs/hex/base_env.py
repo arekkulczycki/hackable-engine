@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from collections import deque
 from random import choice, shuffle, choices
 from typing import Any, Generator, Optional, SupportsFloat
@@ -6,6 +5,7 @@ from typing import Any, Generator, Optional, SupportsFloat
 import gymnasium as gym
 import numpy as np
 from gymnasium.core import ActType, ObsType, RenderFrame
+from onnxruntime import InferenceSession
 
 from hackable_engine.board.hex.training.training_hex_board import TrainingHexBoard as HexBoard, Move
 from hackable_engine.common.constants import FLOAT_TYPE
@@ -91,6 +91,7 @@ class BaseEnv(gym.Env):
         self.did_force_stop: bool = False
         self.results: deque[int] = deque(maxlen=25)
         self.opp_ort_session = self.models and choice(self.models)
+        self.opponent_move_random = False
 
     def render(self, mode="human", close=False) -> RenderFrame:
         """"""
@@ -130,8 +131,6 @@ class BaseEnv(gym.Env):
         # if winner is not None:
         self.opening = opening or choice(self.OPENINGS)
         self.board = HexBoard(size=self.BOARD_SIZE, notation=self.opening, init_move_stack=True)
-
-        self.opp_ort_session = self.models and choice(self.models)
 
         if self.board.turn != self.color:
             self._make_opponent_move(1, logits)
@@ -273,10 +272,10 @@ class BaseEnv(gym.Env):
             penalty = self._game_length_penalty(n_moves)
             # reward = (MINUS_ONE + penalty) if self.color else (ONE - penalty)
 
-            # use the following if the games are very long filling whole board
+            # use the following if the games are very long filling whole board (high marginal gain for long games)
             # reward = (MINUS_ONE + penalty**2) if self.color else (ONE - penalty**0.5)
 
-            # use the following if the games are very short
+            # use the following if the games are very short (high marginal gain for short games)
             reward = (MINUS_TWO + 2 * penalty**0.5) if self.color else (ONE - penalty**2)
 
         elif winner is True:
@@ -334,9 +333,8 @@ class BaseEnv(gym.Env):
     def _game_length_penalty(self, n_moves: int) -> float:
         """The more moves are played the higher the punishment."""
 
-        return (max(0, (n_moves - self.MIN_MOVES)) / self.MAX_ADDITIONAL_MOVES) ** 1.2
-        # return ZERO
-        # return ((max(0, (n_moves - 2 * self.BOARD_SIZE)) / self.MAX_MOVES) ** 2) * ONE
+        # return n_moves / self.MAX_MOVES
+        return (max(0, (n_moves - self.MIN_MOVES)) / self.MAX_ADDITIONAL_MOVES)
 
     def _get_distance_score(self, n_moves: int) -> FLOAT_TYPE:
         """

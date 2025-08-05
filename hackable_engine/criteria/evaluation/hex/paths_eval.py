@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import math
 from typing import Optional
 
@@ -32,7 +31,7 @@ class PathsEval(BaseEval[HexBoard]):
 
         function = (
             board.get_short_missing_distances_cached
-            if n_moves >= 0
+            if n_moves >= 20 * self.size
             else board.get_short_missing_distances_perf_cached
         )
         white_missing, white_variants = function(

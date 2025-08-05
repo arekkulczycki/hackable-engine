@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 pip install stable_baselines3
 pip install gym

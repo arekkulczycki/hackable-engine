@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from random import random
 from time import sleep
 from typing import Optional, Type

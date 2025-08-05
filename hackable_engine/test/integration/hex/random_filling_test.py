@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from random import choice
 
 from hackable_engine.board.hex.hex_board import HexBoard, Move

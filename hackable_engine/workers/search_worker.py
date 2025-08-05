@@ -1,6 +1,4 @@
-# -*- coding: utf-8 -*-
 import asyncio
-import os
 from multiprocessing import cpu_count
 from random import randint
 from time import time
@@ -343,10 +341,10 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
             ):
                 # TODO: use signal for this?
                 if not self.flags.finished:
-                    if self.counters.evaluated == self.counters.distributed:
-                        # TODO: a failsafe for now, but find out why this happens for Hex
-                        print(f"finished with only {self.counters.evaluated} evaluated")
-                        return True
+                    # if self.counters.evaluated == self.counters.distributed:
+                    #     # TODO: a failsafe for now, but find out why this happens for Hex
+                    #     print(f"finished with only {self.counters.evaluated} evaluated")
+                    #     return True
                     print(
                         f"distributed: {self.counters.distributed}, evaluated: {self.counters.evaluated}, "
                         f"selected: {self.counters.selected}, started: {self.flags.started}, "
@@ -402,7 +400,10 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
         """
 
         max_gap = 2_000_000  # TODO: should dynamically change based on evaluation speed
+        min_gap = 100
+        min_percentual_gap = 0.1
         gap = self.counters.distributed - self.counters.evaluated
+        percentual_gap = gap / self.counters.distributed if self.counters.distributed > 0 else 0
         """
         Goal is to keep this value on a relatively constant level appropriate to processing speed. 
         Most importantly it should never reach 0 before the end of processing.
@@ -416,14 +417,16 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
                 self.counters.evaluated,
             )
 
-        # TODO: find smart conditions instead of that mess - purpose is to identify if should distribute more to eval
-        if not self.flags.finished and self.limit > 0 and gap < max_gap:
+        # TODO: find smart conditions, purpose is to identify if should distribute more to eval
+        if not self.flags.finished and self.limit > 0 and (percentual_gap < min_percentual_gap or gap < min_gap):
             if not self._select_from_tree():
+                # print("nothing selected")
                 self._handle_control_queue()
                 self._handle_selector_queue()
                 return False  # breaking the loop
 
             return True
+        # print("percentual", percentual_gap, min_percentual_gap)
 
         # TODO: should it decide between two queues based on something?
         self._handle_control_queue()
@@ -434,7 +437,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
     def _is_enough(self) -> bool:
         """"""
 
-        return self.counters.evaluated > self.limit or np_abs(self.node_cache.root.score) + 1 > INF  # is checkmate
+        return self.counters.distributed > self.limit or np_abs(self.node_cache.root.score) + 1 > INF  # is checkmate
 
     def _signal_run_finished(self) -> None:
         """
@@ -623,7 +626,7 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
     def finish_up(self, total_time: float) -> str:
         """"""
 
-        if PRINTING == Print.TREE:
+        if PRINTING == Print.TREE or PRINTING == Print.CANDIDATES:
             min_depth, max_depth, path = TREE_PARAMS.split(",")
             self.print_tree(int(min_depth), int(max_depth), path)
 
@@ -665,18 +668,18 @@ class SearchWorker(ReturningThread, ProfilerMixin, Generic[GameBoardT]):
         sorted_children: List[Node] = sorted(
             self.node_cache.root.children,
             key=lambda node: node.score,
-            reverse=not self.node_cache.root.color,
+            reverse=self.node_cache.root.color,
         )
 
         if PRINTING == Print.CANDIDATES:
             print("***")
-            os.system("clear")
+            # os.system("clear")
             for child in sorted_children[:]:
                 print(child.move, child.leaf_level, child.score)
 
-        depth = max([child.leaf_level for child in sorted_children[:3]])  # pylint: disable=consider-using-generator
+        depth = max([child.leaf_level for child in sorted_children[-10:]])  # pylint: disable=consider-using-generator
 
-        for child in sorted_children:
+        for child in reversed(sorted_children):
             if child.leaf_level >= 2 / 3 * depth:
                 best = child
                 break

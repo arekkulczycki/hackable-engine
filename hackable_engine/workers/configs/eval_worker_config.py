@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import Any, NamedTuple, Optional, Type
 
 from hackable_engine.board import GameBoardBase

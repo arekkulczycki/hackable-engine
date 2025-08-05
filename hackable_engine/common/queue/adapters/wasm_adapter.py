@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import math
 from collections import deque
 from random import choice

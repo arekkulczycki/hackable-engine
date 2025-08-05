@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # type: ignore
 from itertools import cycle
 from multiprocessing import Lock

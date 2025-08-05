@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import os
 
 from torch.optim.lr_scheduler import LambdaLR
@@ -511,7 +510,7 @@ def _weight_distance(board, distance, n_moves) -> int:
 
 if __name__ == "__main__":
     board_size = 7
-    board = HexBoard("", size=board_size, use_graph=True)
+    board = HexBoard("", size=board_size)
     writer = SummaryWriter(os.path.join(LOG_PATH, f"custom_tensorboard", f"custom6"))
     workers = []
     for i in range(n_workers):

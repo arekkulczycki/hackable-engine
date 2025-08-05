@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import asyncio
@@ -29,6 +28,7 @@ from hackable_engine.criteria.evaluation.base_eval import WeightsType, BaseEval
 # )
 from hackable_engine.criteria.evaluation.hex.model_eval import ModelEval
 from hackable_engine.criteria.evaluation.hex.paths_eval import PathsEval
+from hackable_engine.criteria.evaluation.hex.wasm_eval import WasmEval
 from hackable_engine.workers.base_worker import BaseWorker
 from hackable_engine.workers.configs.eval_worker_config import EvalWorkerConfig
 from hackable_engine.workers.configs.worker_locks import WorkerLocks
@@ -61,7 +61,7 @@ class EvalWorker(BaseWorker, Generic[GameBoardT]):
         config: EvalWorkerConfig,
         memory = None,
     ) -> None:
-        super().__init__(memory)
+        super().__init__("Eval", memory=memory)
 
         self.locks: WorkerLocks = locks
         self.queues: WorkerQueues = queues
@@ -142,7 +142,7 @@ class EvalWorker(BaseWorker, Generic[GameBoardT]):
                     )
                     # print("evalated: ", self.evaluated)
 
-                await asyncio.sleep(0)
+                # await asyncio.sleep(0)
 
             elif not finished:
                 finished = True

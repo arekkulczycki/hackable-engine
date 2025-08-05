@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import torch as th
 from torch import nn
 from torch.nn import functional as F
@@ -64,7 +63,7 @@ class GraphRGCN(BaseModule):
             self.res_proj_1 = nn.Linear(self.gnn_shape[0], self.gnn_shape[1], device=self.device)
             self.res_proj_2 = nn.Linear(self.gnn_shape[1], self.gnn_shape[2], device=self.device)
             self.res_proj_3 = nn.Linear(self.gnn_shape[2], self.gnn_shape[3], device=self.device)
-            self.res_proj_4 = nn.Linear(self.gnn_shape[3], self.gnn_shape[4], device=self.device)
+            # self.res_proj_4 = nn.Linear(self.gnn_shape[3], self.gnn_shape[4], device=self.device)
             # self.res_proj_5 = nn.Linear(
             #     self.gnn_shape[4], self.gnn_shape[5], device=self.device
             # )
@@ -88,17 +87,18 @@ class GraphRGCN(BaseModule):
             self.gnn_shape[3],
             num_relations=3,
         )
-        self.conv5 = RGCNConv(
-            self.gnn_shape[3],
-            self.gnn_shape[4],
-            num_relations=3,
-        )
+        # self.conv5 = RGCNConv(
+        #     self.gnn_shape[3],
+        #     self.gnn_shape[4],
+        #     num_relations=3,
+        # )
         # self.conv6 = RGCNConv(
         #     self.gnn_shape[4],
         #     self.gnn_shape[5],
         #     num_relations=3,
         # )
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)  # , self.conv6)
+        # self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)  # , self.conv6)
+        self.gnn = nn.ModuleList((self.conv1, self.conv2, self.conv3, self.conv4))
 
     def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
@@ -165,11 +165,11 @@ class GraphRGCN(BaseModule):
 
         if self.use_res:
             x = x + res3
-            res4 = self.res_proj_4(x)
-        x = F.dropout(F.relu(self.conv5(x, edge_index, edge_type=edge_types)), p=self.dropouts, training=self.training)
+            # res4 = self.res_proj_4(x)
+        # x = F.dropout(F.relu(self.conv5(x, edge_index, edge_type=edge_types)), p=self.dropouts, training=self.training)
 
-        if self.use_res:
-            x = x + res4
+        # if self.use_res:
+        #     x = x + res4
         #     res5 = self.res_proj_5(x)
         # x = F.dropout(F.relu(self.conv6(x, edge_index, edge_type=edge_types)), p=self.dropouts, training=self.training)
         #

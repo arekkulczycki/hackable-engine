@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import NamedTuple
 
 from hackable_engine.common.queue.items.control_item import ControlItem

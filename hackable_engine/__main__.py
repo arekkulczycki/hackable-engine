@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Receive commands and run the engine.
 """

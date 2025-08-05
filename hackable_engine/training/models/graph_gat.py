@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
 import torch as th
 from torch import nn
 from torch.nn import functional as F
 from torch_geometric.nn import GATv2Conv
+from torch_geometric.nn.norm import LayerNorm
 
 from hackable_engine.training.utils.device import Device
 from hackable_engine.training.models import BaseModule
@@ -32,20 +32,19 @@ class GraphGAT(BaseModule):
         self.batch_size = batch_size
         self.dropouts = dropouts
         self.gnn_shape = gnn_shape
-        self.gnn_heads = gnn_heads
+        self.gnn_heads = (gnn_heads for _ in gnn_shape) if isinstance(gnn_heads, int) else gnn_heads
         self.mlp_shape = mlp_shape
         self.device = device
-        self.use_res = True
 
         self.edge_index = edge_index.to(device)
         self.batch_edge_index = self.get_batch_edge_index(batch_size)
-        self.edge_types = edge_types.to(device)
+        self.edge_types = edge_types.to(device).to(th.float32)
         self.batch_edge_types = self.get_batch_edge_types(batch_size)
 
         self.setup_graph_feature_extractor()
         self.setup_mlp(gnn_shape, mlp_shape, output_size)
 
-        # self.initialize_gnn_weights()
+        self.initialize_gnn_weights()
         self.initialize_mlp_weights()
 
     def get_batch_edge_index(self, batch_size):
@@ -61,89 +60,27 @@ class GraphGAT(BaseModule):
         return th.cat(batch_edge_types, dim=0).to(self.device)
 
     def setup_graph_feature_extractor(self):
-        if self.use_res:
-            self.res_proj_0 = nn.Linear(
-                self.node_features,
-                self.gnn_shape[0] * self.gnn_heads,
-                device=self.device,
-            )
-            self.res_proj_1 = nn.Linear(
-                self.gnn_shape[0] * self.gnn_heads,
-                self.gnn_shape[1] * self.gnn_heads,
-                device=self.device,
-            )
-            # self.res_proj_01 = nn.Linear(
-            #     self.node_features,
-            #     self.gnn_shape[1] * self.gnn_heads,
-            #     device=self.device,
-            # )
-            self.res_proj_2 = nn.Linear(
-                self.gnn_shape[1] * self.gnn_heads,
-                self.gnn_shape[2] * self.gnn_heads,
-                device=self.device,
-            )
-            # self.res_proj_02 = nn.Linear(
-            #     self.node_features,
-            #     self.gnn_shape[2] * self.gnn_heads,
-            #     device=self.device,
-            # )
-            self.res_proj_3 = nn.Linear(
-                self.gnn_shape[2] * self.gnn_heads,
-                self.gnn_shape[3] * self.gnn_heads,
-                device=self.device,
-            )
-            # self.res_proj_03 = nn.Linear(
-            #     self.node_features,
-            #     self.gnn_shape[3] * self.gnn_heads,
-            #     device=self.device,
-            # )
-            self.res_proj_4 = nn.Linear(
-                self.gnn_shape[3] * self.gnn_heads, self.gnn_shape[4], device=self.device
-            )
-            # self.res_proj_04 = nn.Linear(
-            #     self.node_features, self.gnn_shape[4], device=self.device
-            # )
-        self.conv1 = GATv2Conv(
-            self.node_features,
-            self.gnn_shape[0],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
-            # residual=self.use_res,
-        )
-        self.conv2 = GATv2Conv(
-            self.gnn_shape[0] * self.gnn_heads,
-            self.gnn_shape[1],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
-            # residual=self.use_res,
-        )
-        self.conv3 = GATv2Conv(
-            self.gnn_shape[1] * self.gnn_heads,
-            self.gnn_shape[2],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
-            # residual=self.use_res,
-        )
-        self.conv4 = GATv2Conv(
-            self.gnn_shape[2] * self.gnn_heads,
-            self.gnn_shape[3],
-            heads=self.gnn_heads,
-            concat=True,
-            edge_dim=3,
-            # residual=self.use_res,
-        )
-        self.conv5 = GATv2Conv(
-            self.gnn_shape[3] * self.gnn_heads,
-            self.gnn_shape[4],
-            heads=1,
-            concat=True,
-            edge_dim=3,
-            # residual=self.use_res,
-        )
-        self.gnn = (self.conv1, self.conv2, self.conv3, self.conv4, self.conv5)
+        concats = [False for _ in self.gnn_shape]
+        gnn = []
+        residuals = []
+        norms = []
+        prev = self.node_features
+        prev_heads = 1
+        prev_concat = False
+        for channels, heads, concat in zip(self.gnn_shape, self.gnn_heads, concats):
+            if not prev_concat:
+                prev_heads = 1
+
+            gnn.append(GATv2Conv(prev * prev_heads, channels, heads=heads, concat=concat, edge_dim=3, add_self_loops=False))
+            residuals.append(nn.Linear(prev * prev_heads, channels, device=self.device))
+            norms.append(LayerNorm(channels))
+            prev = channels
+            prev_heads = heads
+            prev_concat = concat
+
+        self.gnn = nn.ModuleList(gnn)
+        self.residuals = nn.ModuleList(residuals)
+        self.norms = nn.ModuleList(norms)
 
     def setup_mlp(self, gnn_shape, mlp_shape, output_size):
         mlp = []
@@ -184,55 +121,30 @@ class GraphGAT(BaseModule):
 
         x = x.view(-1, self.node_features)
 
-        if self.use_res:
-            res0 = self.res_proj_0(x)
-            # res01 = self.res_proj_0(x)
-            # res02 = self.res_proj_0(x)
-            # res03 = self.res_proj_0(x)
-            # res04 = self.res_proj_0(x)
-        x = F.dropout(F.relu(self.conv1(x, edge_index, edge_attr=edge_types)), p=self.dropouts, training=self.training)
-        # x = self.norm1(x, batch, batch_size)
+        # for conv, residual in zip(self.gnn, self.residuals):
+        #     h = conv(x, edge_index, edge_attr=edge_types)
+        for conv, residual, norm in zip(self.gnn, self.residuals, self.norms):
+            h = norm(conv(x, edge_index, edge_attr=edge_types))
+            # x = F.dropout(F.relu(h + residual(x)), p=0.1, training=self.training)
+            x = F.dropout(F.relu(h), p=self.dropouts, training=self.training) + residual(x)
 
-        if self.use_res:
-            x = x + res0
-            res1 = self.res_proj_1(x)
-        x = F.dropout(F.relu(self.conv2(x, edge_index, edge_attr=edge_types)), p=self.dropouts, training=self.training)
-        # x = self.norm2(x, batch, batch_size)
-
-        if self.use_res:
-            x = x + res1 #+ res01
-            res2 = self.res_proj_2(x)
-        x = F.dropout(F.relu(self.conv3(x, edge_index, edge_attr=edge_types)), p=self.dropouts, training=self.training)
-        # x = self.norm3(x, batch, batch_size)
-
-        if self.use_res:
-            x = x + res2 #+ res02
-            res3 = self.res_proj_3(x)
-        x = F.dropout(F.relu(self.conv4(x, edge_index, edge_attr=edge_types)), p=self.dropouts, training=self.training)
-
-        if self.use_res:
-            x = x + res3 #+ res03
-            res4 = self.res_proj_4(x)
-        x = F.dropout(F.relu(self.conv5(x, edge_index, edge_attr=edge_types)), p=self.dropouts, training=self.training)
-
-        if self.use_res:
-            x = x + res4 #+ res04
         # unfold the batched graph
         return x.view(batch_size, self.node_count, self.gnn_shape[-1])
 
     def initialize_gnn_weights(self):
         for layer in self.gnn:
-            th.nn.init.kaiming_uniform_(
-                layer.lin.weight, mode="fan_in", nonlinearity="relu"
-            )
-            if layer.lin.bias is not None:
-                th.nn.init.zeros_(layer.lin.bias)
+            th.nn.init.kaiming_uniform_(layer.lin_l.weight, mode="fan_in", nonlinearity="relu")
+            th.nn.init.kaiming_uniform_(layer.lin_r.weight, mode="fan_in", nonlinearity="relu")
+
+            if layer.lin_l.bias is not None:
+                th.nn.init.zeros_(layer.lin_l.bias)
+
+            if layer.lin_r.bias is not None:
+                th.nn.init.zeros_(layer.lin_r.bias)
 
     def initialize_mlp_weights(self):
         for layer in self.mlp + self.control_mlp:
-            th.nn.init.kaiming_normal_(
-                layer.weight, mode="fan_in", nonlinearity="leaky_relu"
-            )
+            th.nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="leaky_relu")
             th.nn.init.zeros_(layer.bias)
 
     def make_decision(self, x: th.Tensor):

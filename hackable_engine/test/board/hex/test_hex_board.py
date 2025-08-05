@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # type: ignore
 import random
 from time import perf_counter

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import torch as th
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader

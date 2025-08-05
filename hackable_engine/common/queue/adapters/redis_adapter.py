@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import List, Optional, Callable
 
 # from larch.pickle.pickle import dumps, loads

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import os
 import random
 
@@ -8,7 +7,6 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-# import intel_extension_for_pytorch as ipex
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn import Conv2d
@@ -183,7 +181,7 @@ def run(version, policy_kwargs, env, env_name, device, loops, color):
     th.manual_seed(1)
 
     edge_index = HexBoard(
-        "", size=policy_kwargs["board_size"], use_graph=True
+        "", size=policy_kwargs["board_size"]
     ).edge_index.to(device)
     mlp_size = policy_kwargs["net_arch"][0]
     actor = Actor(env, mlp_size=mlp_size, edge_index=edge_index).to(device)

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Selecting randomly with higher probability the higher the score.
 """
